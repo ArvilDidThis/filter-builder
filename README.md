@@ -93,17 +93,21 @@ summaryToText(
 its colours from the `--fb-*` variables in the stylesheet.
 
 ```tsx
-import { useState } from "react";
+import type { FieldDefinition, FilterDefinition } from "@arvilmena/filter-core";
 import { FilterBuilder } from "@arvilmena/filter-react/ui";
+import { useState } from "react";
 import "@arvilmena/filter-react/styles.css";
 
-const fields = [
+const fields: FieldDefinition[] = [
   { key: "ratio", label: "Ratio", type: "num" },
   { key: "name", label: "Name", type: "string" },
 ];
 
 function Filters() {
-  const [filter, setFilter] = useState({ logic: "AND", criteria: [] });
+  const [filter, setFilter] = useState<FilterDefinition>({
+    logic: "AND",
+    criteria: [],
+  });
   return <FilterBuilder value={filter} onChange={setFilter} fields={fields} />;
 }
 ```
