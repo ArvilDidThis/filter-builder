@@ -487,17 +487,47 @@ export interface AvailableMoves {
   wrapInGroup: boolean;
 }
 
-/** Works out which moves are possible for the item at `path`, by trying each one. */
+/**
+ * Works out which moves are possible for the item at `path`.
+ *
+ * It reads the answer from the item's place instead of trying each move. A builder asks this
+ * for every row each time the filter changes, and trying a move copies part of the filter.
+ * A test checks that the answers match what trying each move gives.
+ */
 export function availableMoves(
   filter: FilterDefinition,
   path: FilterPath,
   options: DepthOptions = {},
 ): AvailableMoves {
+  const none: AvailableMoves = {
+    up: false,
+    down: false,
+    intoGroupAbove: false,
+    outOfGroup: false,
+    wrapInGroup: false,
+  };
+  // The top group cannot move.
+  if (path.length === 0) return none;
+  const parentPath = path.slice(0, -1);
+  const parent = getGroupAt(filter, parentPath);
+  const index = path[path.length - 1] as number;
+  const item = parent?.criteria[index];
+  if (parent === undefined || item === undefined) return none;
+
+  const { depthLimit } = options;
+  const above = index > 0 ? parent.criteria[index - 1] : undefined;
   return {
-    up: moveUp(filter, path) !== filter,
-    down: moveDown(filter, path) !== filter,
-    intoGroupAbove: moveIntoGroupAbove(filter, path, options) !== filter,
-    outOfGroup: moveOutOfGroup(filter, path) !== filter,
-    wrapInGroup: wrapInGroup(filter, path, options) !== filter,
+    up: index > 0,
+    down: index < parent.criteria.length - 1,
+    intoGroupAbove:
+      above !== undefined &&
+      isFilterGroup(above) &&
+      fitsInGroup(item, [...parentPath, index - 1], depthLimit),
+    // An item in the top group has a one-step path, and nowhere further out to go.
+    outOfGroup: path.length > 1,
+    // The new group takes the item's place and adds one level above it.
+    wrapInGroup:
+      depthLimit === undefined ||
+      parentPath.length + 2 + levelsIn(item) <= depthLimit,
   };
 }

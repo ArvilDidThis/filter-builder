@@ -605,4 +605,53 @@ describe("availableMoves", () => {
       availableMoves(sample(), [2, 0], { depthLimit: 2 }).wrapInGroup,
     ).toBe(false);
   });
+
+  it("should agree with trying each move, for every item and depth limit", () => {
+    // A filter with groups three levels deep, a group above a group, and an empty group.
+    const deep: FilterDefinition = {
+      logic: "AND",
+      criteria: [
+        leaf("a"),
+        { logic: "OR", criteria: [leaf("b"), leaf("c")] },
+        {
+          logic: "AND",
+          criteria: [
+            { logic: "OR", criteria: [leaf("d")] },
+            leaf("e"),
+            { logic: "AND", criteria: [] },
+          ],
+        },
+        leaf("f"),
+      ],
+    };
+    /** Every path in a filter, the top group and one path that leads nowhere included. */
+    const pathsOf = (item: Criterion, path: number[]): number[][] => [
+      path,
+      [...path, 99],
+      ...(isFilterGroup(item)
+        ? item.criteria.flatMap((child, index) =>
+            pathsOf(child, [...path, index]),
+          )
+        : []),
+    ];
+
+    for (const filter of [sample(), deep]) {
+      for (const depthLimit of [undefined, 1, 2, 3, 4, 5]) {
+        const options = { depthLimit };
+        for (const path of pathsOf(filter, [])) {
+          expect(
+            availableMoves(filter, path, options),
+            `path [${path.join(",")}] with depth limit ${depthLimit}`,
+          ).toEqual({
+            up: moveUp(filter, path) !== filter,
+            down: moveDown(filter, path) !== filter,
+            intoGroupAbove:
+              moveIntoGroupAbove(filter, path, options) !== filter,
+            outOfGroup: moveOutOfGroup(filter, path) !== filter,
+            wrapInGroup: wrapInGroup(filter, path, options) !== filter,
+          });
+        }
+      }
+    }
+  });
 });
