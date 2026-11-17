@@ -1,0 +1,72 @@
+name: Release
+
+# Publishes both packages to npm when a version tag such as "v0.2.0" is pushed.
+on:
+  push:
+    tags: ["v*"]
+
+# One release at a time. A release is never cancelled part-way.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to npm
+    # npm accepts a release only from GitHub's own machines, and only from this repository
+    if: github.repository == 'ArvilDidThis/filter-builder'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Lets the job prove to npm which repository and workflow it is (trusted publishing).
+      # npm then accepts the release with no stored password or token.
+      id-token: write
+    steps:
+      # Actions are pinned to a full commit (with the version in a comment) so a moved tag
+      # can't change what runs here
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Reads the pnpm version from package.json ("packageManager")
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      # No package cache: a release must not be built from files an earlier run left behind
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - run: pnpm install --frozen-lockfile
+
+      # The tag must name the version both packages hold, so a mistyped tag publishes nothing
+      - name: Check the tag matches the package versions
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          for package in filter-core filter-react; do
+            version="$(node -p "require('./packages/$package/package.json').version")"
+            if [ "v$version" != "$TAG" ]; then
+              echo "::error::Tag $TAG does not match $package version $version"
+              exit 1
+            fi
+          done
+
+      # Lint, type checks, tests and build. Nothing is published unless all of it passes.
+      - run: pnpm verify
+
+      # pnpm makes the archives, because it turns "workspace:^" into a real version range.
+      # npm publishes them, because npm is what proves the job's identity to the registry.
+      # filter-core goes first: filter-react needs it.
+      - name: Publish
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          for package in filter-core filter-react; do
+            pnpm --dir "packages/$package" pack --pack-destination "$RUNNER_TEMP/release"
+          done
+          npm publish "$RUNNER_TEMP"/release/arvilmena-filter-core-*.tgz --access public
+          npm publish "$RUNNER_TEMP"/release/arvilmena-filter-react-*.tgz --access public
