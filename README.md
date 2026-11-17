@@ -10,10 +10,12 @@ The rules for working here are in [AGENTS.md](AGENTS.md).
 
 ## Packages
 
-| Package                  | Holds                                                                  |
-| ------------------------ | ---------------------------------------------------------------------- |
-| `@arvilmena/filter-core` | Filter types, matching rules, transforms, the plain-English summary    |
-| `…/filter-core/schema`   | Validation with Effect Schema. The only entry point that loads Effect. |
+| Package                   | Holds                                                                  |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `@arvilmena/filter-core`  | Filter types, matching rules, transforms, the plain-English summary    |
+| `…/filter-core/schema`    | Validation with Effect Schema. The only entry point that loads Effect. |
+| `@arvilmena/filter-react` | Builder state and actions as a React hook, with no markup or styling   |
+| `…/filter-react/ui`       | Ready-made builder components, with their own default style sheet      |
 
 ## Commands
 

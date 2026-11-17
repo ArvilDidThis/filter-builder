@@ -3,6 +3,7 @@ import {
   createRowPredicate,
   filterHasFilledCondition,
   isConditionFilled,
+  isNumberType,
   matchesFilter,
 } from "./evaluate";
 import type { FilterDefinition, LeafCondition } from "./types";
@@ -33,6 +34,27 @@ const only = (c: LeafCondition): FilterDefinition => ({
 
 const matches = (filter: FilterDefinition, row: Row) =>
   matchesFilter(filter, row, filterValueOf);
+
+describe("isNumberType", () => {
+  it("should be true for plain and formatted numbers, with or without markup", () => {
+    for (const type of ["num", "num-fmt", "html-num", "html-num-fmt"]) {
+      expect(isNumberType(type)).toBe(true);
+    }
+  });
+
+  it("should be false for text, dates, lists and a type it does not know", () => {
+    for (const type of [
+      "string",
+      "html",
+      "date",
+      "array",
+      "money",
+      undefined,
+    ]) {
+      expect(isNumberType(type)).toBe(false);
+    }
+  });
+});
 
 describe("a blank value, the way SearchBuilder treats it", () => {
   const blankRow: Row = { rating: null, status: null };
