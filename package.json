@@ -2,7 +2,7 @@
   "name": "filter-builder",
   "version": "0.0.0",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "description": "Headless filter builder: filter format, matching rules and builder UI.",
   "type": "module",
   "packageManager": "pnpm@12.6.0",

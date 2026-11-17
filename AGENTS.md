@@ -104,6 +104,6 @@ place: "on or before" and "on or after" for dates.
 
 ## Licence
 
-The repository is private and unlicensed for now. Every `package.json` has `"private": true` and
-`"license": "UNLICENSED"`. Do not publish a package or add a licence file without the owner's
-decision.
+The code is under the MIT licence (`LICENSE`, with a copy in each package so it ships with it).
+Every `package.json` still has `"private": true`, because nothing is published yet. Do not
+publish a package or remove that line without the owner's decision.

@@ -4,7 +4,7 @@ A headless filter builder: the filter format, the rules that decide whether a ro
 (later) the builder UI. It replaces DataTables SearchBuilder and keeps its JSON shape and matching
 rules, so filters saved by SearchBuilder keep returning the same rows.
 
-This repository is private and unlicensed for now.
+The packages are not published yet.
 
 The rules for working here are in [AGENTS.md](AGENTS.md).
 
@@ -86,3 +86,10 @@ summaryToText(
 );
 // "Ratio 10 or more"
 ```
+
+## Licence
+
+[MIT](LICENSE).
+
+This project is not affiliated with or endorsed by SpryMedia Ltd or DataTables. One test file
+holds SearchBuilder's own matching tests, used under its MIT licence.
