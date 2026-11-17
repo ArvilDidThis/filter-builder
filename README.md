@@ -66,10 +66,11 @@ libraries.
 import {
   createRowPredicate,
   describeFilter,
+  type FilterDefinition,
   summaryToText,
 } from "@arvilmena/filter-core";
 
-const filter = {
+const filter: FilterDefinition = {
   logic: "AND",
   criteria: [
     {

@@ -9,9 +9,12 @@ npm install @arvilmena/filter-core
 ```
 
 ```ts
-import { createRowPredicate } from "@arvilmena/filter-core";
+import {
+  createRowPredicate,
+  type FilterDefinition,
+} from "@arvilmena/filter-core";
 
-const filter = {
+const filter: FilterDefinition = {
   logic: "AND",
   criteria: [
     {
