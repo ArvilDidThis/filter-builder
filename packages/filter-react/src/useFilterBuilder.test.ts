@@ -5,7 +5,7 @@ import type {
   FilterDefinition,
 } from "@arvilmena/filter-core";
 import { act, renderHook } from "@testing-library/react";
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
   type UseFilterBuilderOptions,
@@ -305,5 +305,43 @@ describe("useFilterBuilder", () => {
     });
     expect(result.current.conditionCount).toBe(1);
     expect(shape(result.current.root)).toBe("name");
+  });
+
+  it("should build on a new filter in an action called as soon as it arrives", () => {
+    const onChange = vi.fn();
+    const loaded: FilterDefinition = {
+      criteria: [
+        {
+          condition: "=",
+          data: "Name",
+          origData: "name",
+          type: "string",
+          value: ["a"],
+        },
+      ],
+      logic: "AND",
+    };
+    const { rerender } = renderHook(
+      (props: { value: FilterDefinition }) => {
+        const builder = useFilterBuilder({
+          fields: FIELDS,
+          onChange,
+          ...props,
+        });
+        // An app that adds a row straight after loading a saved filter, before the browser
+        // paints. The action must see the loaded filter, not the one before it.
+        useLayoutEffect(() => {
+          if (props.value === loaded)
+            builder.actions.addCondition([], "amount");
+        }, [props.value, builder.actions]);
+        return builder;
+      },
+      { initialProps: { value: EMPTY } },
+    );
+    rerender({ value: loaded });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0]?.[0] as FilterDefinition;
+    expect(next.criteria).toHaveLength(2);
+    expect(next.criteria[0]).toBe(loaded.criteria[0]);
   });
 });

@@ -27,7 +27,18 @@ import {
   setGroupLogic,
   wrapInGroup,
 } from "@arvilmena/filter-core";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
+
+// Runs before any other effect of the same render. On a server there is no screen, and older
+// React warns about `useLayoutEffect` there, so the plain effect stands in.
+const useEarlyEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 /** What `useFilterBuilder` needs from the app. */
 export interface UseFilterBuilderOptions {
@@ -137,7 +148,8 @@ export function useFilterBuilder(
   // from one render to the next. That keeps a screen's memoised rows from redrawing.
   //
   // The ref is written after React has put a render on screen, not while rendering: React may
-  // throw a render away, and its props must not reach the actions.
+  // throw a render away, and its props must not reach the actions. It is written before any
+  // other effect runs, so an action called from an effect already sees the new filter.
   const fieldLookup = useMemo(() => createFieldLookup(fields), [fields]);
   const latest = useRef({
     value,
@@ -146,7 +158,7 @@ export function useFilterBuilder(
     defaultOperator,
     fieldLookup,
   });
-  useEffect(() => {
+  useEarlyEffect(() => {
     latest.current = {
       value,
       onChange,
