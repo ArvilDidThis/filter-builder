@@ -4,7 +4,11 @@ A headless filter builder: the filter format, the rules that decide whether a ro
 the builder UI. It replaces DataTables SearchBuilder and keeps its JSON shape and matching
 rules, so filters saved by SearchBuilder keep returning the same rows.
 
-The packages are not published yet.
+Install the packages from npm:
+
+```sh
+npm install @arvilmena/filter-core @arvilmena/filter-react
+```
 
 The rules for working here are in [AGENTS.md](AGENTS.md).
 
@@ -37,6 +41,7 @@ pnpm lint:fix
 | `claude.yml`             | Answers `@claude` mentions in issues and pull requests                   |
 | `zizmor.yml`             | Audits the workflows themselves for security problems                    |
 | `dependency-audit.yml`   | Scans `pnpm-lock.yaml` for known vulnerable or malicious packages, daily |
+| `release.yml`            | Publishes both packages to npm when a version tag is pushed              |
 
 ## Data types
 
@@ -61,10 +66,11 @@ libraries.
 import {
   createRowPredicate,
   describeFilter,
+  type FilterDefinition,
   summaryToText,
 } from "@arvilmena/filter-core";
 
-const filter = {
+const filter: FilterDefinition = {
   logic: "AND",
   criteria: [
     {

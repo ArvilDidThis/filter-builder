@@ -1,9 +1,27 @@
 {
   "name": "@arvilmena/filter-react",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "license": "MIT",
   "description": "Filter builder for React: headless state and actions, plus ready-made components with default styling.",
+  "keywords": [
+    "react",
+    "filter",
+    "filter-builder",
+    "query-builder",
+    "searchbuilder",
+    "datatables",
+    "headless"
+  ],
+  "homepage": "https://github.com/ArvilDidThis/filter-builder#readme",
+  "bugs": "https://github.com/ArvilDidThis/filter-builder/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArvilDidThis/filter-builder.git",
+    "directory": "packages/filter-react"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "sideEffects": [
     "*.css"
