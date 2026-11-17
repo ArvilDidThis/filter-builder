@@ -176,6 +176,12 @@ function familyOf(type: unknown): ConditionFamily {
     : "string";
 }
 
+/** Whether a field type holds numbers, plain or formatted. A builder lines such values up on the right. */
+export function isNumberType(type: unknown): boolean {
+  const family = familyOf(type);
+  return family === "num" || family === "num-fmt";
+}
+
 const LINE_BREAKS = /[\r\n\u2028]/g;
 const HTML_TAGS = /(<([^>]+)>)/gi;
 const DATE_SEPARATORS = /(\/|-|,)/g;

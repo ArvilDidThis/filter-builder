@@ -6,13 +6,15 @@ This file states the rules for working in this repository. The automated code re
 ## What this repository is
 
 A headless filter builder library. It holds the filter format, the rules that decide whether a
-row matches a filter, and (later) the builder UI. It replaces DataTables SearchBuilder and keeps
+row matches a filter, and the builder UI. It replaces DataTables SearchBuilder and keeps
 SearchBuilder's JSON shape and matching rules.
 
-| Package                  | Holds                                                                  |
-| ------------------------ | ---------------------------------------------------------------------- |
-| `@arvilmena/filter-core` | Filter types, matching rules, transforms and the plain-English summary |
-| `…/filter-core/schema`   | Validation with Effect Schema. The only entry point that loads Effect. |
+| Package                   | Holds                                                                  |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `@arvilmena/filter-core`  | Filter types, matching rules, builder actions and the summary          |
+| `…/filter-core/schema`    | Validation with Effect Schema. The only entry point that loads Effect. |
+| `@arvilmena/filter-react` | Builder state and actions as a React hook. No markup and no styling.   |
+| `…/filter-react/ui`       | Ready-made builder components, styled by `…/filter-react/styles.css`.  |
 
 ## Tools
 
@@ -74,6 +76,12 @@ place: "on or before" and "on or after" for dates.
 - An app passes in its own field list and a function that reads a row's value. The library never
   knows an app's field names or business rules.
 - `filter-core` has no table, UI framework or styling dependency.
+- The main entry of `filter-react` holds state only and renders nothing, so an app can draw its
+  own builder. The `/ui` entry holds the ready-made components.
+- The ready-made components use plain HTML controls and the `fb-` classes in `styles.css`. Do not
+  add a UI kit or a CSS framework to them: an app must be able to use them with neither. Take
+  colours from the `--fb-*` variables, never fixed values, so they suit light and dark pages.
+- Builder actions are pure functions in `filter-core`. `filter-react` only wires them to React.
 - Do not name private projects, people or internal systems in code, comments, tests, docs or
   commit messages.
 
@@ -96,6 +104,6 @@ place: "on or before" and "on or after" for dates.
 
 ## Licence
 
-The repository is private and unlicensed for now. Every `package.json` has `"private": true` and
-`"license": "UNLICENSED"`. Do not publish a package or add a licence file without the owner's
-decision.
+The code is under the MIT licence (`LICENSE`, with a copy in each package so it ships with it).
+Every `package.json` still has `"private": true`, because nothing is published yet. Do not
+publish a package or remove that line without the owner's decision.

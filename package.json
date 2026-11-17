@@ -2,7 +2,7 @@
   "name": "filter-builder",
   "version": "0.0.0",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "description": "Headless filter builder: filter format, matching rules and builder UI.",
   "type": "module",
   "packageManager": "pnpm@12.6.0",
@@ -15,7 +15,7 @@
     "typecheck": "pnpm -r run typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check . --write",
-    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm -r run verify:entry && pnpm test:scripts",
+    "verify": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm -r run verify:entry && pnpm test:scripts",
     "test:scripts": "node --test \".github/scripts/__tests__/*.test.ts\""
   },
   "devDependencies": {

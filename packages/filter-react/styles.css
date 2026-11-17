@@ -1,0 +1,499 @@
+/*
+ * Default styling for the filter builder in `@arvilmena/filter-react/ui`.
+ *
+ * Load it once in the app:  import "@arvilmena/filter-react/styles.css";
+ *
+ * The colours are worked out from the page's own text colour, so the builder fits a light page
+ * and a dark page without any setup. To change the look, set the `--fb-*` variables below on
+ * `.fb` in the app's own style sheet, for example:
+ *
+ *   .fb { --fb-radius: 0; --fb-bar-bg: #334; }
+ *
+ * `--fb-page` should be the colour behind the builder. It defaults to `--background`, which
+ * many apps already define, and otherwise to the browser's page colour.
+ *
+ * The builder also reads `--popover` and `--ring` when an app defines them. All three must hold
+ * a whole colour, such as `#fff` or `oklch(1 0 0)`. Some themes store only the numbers of a
+ * colour (`--background: 0 0% 100%`) and wrap them in `hsl()` where they are used. With such a
+ * theme, set the builder's own variables to whole colours:
+ *
+ *   .fb {
+ *     --fb-page: hsl(var(--background));
+ *     --fb-popover-bg: hsl(var(--popover));
+ *     --fb-focus: hsl(var(--ring));
+ *   }
+ */
+
+.fb {
+  --fb-page: var(--background, Canvas);
+  --fb-border: color-mix(in srgb, currentColor 22%, transparent);
+  --fb-control-bg: color-mix(in srgb, currentColor 7%, var(--fb-page));
+  --fb-hover-bg: color-mix(in srgb, currentColor 15%, var(--fb-page));
+  /* The colour of a group's bar: one for "all must pass", one for "one is enough". Blue and
+     orange stay apart for people who see colours differently, and the word is always there too. */
+  --fb-and: #3b82f6;
+  --fb-or: #f59e0b;
+  --fb-popover-bg: var(--popover, var(--fb-page));
+  /* The shadow under the field list and the tooltips. */
+  --fb-shadow: rgb(0 0 0 / 0.25);
+  --fb-muted: color-mix(in srgb, currentColor 60%, transparent);
+  --fb-focus: var(--ring, Highlight);
+  --fb-radius: 0.375rem;
+  --fb-control-height: 2.25rem;
+  --fb-gap: 0.5rem;
+  /* The widest a value box grows, so a short number does not sit in a very long box. */
+  --fb-value-width: 12rem;
+
+  /* Lets the rows respond to the width of the builder, not of the whole screen. */
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.fb *,
+.fb *::before,
+.fb *::after {
+  box-sizing: border-box;
+}
+
+/* ---- Header ---- */
+
+.fb-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--fb-gap);
+}
+
+.fb-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.fb-count {
+  font-weight: 400;
+  color: var(--fb-muted);
+}
+
+.fb-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--fb-gap);
+  margin-left: auto;
+}
+
+/* ---- Groups ---- */
+
+/* A group is its bar on the left and its rows on the right. */
+.fb-group {
+  display: flex;
+  gap: var(--fb-gap);
+  min-width: 0;
+}
+
+/* The tall bar that says "And" or "Or". It is as tall as the group's rows, and its colour says
+   which of the two it is, so a person need not scroll up to the word to know. */
+.fb-bar {
+  --fb-bar-color: var(--fb-and);
+
+  display: flex;
+  flex: 0 0 2rem;
+  flex-direction: column;
+  border-radius: var(--fb-radius);
+  background: color-mix(in srgb, var(--fb-bar-color) 32%, var(--fb-page));
+}
+
+.fb-group[data-logic="OR"] > .fb-bar {
+  --fb-bar-color: var(--fb-or);
+}
+
+.fb-bar-logic,
+.fb-bar-remove {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.fb-bar-logic {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 3.5rem;
+  /* Room above the word, so it does not sit against the top edge of the bar. */
+  padding: 0.875rem 0 0.5rem;
+  border-radius: var(--fb-radius) var(--fb-radius) 0 0;
+}
+
+.fb-bar-logic:last-child {
+  border-radius: var(--fb-radius);
+}
+
+/* The word reads from top to bottom, as in SearchBuilder. It follows the page down a long
+   group, so it stays in view. An app with a fixed top bar sets `--fb-sticky-top` to that bar's
+   height. */
+.fb-bar-text {
+  position: sticky;
+  top: var(--fb-sticky-top, 0.5rem);
+  writing-mode: vertical-rl;
+  font-weight: 600;
+  text-transform: capitalize;
+  letter-spacing: 0.02em;
+}
+
+.fb-bar-remove {
+  flex: 0 0 auto;
+  height: 2rem;
+  border-radius: 0 0 var(--fb-radius) var(--fb-radius);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.fb-bar-logic:hover,
+.fb-bar-remove:hover {
+  background: color-mix(in srgb, var(--fb-bar-color) 55%, var(--fb-page));
+}
+
+.fb-group-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--fb-gap);
+  min-width: 0;
+}
+
+.fb-group-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--fb-gap);
+}
+
+/* ---- Rows ---- */
+
+/* Four columns: field, operator, values, buttons. The columns of a group's rows line up. */
+.fb-row {
+  display: grid;
+  grid-template-columns:
+    minmax(8rem, 16rem) minmax(7rem, 11rem)
+    minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--fb-gap);
+  min-width: 0;
+}
+
+.fb-row-broken {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.25rem 0.5rem;
+  border: 1px dashed var(--fb-border);
+  border-radius: var(--fb-radius);
+}
+
+.fb-values {
+  display: flex;
+  gap: var(--fb-gap);
+  min-width: 0;
+}
+
+.fb-row-actions {
+  display: flex;
+  gap: 0.25rem;
+  justify-content: flex-end;
+}
+
+/* The move buttons of a nested group sit at the right end of its footer. */
+.fb-group-footer .fb-row-actions {
+  margin-left: auto;
+}
+
+/* Narrow builder: the field and its buttons on the first line, then the operator, then the
+   values. */
+@container (max-width: 40rem) {
+  .fb-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .fb-row > .fb-row-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .fb-row > .fb-operator,
+  .fb-row > .fb-values {
+    grid-column: 1 / -1;
+  }
+
+  /* Set on the value boxes, not on `.fb`: a container cannot restyle itself from its own
+     query. The row in the selector lets this win over the cap further down. */
+  .fb-row .fb-value {
+    max-width: none;
+  }
+}
+
+/* ---- Controls ---- */
+
+.fb-control {
+  width: 100%;
+  min-width: 0;
+  height: var(--fb-control-height);
+  margin: 0;
+  padding: 0 0.625rem;
+  border: 1px solid var(--fb-border);
+  border-radius: var(--fb-radius);
+  background-color: var(--fb-control-bg);
+  color: inherit;
+  font: inherit;
+}
+
+.fb-value {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: var(--fb-value-width);
+}
+
+.fb-value-list {
+  --fb-value-width: 24rem;
+}
+
+/* The typing area inside a value box. The box around it draws the border. */
+.fb-value-input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.fb-value-input[data-number] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.fb-affix,
+.fb-muted {
+  color: var(--fb-muted);
+}
+
+.fb-button,
+.fb-icon-button {
+  height: var(--fb-control-height);
+  margin: 0;
+  border: 1px solid var(--fb-border);
+  border-radius: var(--fb-radius);
+  background-color: var(--fb-control-bg);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.fb-button {
+  padding: 0 0.75rem;
+  font-weight: 500;
+}
+
+.fb-icon-button {
+  width: var(--fb-control-height);
+  padding: 0;
+  line-height: 1;
+}
+
+.fb-button:hover,
+.fb-icon-button:hover:not(:disabled),
+.fb-picker-button:hover {
+  background-color: var(--fb-hover-bg);
+}
+
+.fb-icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.fb-control:focus-visible,
+.fb-value:focus-within,
+.fb-button:focus-visible,
+.fb-icon-button:focus-visible,
+.fb-bar-logic:focus-visible,
+.fb-bar-remove:focus-visible {
+  outline: 2px solid var(--fb-focus);
+  outline-offset: 1px;
+}
+
+/* ---- Field picker ---- */
+
+.fb-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.fb-picker-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.fb-picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-picker-arrow {
+  flex: 0 0 auto;
+  color: var(--fb-muted);
+}
+
+/* The list opens over the rows below it, so it needs a solid background of its own. */
+.fb-picker-popover {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: max(100%, 18rem);
+  padding: 0.25rem;
+  border: 1px solid var(--fb-border);
+  border-radius: var(--fb-radius);
+  background: var(--fb-popover-bg);
+  box-shadow: 0 8px 24px var(--fb-shadow);
+}
+
+.fb-picker-list {
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.fb-picker-option,
+.fb-picker-empty {
+  padding: 0.375rem 0.5rem;
+  border-radius: calc(var(--fb-radius) - 2px);
+}
+
+.fb-picker-option {
+  cursor: pointer;
+}
+
+.fb-picker-option[data-active],
+.fb-picker-option:hover {
+  background: var(--fb-hover-bg);
+}
+
+.fb-picker-option[aria-selected="true"] {
+  font-weight: 600;
+}
+
+/* ---- Dragging ---- */
+
+/* The grip that drags a row or a group to a new place. */
+.fb-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: var(--fb-control-height);
+  color: var(--fb-muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.fb-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* The row or group being dragged fades, so it is clear which one is moving. */
+.fb [data-dragging] {
+  opacity: 0.4;
+}
+
+.fb [data-fb-item],
+.fb-group-footer {
+  position: relative;
+}
+
+/* A line in the gap above the place where the dragged row or group would land. */
+.fb [data-drop]::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--fb-gap) / -2 - 1px);
+  right: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--fb-focus);
+  pointer-events: none;
+}
+
+/* ---- Summary ---- */
+
+.fb-summary {
+  margin: 0;
+}
+
+/* The joining words stand out; the rest of the sentence is quieter. */
+.fb-summary span {
+  opacity: 0.65;
+}
+
+/* ---- Tooltips ---- */
+
+/* What a button does, shown when the pointer rests on it or the keyboard reaches it. The text
+   comes from the button's `data-tooltip`. A button that is turned off shows none. */
+.fb [data-tooltip] {
+  position: relative;
+}
+
+.fb [data-tooltip]:not(:disabled):hover::after,
+.fb [data-tooltip]:not(:disabled):focus-visible::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.375rem);
+  z-index: 60;
+  width: max-content;
+  max-width: 16rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--fb-border);
+  border-radius: var(--fb-radius);
+  /* A little lighter or darker than the page, with the page's own text colour on it. The text
+     colour is left alone on purpose: a background worked out from the text colour, with the
+     text then set to the page colour, comes out as one colour on itself. */
+  background: color-mix(in srgb, currentColor 16%, var(--fb-page));
+  box-shadow: 0 4px 12px var(--fb-shadow);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1rem;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  writing-mode: horizontal-tb;
+  pointer-events: none;
+}
+
+/* A bar sits at the left edge, so its tooltip opens to the right of it. */
+.fb [data-tooltip][data-tooltip-side="right"]:hover::after,
+.fb [data-tooltip][data-tooltip-side="right"]:focus-visible::after {
+  top: 0.25rem;
+  right: auto;
+  bottom: auto;
+  left: calc(100% + 0.375rem);
+}

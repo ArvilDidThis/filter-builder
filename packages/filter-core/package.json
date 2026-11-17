@@ -2,7 +2,7 @@
   "name": "@arvilmena/filter-core",
   "version": "0.0.0",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "description": "Filter format, matching rules and helpers for the filter builder. Runs anywhere JavaScript runs.",
   "type": "module",
   "sideEffects": false,
