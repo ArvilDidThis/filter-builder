@@ -1,19 +1,25 @@
 # Filter builder
 
 A headless filter builder: the filter format, the rules that decide whether a row matches, and
-(later) the builder UI. It replaces DataTables SearchBuilder and keeps its JSON shape and matching
+the builder UI. It replaces DataTables SearchBuilder and keeps its JSON shape and matching
 rules, so filters saved by SearchBuilder keep returning the same rows.
 
-This repository is private and unlicensed for now.
+Install the packages from npm:
+
+```sh
+npm install @arvilmena/filter-core @arvilmena/filter-react
+```
 
 The rules for working here are in [AGENTS.md](AGENTS.md).
 
 ## Packages
 
-| Package                  | Holds                                                                  |
-| ------------------------ | ---------------------------------------------------------------------- |
-| `@arvilmena/filter-core` | Filter types, matching rules, transforms, the plain-English summary    |
-| `…/filter-core/schema`   | Validation with Effect Schema. The only entry point that loads Effect. |
+| Package                   | Holds                                                                  |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `@arvilmena/filter-core`  | Filter types, matching rules, transforms, the plain-English summary    |
+| `…/filter-core/schema`    | Validation with Effect Schema. The only entry point that loads Effect. |
+| `@arvilmena/filter-react` | Builder state and actions as a React hook, with no markup or styling   |
+| `…/filter-react/ui`       | Ready-made builder components, with their own default style sheet      |
 
 ## Commands
 
@@ -35,6 +41,7 @@ pnpm lint:fix
 | `claude.yml`             | Answers `@claude` mentions in issues and pull requests                   |
 | `zizmor.yml`             | Audits the workflows themselves for security problems                    |
 | `dependency-audit.yml`   | Scans `pnpm-lock.yaml` for known vulnerable or malicious packages, daily |
+| `release.yml`            | Publishes both packages to npm when a version tag is pushed              |
 
 ## Data types
 
@@ -59,10 +66,11 @@ libraries.
 import {
   createRowPredicate,
   describeFilter,
+  type FilterDefinition,
   summaryToText,
 } from "@arvilmena/filter-core";
 
-const filter = {
+const filter: FilterDefinition = {
   logic: "AND",
   criteria: [
     {
@@ -84,3 +92,50 @@ summaryToText(
 );
 // "Ratio 10 or more"
 ```
+
+## The builder
+
+`@arvilmena/filter-react/ui` holds a ready-made builder. It uses plain HTML controls, and takes
+its colours from the `--fb-*` variables in the stylesheet.
+
+```tsx
+import type { FieldDefinition, FilterDefinition } from "@arvilmena/filter-core";
+import { FilterBuilder } from "@arvilmena/filter-react/ui";
+import { useState } from "react";
+import "@arvilmena/filter-react/styles.css";
+
+const fields: FieldDefinition[] = [
+  { key: "ratio", label: "Ratio", type: "num" },
+  { key: "name", label: "Name", type: "string" },
+];
+
+function Filters() {
+  const [filter, setFilter] = useState<FilterDefinition>({
+    logic: "AND",
+    criteria: [],
+  });
+  return <FilterBuilder value={filter} onChange={setFilter} fields={fields} />;
+}
+```
+
+To draw your own builder, use the `useFilterBuilder` hook from `@arvilmena/filter-react`. It
+holds no markup. It returns the rows to draw and the actions that change the filter.
+
+```tsx
+import { useFilterBuilder } from "@arvilmena/filter-react";
+
+const builder = useFilterBuilder({
+  value: filter,
+  onChange: setFilter,
+  fields,
+});
+// builder.root.rows: the conditions and groups, in order.
+// builder.actions: addCondition, remove, move and the rest.
+```
+
+## Licence
+
+[MIT](LICENSE).
+
+This project is not affiliated with or endorsed by SpryMedia Ltd or DataTables. One test file
+holds SearchBuilder's own matching tests, used under its MIT licence.

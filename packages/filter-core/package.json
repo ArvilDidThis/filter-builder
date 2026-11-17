@@ -1,9 +1,26 @@
 {
   "name": "@arvilmena/filter-core",
-  "version": "0.0.0",
-  "private": true,
-  "license": "UNLICENSED",
+  "version": "0.1.0",
+  "license": "MIT",
   "description": "Filter format, matching rules and helpers for the filter builder. Runs anywhere JavaScript runs.",
+  "keywords": [
+    "filter",
+    "filter-builder",
+    "query-builder",
+    "searchbuilder",
+    "datatables",
+    "headless"
+  ],
+  "homepage": "https://github.com/ArvilDidThis/filter-builder#readme",
+  "bugs": "https://github.com/ArvilDidThis/filter-builder/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArvilDidThis/filter-builder.git",
+    "directory": "packages/filter-core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {
