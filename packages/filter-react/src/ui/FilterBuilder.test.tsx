@@ -233,6 +233,11 @@ describe("FilterBuilder", () => {
     expect(dateBox("2011/04/25").type).toBe("text");
     expect(dateBox("2011/04/25").value).toBe("2011/04/25");
     expect(dateBox("last week").value).toBe("last week");
+    // A day that does not exist has the right form, but the picker would still show it empty.
+    expect(dateBox("2026-02-30").type).toBe("text");
+    expect(dateBox("2026-02-30").value).toBe("2026-02-30");
+    expect(dateBox("2026-13-01").type).toBe("text");
+    expect(dateBox("2024-02-29").type).toBe("date");
   });
 
   it("should offer a number pad only for the number types", () => {

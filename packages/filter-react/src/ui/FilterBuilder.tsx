@@ -411,8 +411,7 @@ function ValueBoxes({
         // The date picker shows only a date written as "2011-04-25". A stored date in any other
         // form keeps a plain box, so it is shown as it is stored and as matching compares it.
         const usesDatePicker =
-          field?.type === "date" &&
-          (current === "" || DATE_PICKER_FORM.test(current));
+          field?.type === "date" && (current === "" || isPickerDate(current));
         if (field?.choices && field.choices.length > 0) {
           return (
             <select
@@ -477,8 +476,16 @@ function ValueBoxes({
   );
 }
 
-/** The only form of date the browser's date picker can show. */
-const DATE_PICKER_FORM = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * Whether the browser's date picker can show this text: a real day written as "2011-04-25".
+ * The picker shows a day that does not exist, such as 30 February, as an empty box.
+ */
+function isPickerDate(text: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const day = new Date(`${text}T00:00:00Z`);
+  // A day that does not exist is either refused or rolled over into the next month.
+  return !Number.isNaN(day.getTime()) && day.toISOString().startsWith(text);
+}
 
 /**
  * Splits typed text into the values of a list. Empty parts are left out, so a comma typed
