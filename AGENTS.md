@@ -105,5 +105,7 @@ place: "on or before" and "on or after" for dates.
 ## Licence
 
 The code is under the MIT licence (`LICENSE`, with a copy in each package so it ships with it).
-Every `package.json` still has `"private": true`, because nothing is published yet. Do not
-publish a package or remove that line without the owner's decision.
+Both packages are published to npm. Pushing a version tag such as `v0.2.0` runs
+`.github/workflows/release.yml`, which publishes them with no stored token (npm trusted
+publishing). Set the same version in both packages before tagging. Do not push a version tag
+or publish by hand without the owner's decision.

@@ -4,7 +4,11 @@ A headless filter builder: the filter format, the rules that decide whether a ro
 the builder UI. It replaces DataTables SearchBuilder and keeps its JSON shape and matching
 rules, so filters saved by SearchBuilder keep returning the same rows.
 
-The packages are not published yet.
+Install the packages from npm:
+
+```sh
+npm install @arvilmena/filter-core @arvilmena/filter-react
+```
 
 The rules for working here are in [AGENTS.md](AGENTS.md).
 
