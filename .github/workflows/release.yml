@@ -70,9 +70,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/release"
           for package in filter-core filter-react; do
             version="$(node -p "require('./packages/$package/package.json').version")"
-            if npm view "@arvilmena/$package@$version" version >/dev/null 2>&1; then
+            if found="$(npm view "@arvilmena/$package@$version" version 2>&1)"; then
               echo "@arvilmena/$package@$version is already on npm. Skipping it."
               continue
+            fi
+            # Only "not found" (E404) means the version is missing. Any other failure, such as
+            # npm being unreachable, stops the job: publishing on a guess could hide the cause.
+            if ! printf '%s' "$found" | grep -q "E404"; then
+              echo "::error::Could not check @arvilmena/$package@$version on npm"
+              printf '%s\n' "$found"
+              exit 1
             fi
             pnpm --dir "packages/$package" pack --pack-destination "$RUNNER_TEMP/release"
             npm publish "$RUNNER_TEMP/release/arvilmena-$package-$version.tgz" --access public
