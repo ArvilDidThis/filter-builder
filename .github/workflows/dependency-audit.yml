@@ -1,0 +1,82 @@
+name: Dependency audit
+
+# Scans pnpm-lock.yaml with OSV-Scanner (https://google.github.io/osv-scanner) against the OSV
+# database: known vulnerabilities (GHSA/CVE) and known malicious packages (MAL-* advisories).
+
+on:
+  push:
+    branches: [main]
+    # Keep in sync with pull_request.paths (no YAML anchors: they weaken zizmor's analysis)
+    paths:
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "osv-scanner.toml"
+      - ".github/workflows/dependency-audit.yml"
+  pull_request:
+    paths:
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "osv-scanner.toml"
+      - ".github/workflows/dependency-audit.yml"
+  # Daily: new advisories (including newly flagged malicious packages) are published after
+  # code is merged, so an unchanged lockfile still needs re-checking
+  schedule:
+    - cron: "0 5 * * *" # 05:00 UTC
+
+# A newer push to the same branch or PR cancels the run still in progress
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# No permissions by default; the job asks for only what it needs
+permissions: {}
+
+env:
+  OSV_SCANNER_VERSION: "2.6.0"
+
+jobs:
+  audit:
+    name: Scan dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The binary is downloaded directly (the official action runs in Docker) and checked
+      # against the release's published SHA-256 checksums before it's allowed to run
+      - name: Install osv-scanner
+        run: |
+          BASE_URL="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
+          curl -fsSL -o "$RUNNER_TEMP/osv-scanner" "$BASE_URL/osv-scanner_linux_amd64"
+          curl -fsSL -o "$RUNNER_TEMP/checksums.txt" "$BASE_URL/osv-scanner_SHA256SUMS"
+          EXPECTED=$(grep "osv-scanner_linux_amd64$" "$RUNNER_TEMP/checksums.txt" | awk '{print $1}')
+          ACTUAL=$(sha256sum "$RUNNER_TEMP/osv-scanner" | awk '{print $1}')
+          if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::osv-scanner checksum mismatch (expected '$EXPECTED', got '$ACTUAL')"
+            exit 1
+          fi
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Scan pnpm-lock.yaml
+        id: scan
+        run: osv-scanner scan source --lockfile=pnpm-lock.yaml
+
+      # Tells whoever reads the failed run (person or agent) what to do next
+      - name: How to fix
+        if: failure() && steps.scan.outcome == 'failure'
+        run: |
+          cat <<'EOF'
+          Dependency scan failed. For each finding above:
+            1. Direct dependency: bump it in the package.json that lists it, then `pnpm install`.
+            2. Transitive dependency: `pnpm update -r --depth Infinity <package>`.
+               If pnpm can't reach it, add a scoped override in pnpm-workspace.yaml:
+               "<package>@<fixed-version": ^<fixed-version>
+            3. No fix available yet: add it to osv-scanner.toml under [[IgnoredVulns]],
+               with the advisory ID and the reason. Treat MAL-* (malicious package)
+               findings as an incident: remove the package, never ignore it.
+          EOF

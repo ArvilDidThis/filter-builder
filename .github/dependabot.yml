@@ -1,0 +1,22 @@
+# Dependabot keeps the GitHub Actions current. They are pinned to commits, so each update
+# arrives as a PR that CI and the audits check.
+#
+# npm packages are not covered here. Known vulnerabilities in them are caught by the dependency
+# audit (.github/workflows/dependency-audit.yml) instead.
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    # One weekly PR for minor and patch bumps; major bumps get their own PR, since they can break
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    # Wait 7 days after a release before proposing it, so a compromised release is more likely
+    # to be caught and pulled first
+    cooldown:
+      default-days: 7

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+coverage/
+
+# Local planning notes. They can name private projects, so they are never committed.
+/*-plan.md
+
+# Local working files
+/data/
+
+# Claude Code: each person's own skills, hooks and settings
+.claude/

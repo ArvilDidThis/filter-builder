@@ -1,0 +1,7 @@
+# zizmor configuration (https://docs.zizmor.sh/configuration/). Passed with --config by
+# .github/workflows/zizmor.yml.
+#
+# Exceptions to audits live next to the code they excuse, as `# zizmor: ignore[<audit>]`
+# comments with the reason beside them, so each one covers a single step and moves with it.
+# Add a rule here only for something that genuinely applies to a whole file.
+rules: {}

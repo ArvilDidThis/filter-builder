@@ -1,0 +1,62 @@
+name: zizmor
+
+# Security audit of the GitHub Actions workflows (https://docs.zizmor.sh). Catches supply-chain
+# and CI hazards such as actions not pinned to a commit, credentials left on disk after
+# checkout, overly broad permissions, and untrusted input injected into shell commands.
+# Kept separate from ci.yml so an outage in one never blocks the other.
+
+on:
+  push:
+    branches: [main]
+    # Keep in sync with pull_request.paths (no YAML anchors: they weaken zizmor's analysis)
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - ".github/dependabot.yml"
+      - ".github/zizmor.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - ".github/dependabot.yml"
+      - ".github/zizmor.yml"
+  # Weekly re-audit, so a workflow nobody has edited lately is still checked
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+
+# A newer push to the same branch or PR cancels the run still in progress
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# No permissions by default; the job asks for only what it needs
+permissions: {}
+
+jobs:
+  zizmor:
+    name: Audit workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # zizmor runs through uvx rather than zizmorcore/zizmor-action: the action always uploads
+      # results via GitHub Advanced Security (not enabled here). `--format=github` shows
+      # findings as annotations on the PR instead, and zizmor still fails the job on any finding.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # No cache: a cache shared across runs is a tampering target, and the download is small
+          enable-cache: false
+
+      - name: Run zizmor
+        # Version pinned, so the gate can't change its verdict on the same commit when zizmor
+        # ships new audits. Bumping it is a deliberate, reviewable change.
+        # --config is required: zizmor doesn't pick up .github/zizmor.yml on its own
+        run: uvx zizmor@1.30.1 --format=github --config .github/zizmor.yml .
+        env:
+          # Some audits look up actions on the GitHub API; this token can only read
+          GH_TOKEN: ${{ github.token }}
