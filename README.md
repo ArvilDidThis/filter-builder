@@ -41,6 +41,7 @@ pnpm lint:fix
 | `claude.yml`             | Answers `@claude` mentions in issues and pull requests                   |
 | `zizmor.yml`             | Audits the workflows themselves for security problems                    |
 | `dependency-audit.yml`   | Scans `pnpm-lock.yaml` for known vulnerable or malicious packages, daily |
+| `release.yml`            | Publishes both packages to npm when a version tag is pushed              |
 
 ## Data types
 
