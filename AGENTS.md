@@ -6,7 +6,7 @@ This file states the rules for working in this repository. The automated code re
 ## What this repository is
 
 A headless filter builder library. It holds the filter format, the rules that decide whether a
-row matches a filter, and (later) the builder UI. It replaces DataTables SearchBuilder and keeps
+row matches a filter, and the builder UI. It replaces DataTables SearchBuilder and keeps
 SearchBuilder's JSON shape and matching rules.
 
 | Package                   | Holds                                                                  |

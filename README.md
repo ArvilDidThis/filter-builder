@@ -1,7 +1,7 @@
 # Filter builder
 
 A headless filter builder: the filter format, the rules that decide whether a row matches, and
-(later) the builder UI. It replaces DataTables SearchBuilder and keeps its JSON shape and matching
+the builder UI. It replaces DataTables SearchBuilder and keeps its JSON shape and matching
 rules, so filters saved by SearchBuilder keep returning the same rows.
 
 The packages are not published yet.
@@ -85,6 +85,42 @@ summaryToText(
   describeFilter(filter, [{ key: "ratio", label: "Ratio", type: "num" }]),
 );
 // "Ratio 10 or more"
+```
+
+## The builder
+
+`@arvilmena/filter-react/ui` holds a ready-made builder. It uses plain HTML controls, and takes
+its colours from the `--fb-*` variables in the stylesheet.
+
+```tsx
+import { useState } from "react";
+import { FilterBuilder } from "@arvilmena/filter-react/ui";
+import "@arvilmena/filter-react/styles.css";
+
+const fields = [
+  { key: "ratio", label: "Ratio", type: "num" },
+  { key: "name", label: "Name", type: "string" },
+];
+
+function Filters() {
+  const [filter, setFilter] = useState({ logic: "AND", criteria: [] });
+  return <FilterBuilder value={filter} onChange={setFilter} fields={fields} />;
+}
+```
+
+To draw your own builder, use the `useFilterBuilder` hook from `@arvilmena/filter-react`. It
+holds no markup. It returns the rows to draw and the actions that change the filter.
+
+```tsx
+import { useFilterBuilder } from "@arvilmena/filter-react";
+
+const builder = useFilterBuilder({
+  value: filter,
+  onChange: setFilter,
+  fields,
+});
+// builder.root.rows: the conditions and groups, in order.
+// builder.actions: addCondition, remove, move and the rest.
 ```
 
 ## Licence
