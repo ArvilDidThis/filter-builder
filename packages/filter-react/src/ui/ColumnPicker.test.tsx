@@ -935,6 +935,34 @@ describe("ColumnPicker", () => {
       }
     });
 
+    it("should show where the focus is when the list opens from the keyboard", () => {
+      const { sheet } = renderInBuilder();
+      // Opening moves the focus to the list's box. The test page does not know whether the
+      // keyboard was used (`:focus-visible`), so this reads the style sheet.
+      const popoverRules = Array.from(sheet.sheet?.cssRules ?? [])
+        .map((rule) => rule as CSSStyleRule)
+        .filter((rule) => rule.selectorText?.includes(".fb-columns-popover"));
+      const selectorsOf = (rule: CSSStyleRule) =>
+        rule.selectorText.split(",").map((selector) => selector.trim());
+
+      // A ring is drawn for a focus that came from the keyboard, in the variable's colour.
+      const ring = popoverRules.find((rule) =>
+        selectorsOf(rule).includes(".fb-columns-popover:focus-visible"),
+      );
+      expect(ring?.style.outlineColor).toBe("var(--fb-focus)");
+      // And no rule takes the ring away from such a focus.
+      const removing = popoverRules.filter(
+        (rule) =>
+          rule.style.outlineStyle === "none" ||
+          ["0", "0px"].includes(rule.style.outlineWidth),
+      );
+      for (const rule of removing) {
+        for (const selector of selectorsOf(rule)) {
+          expect(selector).toContain(":not(:focus-visible)");
+        }
+      }
+    });
+
     it("should leave the drop line to the picker's own rules", () => {
       const { sheet } = renderInBuilder();
       fireEvent.pointerDown(handle("Name"), pointer(115));

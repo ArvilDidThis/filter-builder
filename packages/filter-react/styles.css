@@ -352,7 +352,8 @@
 .fb-bar-logic:focus-visible,
 .fb-bar-remove:focus-visible,
 .fb-columns-handle:focus-visible,
-.fb-columns-checkbox:focus-visible {
+.fb-columns-checkbox:focus-visible,
+.fb-columns-popover:focus-visible {
   outline: 2px solid var(--fb-focus);
   outline-offset: 1px;
 }
@@ -468,9 +469,10 @@
   left: auto;
 }
 
-/* The box takes the focus when it opens, only so that Tab starts from it. It is not a control,
-   so it shows no focus ring. */
-.fb-columns-popover:focus {
+/* The box takes the focus when it opens, so that Tab starts from it. It is not a control, so
+   a click that opens it shows no focus ring. Opened from the keyboard, it keeps the ring of
+   the rule above, so a person can see where the focus went. */
+.fb-columns-popover:focus:not(:focus-visible) {
   outline: none;
 }
 
