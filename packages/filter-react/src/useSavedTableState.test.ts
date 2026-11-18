@@ -604,6 +604,165 @@ describe("useSavedTableState", () => {
     });
   });
 
+  describe("parts the hook does not own", () => {
+    const numberPart: StatePart<number> = {
+      defaultValue: 0,
+      parse: (saved) => (typeof saved === "number" ? saved : undefined),
+    };
+    const PAGE_PARTS = { pageSize: numberPart };
+    const OTHER_PARTS = { other: numberPart };
+
+    it("should keep them when it saves", () => {
+      const store = memoryStore({
+        orders: savedWith({ sort: NAME_SORT, pageSize: 50, legacy: ["x"] }),
+      });
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          filter: EMPTY_FILTER,
+          columns: COLUMN_DEFAULTS,
+          sort: PRICE_SORT,
+          pageSize: 50,
+          legacy: ["x"],
+        }),
+      );
+    });
+
+    it("should keep them in today's shape after an upgrade", () => {
+      const store = memoryStore({
+        orders: savedWith({ rows: 50, sort: NAME_SORT }, 1),
+      });
+      const { result } = renderSaved({
+        store,
+        version: 2,
+        migrate: ({ rows, ...rest }) => ({ ...rest, pageSize: rows }),
+      });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith(
+          {
+            filter: EMPTY_FILTER,
+            columns: COLUMN_DEFAULTS,
+            sort: PRICE_SORT,
+            pageSize: 50,
+          },
+          2,
+        ),
+      );
+    });
+
+    it("should drop them on clear", () => {
+      const store = memoryStore({ orders: savedWith({ pageSize: 50 }) });
+      const { result } = renderSaved({ store });
+      act(() => result.current.clear());
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          filter: EMPTY_FILTER,
+          columns: COLUMN_DEFAULTS,
+          sort: PRICE_SORT,
+        }),
+      );
+    });
+
+    it("should not carry them over to another key", () => {
+      const store = memoryStore({ orders: savedWith({ pageSize: 50 }) });
+      const { result, rerender } = renderSaved({ store });
+      rerender({ id: "archive", store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("archive")).toEqual(
+        savedWith({
+          filter: EMPTY_FILTER,
+          columns: COLUMN_DEFAULTS,
+          sort: PRICE_SORT,
+        }),
+      );
+    });
+
+    /** Two hooks on screen that save different parts under one key, in one store. */
+    const renderTwoOnOneKey = (id: string, store: StateStore) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const page = renderHook(() =>
+        useSavedTableState({ id, store, parts: PAGE_PARTS }),
+      );
+      const other = renderHook(() =>
+        useSavedTableState({ id, store, parts: OTHER_PARTS }),
+      );
+      return { warn, page, other };
+    };
+
+    it("should keep both hooks' parts when two hooks share a key", () => {
+      const store = memoryStore();
+      const { page, other } = renderTwoOnOneKey("shared-saves", store);
+      act(() => page.result.current.set.pageSize(50));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => other.result.current.set.other(7));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("shared-saves")).toEqual(
+        savedWith({ pageSize: 50, other: 7 }),
+      );
+
+      act(() => page.result.current.set.pageSize(100));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("shared-saves")).toEqual(
+        savedWith({ pageSize: 100, other: 7 }),
+      );
+    });
+
+    it("should forget the other hook's parts when that hook clears", () => {
+      const store = memoryStore();
+      const { page, other } = renderTwoOnOneKey("shared-clear", store);
+      act(() => page.result.current.set.pageSize(50));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => page.result.current.clear());
+      act(() => other.result.current.set.other(7));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("shared-clear")).toEqual(savedWith({ other: 7 }));
+    });
+
+    it("should warn once, in development, when two hooks share a key", () => {
+      const store = memoryStore();
+      const { warn } = renderTwoOnOneKey("shared-warned", store);
+      renderHook(() =>
+        useSavedTableState({ id: "shared-warned", store, parts: PAGE_PARTS }),
+      );
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]?.[0]).toContain('"shared-warned"');
+      expect(warn.mock.calls[0]?.[0]).toContain("`id` or `name`");
+    });
+
+    it("should not warn in production", () => {
+      vi.stubEnv("NODE_ENV", "production");
+      try {
+        const { warn } = renderTwoOnOneKey("shared-production", memoryStore());
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("should not warn about another key, another store or a hook that left", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const store = memoryStore();
+      const first = renderSaved({ id: "alone", store });
+      renderSaved({ id: "alone-too", store });
+      renderSaved({ id: "alone", store: memoryStore() });
+      first.unmount();
+      renderSaved({ id: "alone", store });
+      renderSaved({ id: "alone-strict", store });
+      renderHook(
+        () => useSavedTableState({ id: "strict", parts: PARTS, store }),
+        { wrapper: StrictMode },
+      );
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
   describe("the order of saves", () => {
     /** Leaves one save unanswered and a newer change waiting out the delay. */
     const withSaveOnItsWay = (options: Options = {}) => {

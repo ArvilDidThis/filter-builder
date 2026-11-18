@@ -1,7 +1,9 @@
 import {
   createSavedState,
+  DEFAULT_STATE_VERSION,
   localStorageStore,
   type ReadSavedStateOptions,
+  readSavedParts,
   readSavedState,
   resolveStateKey,
   type SavedState,
@@ -28,7 +30,12 @@ export interface UseSavedTableStateOptions<Values>
    * several tables share an id. It wins over `id`.
    */
   name?: string;
-  /** The table's id. With neither `name` nor `id`, the state is saved under the page's path. */
+  /**
+   * The table's id. With neither `name` nor `id`, the state is saved under the page's path.
+   *
+   * Use one hook call per key. Two tables on one page with neither a `name` nor an `id` both
+   * fall back to the page's path, and then save over each other's parts of the same name.
+   */
   id?: string;
   /**
    * The parts to remember, by name. Each has a default and a `parse` that checks the saved
@@ -102,6 +109,8 @@ export interface SavedTableState<Values> {
  * - When `name`, `id` or the page's path changes, a waiting change is saved under the old key
  *   and the state for the new key is loaded.
  * - A waiting change is also saved when the page is hidden or closed, and on unmount.
+ * - Parts saved under the key that this hook does not own are kept, and written back with its
+ *   own. `clear()` removes them too.
  * - Saves and removes reach the store one at a time, in the order they were made, so a slow
  *   answer cannot leave an older state in the store. Only a closing page does not wait for the
  *   answer before it sends the next one.
@@ -220,6 +229,38 @@ function startSnapshot<Values>(
 // Made on first use, so an app that passes its own store never makes this one.
 let defaultStore: StateStore | undefined;
 
+/** What a hook hears from another hook that saves under the same key, in the same store. */
+interface KeySharer {
+  /** The other hook saved these parts. */
+  saved(parts: Readonly<Record<string, unknown>>): void;
+  /** The other hook removed everything saved under the key. */
+  removed(): void;
+}
+
+/**
+ * The hooks on screen, by store and key. One hook call per key is the rule. When an app breaks
+ * it, the hooks tell each other what they save, so that neither drops the other's parts.
+ */
+const sharersByStore = new WeakMap<StateStore, Map<string, Set<KeySharer>>>();
+
+/** The keys already warned about, so each is named once. */
+const warnedKeys = new Set<string>();
+
+// Bundlers put the build mode in place of `process.env.NODE_ENV`. Where there is no bundler
+// and no `process`, as in a plain browser page, nothing is warned about.
+declare const process: { env: { NODE_ENV?: string } } | undefined;
+
+/** Tells a developer, once per key, that two tables on screen save under the same key. */
+function warnAboutSharedKey(key: string): void {
+  if (typeof process === "undefined") return;
+  if (process.env.NODE_ENV === "production" || warnedKeys.has(key)) return;
+  warnedKeys.add(key);
+  console.warn(
+    `useSavedTableState: two tables on screen save their state under the key "${key}". ` +
+      "Parts of the same name overwrite each other. Give each table its own `id` or `name`.",
+  );
+}
+
 /**
  * Holds the state between renders and talks to the store. It lives outside React's render so
  * that the setters can stay the same functions, and so that a save always carries the key its
@@ -236,6 +277,13 @@ function createController<Values>(
   let active = false;
   /** Whether the load for `live.key` finished well. Nothing is saved until it has. */
   let canSave = false;
+  /**
+   * The parts saved under `live.key` that this hook does not own: another hook's, or ones the
+   * app no longer has. They are written back with every save, so that saving drops nothing.
+   */
+  let unowned: Record<string, unknown> = {};
+  /** The store and key this hook is listed under in `sharersByStore`, while on screen. */
+  let listed: { store: StateStore; key: string } | undefined;
   /** The parts a person changed while the load was on its way. */
   const touched = new Set<keyof Values>();
   /** Goes up whenever a load is started or dropped. A load that answers late sees it moved. */
@@ -283,6 +331,50 @@ function createController<Values>(
     latest.current.onError?.(error, action);
   };
 
+  const isOwnPart = (name: string): boolean =>
+    Object.hasOwn(latest.current.parts, name);
+
+  const sharer: KeySharer = {
+    saved(parts) {
+      for (const [name, value] of Object.entries(parts)) {
+        if (!isOwnPart(name)) unowned[name] = value;
+      }
+    },
+    removed() {
+      unowned = {};
+    },
+  };
+
+  /** The other hooks on screen that use this store and key. */
+  const othersOn = (place: StateStore, key: string): KeySharer[] =>
+    [...(sharersByStore.get(place)?.get(key) ?? [])].filter(
+      (other) => other !== sharer,
+    );
+
+  /** Lists this hook under its store and key, and warns when another hook is there already. */
+  const joinSharers = (key: string): void => {
+    const place = store();
+    let byKey = sharersByStore.get(place);
+    if (byKey === undefined) {
+      byKey = new Map();
+      sharersByStore.set(place, byKey);
+    }
+    const sharers = byKey.get(key) ?? new Set();
+    byKey.set(key, sharers);
+    sharers.add(sharer);
+    listed = { store: place, key };
+    if (sharers.size > 1) warnAboutSharedKey(key);
+  };
+
+  const leaveSharers = (): void => {
+    if (listed === undefined) return;
+    const byKey = sharersByStore.get(listed.store);
+    const sharers = byKey?.get(listed.key);
+    sharers?.delete(sharer);
+    if (sharers?.size === 0) byKey?.delete(listed.key);
+    listed = undefined;
+  };
+
   /** Hands one save or remove to the store, and deals with its answer. */
   const send = (job: StoreJob): void => {
     saveRun += job.kind === "save" ? 1 : 0;
@@ -306,10 +398,15 @@ function createController<Values>(
     };
 
     try {
+      const place = store();
+      for (const other of othersOn(place, job.key)) {
+        if (job.kind === "save") other.saved(job.saved.parts);
+        else other.removed();
+      }
       const answer =
         job.kind === "save"
-          ? store().save(job.key, job.saved)
-          : store().remove(job.key);
+          ? place.save(job.key, job.saved)
+          : place.remove(job.key);
       if (!isPromiseLike(answer)) {
         settle();
         return;
@@ -351,8 +448,10 @@ function createController<Values>(
     if (job === undefined) return;
     pending = undefined;
 
+    // `unowned` still belongs to the job's key: a change of key queues the waiting change
+    // before it loads the new key.
     const saved = createSavedState(
-      job.values as Record<string, unknown>,
+      { ...unowned, ...job.values },
       latest.current.version,
     );
     let json: string;
@@ -385,10 +484,12 @@ function createController<Values>(
       live = start;
       active = true;
       canSave = false;
+      unowned = {};
       touched.clear();
       loadRun += 1;
       const run = loadRun;
       const { key } = start;
+      if (key !== undefined) joinSharers(key);
 
       const fail = (error: unknown): void => {
         // The key changed or the table left the screen while the store was answering.
@@ -409,7 +510,9 @@ function createController<Values>(
         // fresh copy of the defaults, saves the table a redraw.
         let values = live.values;
         if (saved !== null && saved !== undefined) {
-          values = readSavedState(saved, latest.current.parts, latest.current);
+          const loaded = readLoadedState(saved, latest.current);
+          values = loaded.values;
+          unowned = loaded.unowned;
           // A part changed while loading keeps the change.
           for (const part of touched) values[part] = live.values[part];
         }
@@ -435,6 +538,7 @@ function createController<Values>(
     stop(): void {
       loadRun += 1;
       active = false;
+      leaveSharers();
       queuePending();
       sendNext();
     },
@@ -481,6 +585,7 @@ function createController<Values>(
       timer = undefined;
       pending = undefined;
       written = undefined;
+      unowned = {};
       touched.clear();
       const { key } = live;
       const values = readSavedState(undefined, latest.current.parts);
@@ -497,6 +602,29 @@ function createController<Values>(
       sendNext();
     },
   };
+}
+
+/**
+ * Reads what a store handed back: each of the hook's parts, checked, and the saved parts the
+ * hook does not own, as they are.
+ */
+function readLoadedState<Values>(
+  saved: unknown,
+  options: UseSavedTableStateOptions<Values>,
+): { values: Values; unowned: Record<string, unknown> } {
+  const version = options.version ?? DEFAULT_STATE_VERSION;
+  // Upgraded once here. Wrapped in today's version below, so they are not upgraded again.
+  const savedParts = readSavedParts(saved, options);
+  const unowned: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(savedParts ?? {})) {
+    if (!Object.hasOwn(options.parts, name)) unowned[name] = value;
+  }
+  const values = readSavedState(
+    savedParts && createSavedState(savedParts, version),
+    options.parts,
+    { version },
+  );
+  return { values, unowned };
 }
 
 /** A save or a remove on its way to the store. */
