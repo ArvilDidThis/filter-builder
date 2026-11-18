@@ -197,10 +197,20 @@ export function columnStatePart(
   };
 }
 
-/** The parts of a saved value in today's shape, or `undefined` when none can be used. */
-function readSavedParts(
+/**
+ * The parts of a saved value in today's shape, upgraded with `migrate` when another version
+ * wrote them. It gives `undefined` when the value cannot be used. It never throws.
+ *
+ * The parts are not checked yet, and may be anything. `readSavedState` checks them. Use this
+ * to keep the parts your code does not read, so that saving does not drop them.
+ *
+ * @example
+ * const before = readSavedParts(store.load("orders")) ?? {};
+ * store.save("orders", createSavedState({ ...before, pageSize: 50 }));
+ */
+export function readSavedParts(
   saved: unknown,
-  options: ReadSavedStateOptions,
+  options: ReadSavedStateOptions = {},
 ): Record<string, unknown> | undefined {
   if (!isRecord(saved) || !isRecord(saved.parts)) return undefined;
   const current = options.version ?? DEFAULT_STATE_VERSION;

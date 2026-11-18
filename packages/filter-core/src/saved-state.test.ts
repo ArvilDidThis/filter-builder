@@ -6,6 +6,7 @@ import {
   createSavedState,
   filterStatePart,
   MAX_SAVED_FILTER_DEPTH,
+  readSavedParts,
   readSavedState,
   resolveStateKey,
   type StatePart,
@@ -313,6 +314,36 @@ describe("createSavedState", () => {
     const saved = createSavedState(values);
     values.sort = { key: "price" };
     expect(saved.parts.sort).toBeNull();
+  });
+});
+
+describe("readSavedParts", () => {
+  it("should hand out every saved part, unchecked", () => {
+    const parts = { sort: "broken", other: [1, 2] };
+    expect(readSavedParts({ version: 1, parts })).toBe(parts);
+  });
+
+  it("should upgrade parts saved under another version", () => {
+    const migrate = vi.fn((parts: Record<string, unknown>) => ({
+      ...parts,
+      pageSize: parts.rows,
+    }));
+    expect(
+      readSavedParts(
+        { version: 1, parts: { rows: 50 } },
+        { version: 2, migrate },
+      ),
+    ).toEqual({ rows: 50, pageSize: 50 });
+    expect(migrate).toHaveBeenCalledExactlyOnceWith({ rows: 50 }, 1);
+  });
+
+  it.each([
+    ["nothing", undefined],
+    ["text", "saved"],
+    ["a value with no parts", { version: 1 }],
+    ["a value from another version", { version: 7, parts: {} }],
+  ])("should find no parts in %s", (_label, saved) => {
+    expect(readSavedParts(saved)).toBeUndefined();
   });
 });
 
