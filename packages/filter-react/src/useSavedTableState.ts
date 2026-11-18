@@ -117,24 +117,28 @@ export interface SavedTableState<Values> {
    *
    * - "load": the saved state could not be read. Saving is off, so that the stored state is
    *   not overwritten. Call `reload()` to try again.
-   * - "save": one save failed. The next change is saved as usual.
+   * - "save": one save failed. The change is kept, and is saved again with the next change,
+   *   on `flush()`, when the page is hidden or closed, and when the table leaves the screen.
    * - "remove": `clear()` could not remove the stored state.
    */
   errorAction: SavedTableStateAction | undefined;
   /**
    * Reads the saved state again. Use it after a failed load, to turn saving back on without
-   * deleting the stored state. A part changed since the last successful load keeps the change,
-   * and the other parts take the stored state.
+   * deleting the stored state. A part whose change the store has not taken keeps the change:
+   * one made while saving was off, or one whose save failed. It is saved after the load. The
+   * other parts take the stored state.
    */
   reload: () => void;
   /**
-   * Saves a waiting change now, without waiting out the delay. The promise settles once the
-   * store has answered every save and remove sent so far, so an app can wait for it before it
-   * leaves the page: `await saved.flush()`.
+   * Saves a waiting change now, without waiting out the delay. A change whose save failed
+   * earlier counts as waiting, and is tried again. The promise settles once the store has
+   * answered every save and remove sent so far, so an app can wait for it before it leaves the
+   * page: `await saved.flush()`.
    *
-   * The promise never rejects. It gives `true` when nothing is left unsaved, and `false` when a
-   * save or remove failed, or when a change cannot be saved because the load has not finished
-   * or has failed. The failure itself is in `error` and goes to `onError`.
+   * The promise never rejects. It gives `true` when nothing is left unsaved. It gives `false`
+   * while a save or remove has failed and no later one went through, or when a change cannot
+   * be saved because the load has not finished or has failed. The failure itself is in `error`
+   * and goes to `onError`.
    */
   flush: () => Promise<boolean>;
   /**
@@ -384,8 +388,14 @@ function createController<Values>(
   let isJoined = false;
   /** The saved parts a server read, until the first channel takes them over. */
   let serverParts = first.serverParts;
-  /** The parts a person changed while saving was off: during the load, or after it failed. */
-  const touched = new Set<keyof Values>();
+  /**
+   * The parts a person changed that the store has not taken yet: saving was off, the save
+   * still waits, or it failed. A load never replaces them, and `flush` gives false while one
+   * is left.
+   */
+  const unsaved = new Set<keyof Values>();
+  /** Whether `clear()` could not remove the stored state, and no save went through since. */
+  let removeFailed = false;
   /** Goes up whenever a load is started or dropped. A load that answers late sees it moved. */
   let loadRun = 0;
 
@@ -396,8 +406,6 @@ function createController<Values>(
   const owner = {};
   /** Goes up with every save handed to a channel. Only the newest save may clear an error. */
   let saveRun = 0;
-  /** Goes up with every failed save or remove. `flush` reads it to tell how its saves went. */
-  let failures = 0;
   /** How many of this hook's saves and removes have not ended yet. */
   let unanswered = 0;
   /** Called once all of this hook's saves and removes have ended. `flush` waits here. */
@@ -416,7 +424,6 @@ function createController<Values>(
     action: SavedTableStateAction,
     key: string | undefined,
   ): void => {
-    if (action !== "load") failures += 1;
     if (live.key === key)
       publish({ ...live, status: "error", error, errorAction: action });
     try {
@@ -476,17 +483,26 @@ function createController<Values>(
     run: number,
     outcome: WriteOutcome,
   ): void => {
+    const isForKeyOnScreen = live.key === change.key;
     if (outcome.status === "failed") {
+      // The change waits again, so that the next flush or the next change tries once more.
+      if (isForKeyOnScreen && canSave)
+        pending ??= { ...change, values: live.values };
       report(outcome.error, "save", change.key);
       return;
     }
-    const clearsError =
-      outcome.status === "accepted" &&
-      run === saveRun &&
-      live.key === change.key &&
-      live.status === "error" &&
-      canSave;
-    // An earlier save had failed, and this one went through.
+    if (outcome.status === "replaced" || !isForKeyOnScreen) return;
+
+    removeFailed = false;
+    // A part changed again since this save was made is still not in the store.
+    for (const part of unsaved) {
+      if (Object.is(live.values[part], change.values[part]))
+        unsaved.delete(part);
+    }
+    // A change put back to wait by an earlier failure has now been saved by this save.
+    if (unsaved.size === 0 && timer === undefined) pending = undefined;
+    // An earlier save had failed, and this one, the newest, went through.
+    const clearsError = run === saveRun && live.status === "error" && canSave;
     if (clearsError) publish({ ...live, ...READY });
   };
 
@@ -552,13 +568,12 @@ function createController<Values>(
         const loaded = readLoadedState(saved, latest.current);
         source.noteRead(loaded.savedParts, writesAtRead);
         values = loaded.values;
-        // A part changed while loading keeps the change.
-        for (const part of touched) values[part] = live.values[part];
+        // A change the store has not taken is kept, and saved below.
+        for (const part of unsaved) values[part] = live.values[part];
       }
       canSave = true;
       publish({ key, values, ...READY });
-      if (touched.size > 0) scheduleSave(key);
-      touched.clear();
+      if (unsaved.size > 0) scheduleSave(key);
     };
     const read = (): void => {
       if (run !== loadRun) return;
@@ -592,7 +607,8 @@ function createController<Values>(
       if (isNewKey) {
         live = start;
         canSave = false;
-        touched.clear();
+        unsaved.clear();
+        removeFailed = false;
       } else if (live !== start) {
         // The state moved on while nothing could be drawn. Show it now.
         draw(live);
@@ -644,14 +660,16 @@ function createController<Values>(
         typeof change === "function" ? change(before) : (change as never);
       if (Object.is(before, next)) return;
       publish({ ...live, values: { ...live.values, [part]: next } });
+      unsaved.add(part);
+      // While saving is off the change only waits in `unsaved`. The load saves it later.
       if (canSave && live.key !== undefined) scheduleSave(live.key);
-      // Not saved now. Remembered, so that a load that still succeeds keeps the change.
-      else touched.add(part);
     },
 
     reload(): void {
       // A change waiting out the delay goes first, so that the store answers with it.
       queuePending();
+      // When that save fails, the change stays in `unsaved`, and is saved after the load.
+      pending = undefined;
       canSave = false;
       if (live.status !== "loading") {
         publish({
@@ -669,11 +687,8 @@ function createController<Values>(
     },
 
     flush(): Promise<boolean> {
-      const failuresBefore = failures;
       queuePending();
-      // A change made before the load has finished, or after it failed, is not saved.
-      const isAllSaved = (): boolean =>
-        failures === failuresBefore && touched.size === 0;
+      const isAllSaved = (): boolean => unsaved.size === 0 && !removeFailed;
       if (unanswered === 0) return Promise.resolve(isAllSaved());
       return new Promise((resolve) => {
         whenAnswered.push(() => resolve(isAllSaved()));
@@ -692,7 +707,8 @@ function createController<Values>(
       clearTimeout(timer);
       timer = undefined;
       pending = undefined;
-      touched.clear();
+      unsaved.clear();
+      removeFailed = false;
       const { key } = live;
       const values = readSavedState(undefined, latest.current.parts);
       if (key === undefined || channel === undefined) {
@@ -707,7 +723,9 @@ function createController<Values>(
       send(channel, {
         kind: "remove",
         done: (outcome) => {
-          if (outcome.status === "failed") report(outcome.error, "remove", key);
+          if (outcome.status !== "failed") return;
+          removeFailed = live.key === key;
+          report(outcome.error, "remove", key);
         },
       });
     },

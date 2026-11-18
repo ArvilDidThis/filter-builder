@@ -2039,6 +2039,82 @@ describe("useSavedTableState", () => {
       unmount();
     });
   });
+
+  describe("a save or remove that failed", () => {
+    const failOnce = () => {
+      throw new Error("full");
+    };
+
+    it("should give false on flush until a new try goes through", async () => {
+      const store = memoryStore();
+      store.save
+        .mockImplementationOnce(failOnce)
+        .mockImplementationOnce(failOnce);
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(result.current.errorAction).toBe("save");
+
+      // Nothing new waits, but the change is still not in the store. Flush tries it again.
+      let flushed: Promise<boolean> | undefined;
+      act(() => {
+        flushed = result.current.flush();
+      });
+      await expect(flushed).resolves.toBe(false);
+      expect(store.save).toHaveBeenCalledTimes(2);
+
+      act(() => {
+        flushed = result.current.flush();
+      });
+      await expect(flushed).resolves.toBe(true);
+      expect(result.current.status).toBe("ready");
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: PRICE_SORT },
+      });
+      await expect(result.current.flush()).resolves.toBe(true);
+    });
+
+    it("should give false on flush after a failed remove, until a later save goes through", async () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      store.remove.mockImplementationOnce(failOnce);
+      const { result } = renderSaved({ store });
+      act(() => result.current.clear());
+      expect(result.current.errorAction).toBe("remove");
+      await expect(result.current.flush()).resolves.toBe(false);
+
+      act(() => result.current.set.sort(PRICE_SORT));
+      let flushed: Promise<boolean> | undefined;
+      act(() => {
+        flushed = result.current.flush();
+      });
+      await expect(flushed).resolves.toBe(true);
+    });
+
+    it("should keep the change through a reload, and save it afterwards", () => {
+      const store = memoryStore({
+        orders: savedWith({ filter: priceFilter("10"), sort: NAME_SORT }),
+      });
+      store.save
+        .mockImplementationOnce(failOnce)
+        .mockImplementationOnce(failOnce);
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(result.current.errorAction).toBe("save");
+
+      // The reload tries the save once more, and it fails again. The store's older sort
+      // must not replace the change.
+      act(() => result.current.reload());
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+      expect(result.current.values.filter).toEqual(priceFilter("10"));
+
+      act(() => vi.advanceTimersByTime(300));
+      expect(result.current.status).toBe("ready");
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { filter: priceFilter("10"), sort: PRICE_SORT },
+      });
+    });
+  });
 });
 
 /** A table that hands its saved state to the test, for the tests that hide and show it. */

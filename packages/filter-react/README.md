@@ -485,11 +485,11 @@ reads it.
 
 `status` becomes `"error"`, `error` holds what went wrong, and `errorAction` says what failed:
 
-| `errorAction` | Means                                                | What to do                           |
-| ------------- | ---------------------------------------------------- | ------------------------------------ |
-| `"load"`      | The saved state could not be read. **Saving is off** | Call `reload()` to try again         |
-| `"save"`      | One save failed                                      | Nothing: the next change saves again |
-| `"remove"`    | `clear()` could not remove the stored state          | Call `clear()` again                 |
+| `errorAction` | Means                                                | What to do                          |
+| ------------- | ---------------------------------------------------- | ----------------------------------- |
+| `"load"`      | The saved state could not be read. **Saving is off** | Call `reload()` to try again        |
+| `"save"`      | One save failed. The change is kept                  | Nothing, or call `flush()` to retry |
+| `"remove"`    | `clear()` could not remove the stored state          | Call `clear()` again                |
 
 After a failed load nothing is saved, so that the stored state is not overwritten. `reload()`
 reads it again and turns saving back on. A part changed since the load failed keeps the
@@ -517,9 +517,14 @@ async function leave() {
 }
 ```
 
-The promise never rejects. It gives `true` when nothing is left unsaved. It gives `false` when
-a save failed, or when a change cannot be saved because the load has not finished or has
-failed. The failure itself is in `error`, and goes to `onError`.
+The promise never rejects. It gives `true` when nothing is left unsaved. It gives `false`
+while a save or remove has failed and no later one went through, or when a change cannot be
+saved because the load has not finished or has failed. The failure itself is in `error`, and
+goes to `onError`.
+
+A change whose save failed is not lost. It is saved again with the next change, on `flush()`,
+when the page is hidden or closed, and when the table leaves the screen. `reload()` keeps it
+too, and saves it after the load.
 
 Two things the hook does not do:
 
