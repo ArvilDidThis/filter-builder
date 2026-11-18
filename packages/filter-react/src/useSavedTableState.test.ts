@@ -1643,6 +1643,30 @@ describe("useSavedTableState", () => {
   });
 
   describe("clear", () => {
+    it("should not save again when a save from before it fails", async () => {
+      const failure = new Error("offline");
+      const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const onError = vi.fn();
+      const { result } = renderSaved({ store, onError });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => void result.current.flush());
+      act(() => result.current.clear());
+
+      // The save from before the clear fails, and then the remove goes through.
+      act(() => store.requests[0]?.fail(failure));
+      await settle();
+      act(() => store.requests[1]?.answer());
+      await settle();
+      expect(onError).toHaveBeenCalledExactlyOnceWith(failure, "save");
+      expect(result.current.status).toBe("ready");
+
+      // Nothing is left to save, so nothing goes back into the store that was emptied.
+      await expect(result.current.flush()).resolves.toBe(true);
+      act(() => window.dispatchEvent(new Event("pagehide")));
+      expect(store.requests).toHaveLength(2);
+      expect(store.items.has("orders")).toBe(false);
+    });
+
     it("should forget the saved state and put the defaults back", () => {
       const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
       const { result } = renderSaved({ store });

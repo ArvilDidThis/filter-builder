@@ -431,6 +431,17 @@ function createController<Values>(
     if (active) draw(next);
   };
 
+  /** Tells the app of a failure. */
+  const tell = (error: unknown, action: SavedTableStateAction): void => {
+    try {
+      latest.current.onError?.(error, action);
+    } catch (thrown) {
+      // The app's own callback failed. Its error is logged, not passed on: it must not stop
+      // the next save or make `flush` fail.
+      console.error(thrown);
+    }
+  };
+
   /** Shows a failure when it is about the key on screen, and always tells the app. */
   const report = (
     error: unknown,
@@ -439,13 +450,7 @@ function createController<Values>(
   ): void => {
     if (live.key === key)
       publish({ ...live, status: "error", error, errorAction: action });
-    try {
-      latest.current.onError?.(error, action);
-    } catch (thrown) {
-      // The app's own callback failed. Its error is logged, not passed on: it must not stop
-      // the next save or make `flush` fail.
-      console.error(thrown);
-    }
+    tell(error, action);
   };
 
   /** Forgets the change waiting out the delay. Its parts stay in `unsaved`. */
@@ -517,6 +522,13 @@ function createController<Values>(
   ): void => {
     const isForKeyOnScreen = live.key === change.key;
     if (outcome.status === "failed") {
+      // `clear()` came after this save was made, so none of its parts is left to save. The
+      // app hears of the failure. It is not shown and not tried again: another save would
+      // put state back into the store that was just emptied.
+      if (isForKeyOnScreen && unsaved.size === 0) {
+        tell(outcome.error, "save");
+        return;
+      }
       // The change waits again, so that the next flush or the next change tries once more.
       if (isForKeyOnScreen && canSave)
         pending ??= { ...change, values: live.values };
