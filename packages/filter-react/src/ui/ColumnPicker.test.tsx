@@ -344,6 +344,23 @@ describe("ColumnPicker", () => {
       expect(announced()).toBe("Name moved to position 3 of 4.");
     });
 
+    it("should drop where the pointer is let go when no move was heard first", () => {
+      renderPicker();
+      layOutList();
+      // A pointer can travel and let go with no move reported in between.
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+    });
+
+    it("should leave a column in place when its handle is only pressed", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Price"), pointer(145));
+      fireEvent.pointerUp(document, pointer(145));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
     it("should move a column up, and below the last row", () => {
       renderPicker();
       layOutList();

@@ -42,8 +42,6 @@ interface DragSession {
   key: string;
   /** The row's place in the list as it is now. */
   from: number;
-  /** The place the row would end up at if dropped now. */
-  to: number;
   pointerId: number;
   /** The pointer's last known height on the screen. */
   clientY: number;
@@ -113,8 +111,7 @@ export function useColumnDrag({
     // row is measured here.
     const box = list.getBoundingClientRect();
     const slot = slotAt(drag.middles, drag.clientY - box.top + list.scrollTop);
-    drag.to = placeFromSlot(drag.from, slot);
-    const shown = drag.to === drag.from ? null : slot;
+    const shown = placeFromSlot(drag.from, slot) === drag.from ? null : slot;
     // The pointer moves many times a second, so the state changes only when the slot does.
     setHeld((was) =>
       was.slot === shown ? was : { key: drag.key, slot: shown },
@@ -189,7 +186,15 @@ export function useColumnDrag({
         end();
         // A drop means nothing once the list it was aimed at has left the page.
         if (listRef.current !== list) return;
-        if (drag.to !== drag.from) latest.current.onDrop(drag.key, drag.to);
+        // The place is worked out here, from where the pointer was let go and the list as it
+        // is now. The last move heard may be out of date: a pointer can travel and let go
+        // with no move reported in between, and the list can change under a still pointer.
+        const from = latest.current.keys.indexOf(drag.key);
+        if (from === -1) return;
+        const y =
+          released.clientY - list.getBoundingClientRect().top + list.scrollTop;
+        const to = placeFromSlot(from, slotAt(measureMiddles(list), y));
+        if (to !== from) latest.current.onDrop(drag.key, to);
       };
       // The browser took the pointer away, for example to scroll the page, or took the
       // capture away without a release.
@@ -217,7 +222,6 @@ export function useColumnDrag({
       session.current = {
         key,
         from,
-        to: from,
         pointerId,
         clientY: event.clientY,
         // Every row is measured once, here, and not again while the list stays as it is.
