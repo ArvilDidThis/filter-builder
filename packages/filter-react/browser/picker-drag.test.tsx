@@ -200,7 +200,9 @@ describe("dragging a column by touch (item 1)", () => {
 
 describe("a drag that reaches the list's edge (item 2)", () => {
   test("scrolls the list down by itself, and up again", async () => {
-    const picker = await mountOpenPicker({ columns: manyColumns(40) });
+    // Enough columns to overflow the list, and no more: the list scrolls a few pixels per
+    // screen frame, so a longer one only makes the test wait longer for the same end.
+    const picker = await mountOpenPicker({ columns: manyColumns(16) });
     const list = picker.list();
     // The furthest the list scrolls. A browser may round it up or down by part of a pixel.
     const furthest = list.scrollHeight - list.clientHeight;
