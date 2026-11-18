@@ -2161,6 +2161,99 @@ describe("ColumnPicker", () => {
       });
     });
 
+    describe("on a page that is zoomed in with two fingers", () => {
+      const { waiting, drawFrame } = holdFrames();
+      /**
+       * Gives the test page the part of it that a person sees after zooming in, which the
+       * test page does not have. A browser calls it the visual viewport.
+       */
+      function zoomTo(seen: { offsetLeft: number; width: number }) {
+        const viewport = Object.assign(new EventTarget(), seen);
+        Object.defineProperty(window, "visualViewport", {
+          configurable: true,
+          value: viewport,
+        });
+        onTestFinished(() => {
+          Reflect.deleteProperty(window, "visualViewport");
+        });
+        return viewport;
+      }
+
+      it("should move a popover that runs past the edge of the part in view", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 500, top: 60, width: 224 },
+        );
+        // A person sees only from 400 to 660 pixels across. The popover fits the page, and
+        // its last 64 pixels are out of view.
+        zoomTo({ offsetLeft: 400, width: 260 });
+        renderPicker();
+        expect(shift()).toBe("-72px");
+      });
+
+      it("should move a popover that starts left of the part in view", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 300, top: 60, width: 224 },
+        );
+        zoomTo({ offsetLeft: 400, width: 260 });
+        renderPicker();
+        expect(shift()).toBe("108px");
+      });
+
+      it("should measure again on the next screen frame when the part in view moves or changes size", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 500, top: 60, width: 224 },
+        );
+        const viewport = zoomTo({ offsetLeft: 400, width: 400 });
+        renderPicker();
+        expect(shift()).toBe("");
+        // The person slides the page under their fingers.
+        viewport.offsetLeft = 200;
+        viewport.dispatchEvent(new Event("scroll"));
+        viewport.dispatchEvent(new Event("scroll"));
+        expect(waiting()).toBe(1);
+        drawFrame();
+        expect(shift()).toBe("-132px");
+        // And zooms out again.
+        viewport.offsetLeft = 0;
+        viewport.width = 800;
+        viewport.dispatchEvent(new Event("resize"));
+        drawFrame();
+        expect(shift()).toBe("");
+      });
+
+      it("should fit the page instead when the part in view is narrower than the popover", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 500, top: 60, width: 224 },
+        );
+        // Following a part this narrow would pin the popover to its left edge, and no
+        // sliding of the page could bring the rest of the popover into view.
+        zoomTo({ offsetLeft: 520, width: 200 });
+        renderPicker();
+        expect(shift()).toBe("");
+      });
+
+      it("should stop listening once the picker closes", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 500, top: 60, width: 224 },
+        );
+        const viewport = zoomTo({ offsetLeft: 400, width: 260 });
+        const added = vi.spyOn(viewport, "addEventListener");
+        const removed = vi.spyOn(viewport, "removeEventListener");
+        renderPicker();
+        expect(added.mock.calls.map(([type]) => type)).toEqual([
+          "resize",
+          "scroll",
+        ]);
+        fireEvent.keyDown(popover(), { key: "Escape" });
+        expect(removed.mock.calls).toEqual(added.mock.calls);
+      });
+    });
+
     it("should not redraw a row to move the popover", () => {
       const size = { width: 800, height: 600 };
       layOutScreen(size, { left: 400, top: 60, width: 288 });
@@ -2270,6 +2363,13 @@ describe("shiftToFit", () => {
 
   it("should move in whole pixels", () => {
     expect(shiftToFit(122.4, 288, 320)).toBe(-98);
+  });
+
+  it("should fit a box into a screen that starts further right", () => {
+    // The part in view runs from 400 to 660.
+    expect(shiftToFit(500, 224, 260, 400)).toBe(-72);
+    expect(shiftToFit(300, 224, 260, 400)).toBe(108);
+    expect(shiftToFit(420, 224, 260, 400)).toBe(0);
   });
 
   it("should move nothing on a page that reports no width", () => {

@@ -26,6 +26,9 @@ const ROOM_VARIABLE = "--fb-popover-room";
  * below its top edge. It measures after each draw, when the window changes size, and when the
  * page or a box around the popover scrolls.
  *
+ * On a page that a person has zoomed into with two fingers, "the visible screen" sideways is
+ * the part of the page in view, where the popover can fit into that part.
+ *
  * The style sheet does the moving: this only sets `--fb-popover-shift` and `--fb-popover-room`
  * on the popover's own element. Nothing is drawn again for it.
  */
@@ -54,23 +57,36 @@ export function useKeepOnScreen(
     // itself may scroll, or a scrolling box around the picker. A scroll is reported many
     // times a second, so the popover is measured at most once per screen frame.
     let frame: number | null = null;
-    const onScroll = (event: Event) => {
-      const popover = popoverRef.current;
-      // The list inside the popover scrolls without moving the popover.
-      if (popover?.contains(event.target as Node | null)) return;
+    const measureSoon = () => {
       if (frame !== null) return;
       frame = view.requestAnimationFrame(() => {
         frame = null;
         keepOnScreen(popoverRef.current);
       });
     };
+    const onScroll = (event: Event) => {
+      const popover = popoverRef.current;
+      // The list inside the popover scrolls without moving the popover.
+      if (popover?.contains(event.target as Node | null)) return;
+      measureSoon();
+    };
     // A box's scroll does not spread up to the page as other events do. Heard in the capture
     // phase (on the event's way down to its target), the scroll of any box is heard here.
     page.addEventListener("scroll", onScroll, true);
 
+    // The part of the page in view (the browser's "visual viewport") changes when a person
+    // zooms in with two fingers, and when they slide the zoomed page. Both are reported many
+    // times a second, and neither is told to the window or the page. An older browser has
+    // no such part, and the page's own width stands there.
+    const seen = view.visualViewport;
+    seen?.addEventListener("resize", measureSoon);
+    seen?.addEventListener("scroll", measureSoon);
+
     return () => {
       view.removeEventListener("resize", onResize);
       page.removeEventListener("scroll", onScroll, true);
+      seen?.removeEventListener("resize", measureSoon);
+      seen?.removeEventListener("scroll", measureSoon);
       if (frame !== null) view.cancelAnimationFrame(frame);
     };
   }, [active, popoverRef]);
@@ -88,7 +104,8 @@ function keepOnScreen(popover: HTMLElement | null): void {
     popover.style.getPropertyValue(SHIFT_VARIABLE),
   );
   const start = box.left - (Number.isNaN(shiftNow) ? 0 : shiftNow);
-  const shift = shiftToFit(start, box.width, screen.clientWidth);
+  const across = widthInView(popover, box.width);
+  const shift = shiftToFit(start, box.width, across.width, across.left);
   setPixels(popover, SHIFT_VARIABLE, shift === 0 ? null : shift);
 
   // A page with no layout, such as a simulated one in a test, reports no height. The style
@@ -98,20 +115,50 @@ function keepOnScreen(popover: HTMLElement | null): void {
 }
 
 /**
+ * The stretch of the page, from left to right, that a popover `width` wide is kept inside:
+ * where it starts and how wide it is. Both are measured as the popover's own place is, from
+ * the left edge of the page's window.
+ */
+function widthInView(
+  popover: HTMLElement,
+  width: number,
+): { left: number; width: number } {
+  const page = popover.ownerDocument;
+  // The visible part of the popover's own page, without its scroll bars.
+  const whole = { left: 0, width: page.documentElement.clientWidth };
+  // The part of the page in view. It is narrower than the page only after a person has
+  // zoomed in with two fingers. An older browser does not report it.
+  const seen = page.defaultView?.visualViewport;
+  if (!seen) return whole;
+  // Never past the page's own edges, whatever the browser reports.
+  const left = Math.max(seen.offsetLeft, 0);
+  const right = Math.min(seen.offsetLeft + seen.width, whole.width);
+  // A part too narrow to hold the popover is not followed. The popover would be pinned to
+  // its left edge, and no sliding of the page could bring the rest of the popover into view.
+  const hasRoom = right - left >= width + 2 * SCREEN_MARGIN;
+  return hasRoom ? { left, width: right - left } : whole;
+}
+
+/**
  * How far to move a box sideways so that it lies inside a screen `screenWidth` wide, with a
  * margin on both sides. It is 0 for a box that fits where it is. A box wider than the screen
- * keeps its left edge on the screen.
+ * keeps its left edge on the screen. The screen starts at `screenLeft`, which is 0 unless only
+ * a part of the page is in view.
  */
 export function shiftToFit(
   left: number,
   width: number,
   screenWidth: number,
+  screenLeft = 0,
 ): number {
   // A page with no layout reports no width. There is nothing to fit the box into.
   if (screenWidth <= 0) return 0;
-  const furthestLeft = screenWidth - SCREEN_MARGIN - width;
+  const furthestLeft = screenLeft + screenWidth - SCREEN_MARGIN - width;
   // The left edge is checked last, so it wins when both cannot be met.
-  const fitted = Math.max(Math.min(left, furthestLeft), SCREEN_MARGIN);
+  const fitted = Math.max(
+    Math.min(left, furthestLeft),
+    screenLeft + SCREEN_MARGIN,
+  );
   // Whole pixels, so the text inside is not drawn blurred between two pixels.
   return Math.round(fitted - left);
 }

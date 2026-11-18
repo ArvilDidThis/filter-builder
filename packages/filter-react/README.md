@@ -198,10 +198,11 @@ reports the difference. Saving table state is planned as a feature of its own.
 | `className`     | Added to the picker's own class                                        |
 
 The list is kept inside the screen sideways. Where lining it up with the button would run it
-past the left or right edge, it moves sideways just far enough to fit. It always opens below
-the button, and on a short screen it scrolls sooner. Below a button near the bottom of the
-screen it keeps a usable height, so it can still pass the bottom edge, and the page scrolls to
-show the rest of it.
+past the left or right edge, it moves sideways just far enough to fit. On a page that a person
+has zoomed into with two fingers, it is kept inside the part in view, where it fits into that
+part. It always opens below the button, and on a short screen it scrolls sooner. Below a button
+near the bottom of the screen it keeps a usable height, so it can still pass the bottom edge,
+and the page scrolls to show the rest of it.
 
 Spread all of `handleProps` onto your handle. It carries the `touch-action` style that lets a
 finger drag the handle. Keep the same `renderRow` function between renders (see `useCallback`),
