@@ -109,13 +109,25 @@ describe.each(["local", "cookie"] as const)("state saved in %s", (store) => {
     expect(stored(store, "orders")).toContain(PRICE_HIDDEN);
   });
 
-  // Playwright's Firefox does not reliably tell a page that its tab is closing: a page with
-  // nothing but its own "pagehide" listener hears nothing. That is the test tool, not the
-  // library, so in Firefox the tab is left by going to another address only.
+  // Only Chromium is tested with a closed tab. The other two lose what a closing tab writes,
+  // with or without the library, so there the tab is left by going to another address only.
+  //
+  // - Playwright's Firefox does not reliably tell a page that its tab is closing: a page with
+  //   nothing but its own "pagehide" listener hears nothing.
+  // - Playwright's WebKit ends a closing tab's page while its "pagehide" listeners still run.
+  //   Measured on macOS with six browsers at work at once, on a page with no library code
+  //   that writes ten local storage entries in "pagehide": 67 of 600 closed tabs lost some
+  //   or all of them, and a tab opened later never saw them. 0 of 600 were lost on going to
+  //   another address, and 0 of 600 on closing a tab in Chromium. Under the same load the
+  //   test below failed for 8 of 120 closed tabs in WebKit, in the same way: the library
+  //   wrote in "pagehide", and a tab opened later found a write the page made just before
+  //   that, and not the library's.
+  //
+  // The README says what this means for an app: see "When a tab is closed".
   const waysToLeave =
-    server.browser === "firefox"
-      ? (["navigate"] as const)
-      : (["close", "navigate"] as const);
+    server.browser === "chromium"
+      ? (["close", "navigate"] as const)
+      : (["navigate"] as const);
 
   test.each(waysToLeave)(
     "writes a waiting save when its tab is left by %s (item 11)",

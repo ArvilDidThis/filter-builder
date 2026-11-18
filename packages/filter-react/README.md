@@ -435,6 +435,8 @@ What the hook guarantees:
   request, or not at all, so the store can end with the older state. Wait for `flush()`
   where the app decides when to leave. A page the browser keeps, to show it again on "back",
   is not closing: its saves wait their turn.
+- **A closed tab may lose its last change.** A browser does not promise to finish what a
+  closing page starts: see [When a tab is closed](#when-a-tab-is-closed).
 - **Parts the hook does not own are kept.** A save writes back the other parts found under the
   key. `clear()` removes them too.
 - **A saved value is checked before use.** A broken part falls back to its default alone.
@@ -545,6 +547,30 @@ Two things the hook does not do:
 - **It cannot wait for a slow `headers` function on a closing page.** The fetch store starts a
   request only once `headers()` has answered. A `headers` function that waits for something
   slow can lose the save a closing page makes, even with `keepalive`.
+
+### When a tab is closed
+
+When a person closes a tab, the hook saves a waiting change at once, as the browser tells the
+page that it is going away. The browser may still end the page before that save is kept. No
+library can prevent this, because a closing page cannot make the browser wait.
+
+- **Chromium kept every such save** in this library's tests.
+- **WebKit, the engine of Safari, lost about one in nine** on a busy machine, in the local
+  storage store and in the cookie store alike. A page with no library code lost its own
+  writes at the same rate. The tests drive a test build of WebKit, not Safari itself, so
+  Safari's own rate is not known.
+- **Going to another address lost none,** in every browser tested.
+
+Only a change still waiting out `saveDelayMs` is at risk: by default, one made in the last
+300 milliseconds. A change saved earlier is safe. To lower the risk:
+
+- **Wait for `flush()` where the app decides when to leave:** before it goes to another page,
+  or closes its own window.
+- **Keep `saveDelayMs` short.** The shorter the wait, the less often a change is still
+  waiting when the tab closes.
+
+The hook also saves when the page is hidden: when the person switches to another tab or
+app, or locks a phone. That save is made while the page is still alive, so it is not at risk.
 
 ### Other stores
 

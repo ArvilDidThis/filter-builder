@@ -299,6 +299,11 @@ hook's options and guarantees. The
 [filter-core README](packages/filter-core/README.md#saved-table-state) describes the key, the
 saved format and the stores, which need no React.
 
+A browser may end a closing tab before its last change is saved. In this library's tests,
+the engine of Safari did. An app that leaves a page itself should wait for `saved.flush()`
+first: see
+[When a tab is closed](packages/filter-react/README.md#when-a-tab-is-closed).
+
 ## Licence
 
 [MIT](LICENSE).
