@@ -5,6 +5,7 @@ import {
   columnStatePart,
   createSavedState,
   filterStatePart,
+  MAX_SAVED_FILTER_DEPTH,
   readSavedState,
   resolveStateKey,
   type StatePart,
@@ -336,6 +337,39 @@ describe("filterStatePart", () => {
   ])("should turn down %s", (_label, saved) => {
     expect(parse(saved)).toBeUndefined();
   });
+
+  /** A filter of `depth` groups, each inside the one before, with a condition at the bottom. */
+  const nestedFilter = (depth: number): unknown => {
+    let group: unknown = { logic: "AND", criteria: PRICE_FILTER.criteria };
+    for (let level = 1; level < depth; level += 1) {
+      group = { logic: "AND", criteria: [group] };
+    }
+    return group;
+  };
+
+  it("should keep a filter nested as deep as the limit", () => {
+    const saved = nestedFilter(MAX_SAVED_FILTER_DEPTH);
+    expect(parse(saved)).toBe(saved);
+    const matches = createRowPredicate(
+      saved as FilterDefinition,
+      (row: { price: number }) => String(row.price),
+    );
+    expect(matches({ price: 12 })).toBe(true);
+    expect(matches({ price: 8 })).toBe(false);
+  });
+
+  it.each([MAX_SAVED_FILTER_DEPTH + 1, 20_000])(
+    "should turn down a filter nested %i groups deep",
+    (depth) => {
+      expect(parse(nestedFilter(depth))).toBeUndefined();
+      expect(
+        readSavedState(
+          { version: 1, parts: { filter: nestedFilter(depth) } },
+          PARTS,
+        ).filter,
+      ).toEqual(EMPTY_FILTER);
+    },
+  );
 
   it("should keep broken rows, which matching skips", () => {
     const saved = {

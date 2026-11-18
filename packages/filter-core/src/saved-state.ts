@@ -16,6 +16,13 @@ import type { FilterDefinition } from "./types";
 /** The version a saved state gets when the app names none. */
 export const DEFAULT_STATE_VERSION = 1;
 
+/**
+ * How many groups deep a saved filter may be nested, counting the top group. No filter a person
+ * builds comes near it. A deeper one was written to break the page: matching walks a filter
+ * group by group, and runs out of room at a depth of some thousands.
+ */
+export const MAX_SAVED_FILTER_DEPTH = 200;
+
 /** What `resolveStateKey` chooses a key from. */
 export interface StateKeyOptions {
   /**
@@ -163,13 +170,17 @@ export function createSavedState(
  * It reads the saved filter as loosely as matching does. The top level must be a group with a
  * list of rows. A broken row inside is kept: matching skips it and a builder shows it as
  * broken, so a saved filter returns the same rows as before.
+ *
+ * A filter nested more than `MAX_SAVED_FILTER_DEPTH` groups deep is turned down, and the
+ * default is used.
  */
 export function filterStatePart(
   defaultValue: FilterDefinition = { criteria: [], logic: "AND" },
 ): StatePart<FilterDefinition> {
   return {
     defaultValue,
-    parse: (saved) => (hasCriteriaList(saved) ? saved : undefined),
+    parse: (saved) =>
+      hasCriteriaList(saved) && isNestedWithinLimit(saved) ? saved : undefined,
   };
 }
 
@@ -233,4 +244,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Whether a saved value can be the top group of a filter. */
 function hasCriteriaList(value: unknown): value is FilterDefinition {
   return isRecord(value) && Array.isArray(value.criteria);
+}
+
+/** Whether no group of the filter sits deeper than `MAX_SAVED_FILTER_DEPTH`. */
+function isNestedWithinLimit(filter: FilterDefinition): boolean {
+  // A list of groups still to visit, not a function that calls itself: a filter nested deep
+  // enough to be dangerous would run this check out of room too.
+  const toVisit: { criteria: readonly unknown[]; depth: number }[] = [
+    { criteria: filter.criteria, depth: 1 },
+  ];
+  for (let group = toVisit.pop(); group; group = toVisit.pop()) {
+    if (group.depth > MAX_SAVED_FILTER_DEPTH) return false;
+    for (const row of group.criteria) {
+      if (hasCriteriaList(row)) {
+        toVisit.push({ criteria: row.criteria, depth: group.depth + 1 });
+      }
+    }
+  }
+  return true;
 }
