@@ -576,9 +576,18 @@ describe("ColumnPicker", () => {
   });
 
   describe("inside the filter builder", () => {
+    // Taken off the page after every test, passed or failed. A style sheet left behind by a
+    // failed test would change what the later tests measure.
+    let loadedSheet: HTMLStyleElement | null = null;
+    afterEach(() => {
+      loadedSheet?.remove();
+      loadedSheet = null;
+    });
+
     /** Loads the real style sheet and draws the open picker inside a builder's own element. */
     function renderInBuilder() {
       const sheet = document.createElement("style");
+      loadedSheet = sheet;
       sheet.textContent = readFileSync(
         `${import.meta.dirname}/../../styles.css`,
         "utf8",
@@ -595,14 +604,13 @@ describe("ColumnPicker", () => {
     }
 
     it("should fade only the dragged row, not the whole list", () => {
-      const { sheet } = renderInBuilder();
+      renderInBuilder();
       fireEvent.pointerDown(handle("Name"), pointer(115));
       // The builder fades its own dragged item. That rule must not also fade the list.
       expect(getComputedStyle(screen.getByRole("list")).opacity).not.toBe(
         "0.4",
       );
       expect(getComputedStyle(rows()[0] as HTMLElement).opacity).toBe("0.4");
-      sheet.remove();
     });
 
     it("should leave the drop line to the picker's own rules", () => {
@@ -628,7 +636,6 @@ describe("ColumnPicker", () => {
       expect(
         lineRules.filter((selector) => !selector.startsWith(".fb-columns-row")),
       ).toEqual([]);
-      sheet.remove();
     });
   });
 
