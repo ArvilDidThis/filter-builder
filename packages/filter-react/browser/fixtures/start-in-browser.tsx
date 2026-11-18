@@ -35,8 +35,10 @@ declare global {
 const notes: FixtureNotes = {
   problems: [],
   changes: [],
-  painted: {},
-  rested: {},
+  // Made with no inherited keys, so a table whose id is a name every object has, such as
+  // "constructor", still starts with no list of its own.
+  painted: Object.create(null),
+  rested: Object.create(null),
 };
 window.fixture = notes;
 
