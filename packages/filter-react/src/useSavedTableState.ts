@@ -75,11 +75,26 @@ export interface SavedTableState<Values> {
   /**
    * - "loading": the saved state is being read, and the parts hold their defaults.
    * - "ready": the saved state is in use, and changes are saved.
-   * - "error": the last load, save or remove failed. See `error`.
+   * - "error": the last load, save or remove failed. See `error` and `errorAction`.
    */
   status: SavedTableStateStatus;
   /** What went wrong, while `status` is "error". */
   error: unknown;
+  /**
+   * What failed, while `status` is "error":
+   *
+   * - "load": the saved state could not be read. Saving is off, so that the stored state is
+   *   not overwritten. Call `reload()` to try again.
+   * - "save": one save failed. The next change is saved as usual.
+   * - "remove": `clear()` could not remove the stored state.
+   */
+  errorAction: SavedTableStateAction | undefined;
+  /**
+   * Reads the saved state again. Use it after a failed load, to turn saving back on without
+   * deleting the stored state. A part changed since the last successful load keeps the change,
+   * and the other parts take the stored state.
+   */
+  reload: () => void;
   /**
    * Saves a waiting change now, without waiting out the delay. The promise settles once the
    * store has answered every save and remove sent so far, so an app can wait for it before it
@@ -106,6 +121,7 @@ export interface SavedTableState<Values> {
  *   saved state is read right after, before the browser paints when the store answers at once.
  * - Nothing is saved until the load has finished. A part changed in the meantime keeps the
  *   change. After a failed load nothing is saved, so the stored state is not overwritten.
+ *   `errorAction` is then "load", and `reload()` tries again.
  * - When `name`, `id` or the page's path changes, a waiting change is saved under the old key
  *   and the state for the new key is loaded.
  * - A waiting change is also saved when the page is hidden or closed, and on unmount.
@@ -196,7 +212,9 @@ export function useSavedTableState<Values>(
     set,
     status: shown.status,
     error: shown.error,
+    errorAction: shown.errorAction,
     flush: controller.flush,
+    reload: controller.reload,
     clear: controller.clear,
   };
 }
@@ -211,7 +229,15 @@ interface Snapshot<Values> {
   values: Values;
   status: SavedTableStateStatus;
   error: unknown;
+  errorAction: SavedTableStateAction | undefined;
 }
+
+/** The status of a key whose state is in use, with no failure to show. */
+const READY = {
+  status: "ready",
+  error: undefined,
+  errorAction: undefined,
+} as const;
 
 /** The state before anything is loaded: every part's default. */
 function startSnapshot<Values>(
@@ -223,6 +249,7 @@ function startSnapshot<Values>(
     values: readSavedState(undefined, parts),
     status: "loading",
     error: undefined,
+    errorAction: undefined,
   };
 }
 
@@ -284,7 +311,7 @@ function createController<Values>(
   let unowned: Record<string, unknown> = {};
   /** The store and key this hook is listed under in `sharersByStore`, while on screen. */
   let listed: { store: StateStore; key: string } | undefined;
-  /** The parts a person changed while the load was on its way. */
+  /** The parts a person changed while saving was off: during the load, or after it failed. */
   const touched = new Set<keyof Values>();
   /** Goes up whenever a load is started or dropped. A load that answers late sees it moved. */
   let loadRun = 0;
@@ -327,7 +354,8 @@ function createController<Values>(
     key: string | undefined,
   ): void => {
     if (action !== "load") failures += 1;
-    if (live.key === key) publish({ ...live, status: "error", error });
+    if (live.key === key)
+      publish({ ...live, status: "error", error, errorAction: action });
     latest.current.onError?.(error, action);
   };
 
@@ -393,7 +421,7 @@ function createController<Values>(
         canSave
       ) {
         // An earlier save had failed, and this one went through.
-        publish({ ...live, status: "ready", error: undefined });
+        publish({ ...live, ...READY });
       }
     };
 
@@ -510,7 +538,7 @@ function createController<Values>(
         for (const part of touched) values[part] = live.values[part];
       }
       canSave = true;
-      publish({ key, values, status: "ready", error: undefined });
+      publish({ key, values, ...READY });
       if (touched.size > 0) scheduleSave(key);
       touched.clear();
     };
@@ -573,10 +601,26 @@ function createController<Values>(
       const next =
         typeof change === "function" ? change(before) : (change as never);
       if (Object.is(before, next)) return;
-      const wasLoading = live.status === "loading";
       publish({ ...live, values: { ...live.values, [part]: next } });
       if (canSave && live.key !== undefined) scheduleSave(live.key);
-      else if (wasLoading) touched.add(part);
+      // Not saved now. Remembered, so that a load that still succeeds keeps the change.
+      else touched.add(part);
+    },
+
+    reload(): void {
+      // A change waiting out the delay goes first, so that the store answers with it.
+      queuePending();
+      canSave = false;
+      if (live.status !== "loading") {
+        publish({
+          ...live,
+          status: "loading",
+          error: undefined,
+          errorAction: undefined,
+        });
+      }
+      sendNext();
+      load();
     },
 
     flush(): Promise<boolean> {
@@ -620,7 +664,7 @@ function createController<Values>(
       }
       // The stored state is gone on purpose, so saving is safe even after a failed load.
       canSave = true;
-      publish({ key, values, status: "ready", error: undefined });
+      publish({ key, values, ...READY });
       // Through the same queue as the saves. A save made before this cannot land after the
       // remove, and a save made after this cannot be deleted by it.
       queue.push({ kind: "remove", key });

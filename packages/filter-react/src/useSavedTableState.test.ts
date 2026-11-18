@@ -519,6 +519,7 @@ describe("useSavedTableState", () => {
       expect(result.current.set.filter).toBe(first.set.filter);
       expect(result.current.flush).toBe(first.flush);
       expect(result.current.clear).toBe(first.clear);
+      expect(result.current.reload).toBe(first.reload);
     });
 
     it("should change only the part that was set", () => {
@@ -1213,6 +1214,37 @@ describe("useSavedTableState", () => {
       expect(store.save).not.toHaveBeenCalled();
     });
 
+    it("should say which action failed", async () => {
+      const store = memoryStore();
+      store.load.mockImplementationOnce(() => {
+        throw new Error("offline");
+      });
+      store.save.mockImplementationOnce(() => {
+        throw new Error("full");
+      });
+      store.remove.mockImplementationOnce(() => {
+        throw new Error("locked");
+      });
+      const { result } = renderSaved({ store });
+      expect(result.current.errorAction).toBe("load");
+
+      act(() => result.current.reload());
+      expect(result.current.status).toBe("ready");
+      expect(result.current.errorAction).toBeUndefined();
+
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(result.current.errorAction).toBe("save");
+
+      act(() => result.current.set.sort(NAME_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(result.current.errorAction).toBeUndefined();
+
+      act(() => result.current.clear());
+      expect(result.current.status).toBe("error");
+      expect(result.current.errorAction).toBe("remove");
+    });
+
     it("should report a store that throws while loading", () => {
       const failure = new Error("blocked");
       const store = {
@@ -1317,6 +1349,94 @@ describe("useSavedTableState", () => {
       expect(store.load).not.toHaveBeenCalled();
       expect(store.save).not.toHaveBeenCalled();
       vi.unstubAllGlobals();
+    });
+  });
+
+  describe("reload", () => {
+    /** A store whose first load fails. Its later loads answer from memory. */
+    const storeFailingOnce = (initial: Record<string, unknown>) => {
+      const store = memoryStore(initial);
+      store.load.mockImplementationOnce(() => {
+        throw new Error("offline");
+      });
+      return store;
+    };
+
+    it("should turn saving back on after a failed load, and keep the stored state", () => {
+      const store = storeFailingOnce({
+        orders: savedWith({ filter: priceFilter("10"), sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store });
+      expect(result.current.status).toBe("error");
+
+      act(() => result.current.reload());
+      expect(result.current.status).toBe("ready");
+      expect(result.current.error).toBeUndefined();
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+      expect(store.remove).not.toHaveBeenCalled();
+      expect(store.save).not.toHaveBeenCalled();
+
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { filter: priceFilter("10"), sort: PRICE_SORT },
+      });
+    });
+
+    it("should keep and save a change made after the load failed", () => {
+      const store = storeFailingOnce({
+        orders: savedWith({ filter: priceFilter("10"), sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => result.current.reload());
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+      expect(result.current.values.filter).toEqual(priceFilter("10"));
+
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { filter: priceFilter("10"), sort: PRICE_SORT },
+      });
+    });
+
+    it("should show the load and report it when it fails again", async () => {
+      const failure = new Error("still offline");
+      const answers = [deferred<unknown>(), deferred<unknown>()];
+      const load = vi.fn(
+        (_key: string) => answers[load.mock.calls.length - 1]?.promise,
+      );
+      const onError = vi.fn();
+      const { result } = renderSaved({
+        store: { ...memoryStore(), load },
+        onError,
+      });
+      answers[0]?.reject(new Error("offline"));
+      await settle();
+      expect(result.current.errorAction).toBe("load");
+
+      act(() => result.current.reload());
+      expect(result.current.status).toBe("loading");
+      expect(result.current.error).toBeUndefined();
+      answers[1]?.reject(failure);
+      await settle();
+      expect(result.current.status).toBe("error");
+      expect(result.current.error).toBe(failure);
+      expect(onError).toHaveBeenLastCalledWith(failure, "load");
+    });
+
+    it("should read the store again only after a waiting change is saved", async () => {
+      const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => result.current.reload());
+      expect(result.current.status).toBe("loading");
+      expect(store.load).toHaveBeenCalledOnce();
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(store.load).toHaveBeenCalledTimes(2);
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
     });
   });
 
