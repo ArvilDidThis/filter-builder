@@ -9,7 +9,15 @@ import {
   within,
 } from "@testing-library/react";
 import { memo, useLayoutEffect, useRef, useState } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
 import { placeFromSlot, slotAt } from "./useColumnDrag";
@@ -202,6 +210,43 @@ function layOutList() {
 }
 
 const pointer = (clientY: number) => ({ button: 0, pointerId: 1, clientY });
+
+/**
+ * Puts the screen frames in the test's hands, for every test of the `describe` this is called
+ * in. The test page draws no frames itself.
+ */
+function holdFrames() {
+  /** The work waiting for the next screen frame. */
+  let waiting: FrameRequestCallback[] = [];
+  beforeEach(() => {
+    waiting = [];
+    const ask = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((work) => {
+        waiting.push(work);
+        return waiting.length;
+      });
+    const cancel = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => {
+        waiting = [];
+      });
+    onTestFinished(() => {
+      ask.mockRestore();
+      cancel.mockRestore();
+    });
+  });
+  return {
+    /** How many pieces of work wait for the next screen frame. */
+    waiting: (): number => waiting.length,
+    /** Draws one screen frame: runs the work that was waiting for it. */
+    drawFrame: () => {
+      const due = waiting;
+      waiting = [];
+      for (const work of due) work(0);
+    },
+  };
+}
 
 afterEach(cleanup);
 
@@ -585,6 +630,37 @@ describe("ColumnPicker", () => {
       expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
     });
 
+    describe("at an edge of the list", () => {
+      const { drawFrame } = holdFrames();
+
+      it("should scroll the way the pointer is at when the frame is drawn", () => {
+        renderPicker();
+        layOutList();
+        const list = screen.getByRole("list");
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        // At the list's top edge, which asks for a frame to scroll up in.
+        fireEvent.pointerMove(document, pointer(10));
+        // The pointer reaches the bottom edge before that frame is drawn.
+        fireEvent.pointerMove(document, pointer(990));
+        drawFrame();
+        expect(list.scrollTop).toBe(10);
+        // The pointer rests, and the list goes on scrolling.
+        drawFrame();
+        expect(list.scrollTop).toBe(20);
+      });
+
+      it("should not scroll once the pointer has left the edge before the frame is drawn", () => {
+        renderPicker();
+        layOutList();
+        const list = screen.getByRole("list");
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(10));
+        fireEvent.pointerMove(document, pointer(500));
+        drawFrame();
+        expect(list.scrollTop).toBe(0);
+      });
+    });
+
     describe("when a row changes height while another is held", () => {
       /** The size watchers the picker has made, each with the rows it watches. */
       const watchers: { rows: Set<Element>; changed: () => void }[] = [];
@@ -646,6 +722,22 @@ describe("ColumnPicker", () => {
         fireEvent.pointerUp(document, pointer(200));
         expect(listed()).toBe("⠿Price ⠿Name ⠿Stock ⠿Notes");
         expect(price.hasAttribute("data-drop")).toBe(false);
+      });
+
+      describe("at an edge of the list", () => {
+        const { waiting } = holdFrames();
+
+        it("should leave the list still when a row there is only pressed", () => {
+          renderPicker();
+          layOutList();
+          // A press at the list's top edge. The watcher's first report comes with it.
+          fireEvent.pointerDown(handle("Name"), pointer(10));
+          resized(rows()[0] as HTMLElement);
+          expect(waiting()).toBe(0);
+          // The first move of the pointer is what starts the scrolling.
+          fireEvent.pointerMove(document, pointer(10));
+          expect(waiting()).toBe(1);
+        });
       });
 
       it("should watch the rows the list has after it changes during the drag", () => {
@@ -1734,30 +1826,12 @@ describe("ColumnPicker", () => {
     });
 
     describe("when something scrolls", () => {
-      /** The work waiting for the next screen frame. The test page draws no frames itself. */
-      let waiting: FrameRequestCallback[] = [];
-      /** Draws one screen frame: runs the work that was waiting for it. */
-      const drawFrame = () => {
-        const due = waiting;
-        waiting = [];
-        for (const work of due) work(0);
-      };
+      const { waiting, drawFrame } = holdFrames();
       /** How many times the element has been measured since `layOutScreen`. */
       const timesMeasured = (element: HTMLElement): number =>
         vi
           .mocked(HTMLElement.prototype.getBoundingClientRect)
           .mock.contexts.filter((measured) => measured === element).length;
-      beforeEach(() => {
-        waiting = [];
-        vi.spyOn(window, "requestAnimationFrame").mockImplementation((work) => {
-          waiting.push(work);
-          return waiting.length;
-        });
-        vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {
-          waiting = [];
-        });
-      });
-
       it("should measure again on the next screen frame after the page scrolls", () => {
         const place = { left: 420, top: 60, width: 240 };
         layOutScreen({ width: 800, height: 600 }, place);
@@ -1785,13 +1859,13 @@ describe("ColumnPicker", () => {
         fireEvent.scroll(document);
         fireEvent.scroll(document);
         fireEvent.scroll(document);
-        expect(waiting).toHaveLength(1);
+        expect(waiting()).toBe(1);
         expect(timesMeasured(popover())).toBe(before);
         drawFrame();
         expect(timesMeasured(popover())).toBe(before + 1);
         // The next scroll asks for a frame of its own.
         fireEvent.scroll(document);
-        expect(waiting).toHaveLength(1);
+        expect(waiting()).toBe(1);
       });
 
       it("should measure again when a box around the picker scrolls", () => {
@@ -1812,7 +1886,7 @@ describe("ColumnPicker", () => {
         );
         renderPicker();
         fireEvent(screen.getByRole("list"), new Event("scroll"));
-        expect(waiting).toHaveLength(0);
+        expect(waiting()).toBe(0);
       });
 
       it("should stop measuring once the picker closes, even with a frame waiting", () => {
@@ -1822,10 +1896,10 @@ describe("ColumnPicker", () => {
         const dialog = popover();
         fireEvent.scroll(document);
         fireEvent.keyDown(dialog, { key: "Escape" });
-        expect(waiting).toHaveLength(0);
+        expect(waiting()).toBe(0);
         const before = timesMeasured(dialog);
         fireEvent.scroll(document);
-        expect(waiting).toHaveLength(0);
+        expect(waiting()).toBe(0);
         expect(timesMeasured(dialog)).toBe(before);
       });
     });

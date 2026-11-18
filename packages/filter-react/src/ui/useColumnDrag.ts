@@ -103,8 +103,8 @@ export function useColumnDrag({
   // A picker that leaves the page mid-drag must not leave listeners behind.
   useEffect(() => () => session.current?.stop(), []);
 
-  /** Works out where a drop would land now, and scrolls the list when the pointer is at an edge. */
-  const follow = useCallback(() => {
+  /** Works out where a drop would land now, and shows it. */
+  const showSlot = useCallback(() => {
     const drag = session.current;
     const list = listRef.current;
     if (drag === null || list === null) return;
@@ -117,18 +117,32 @@ export function useColumnDrag({
     setHeld((was) =>
       was.slot === shown ? was : { key: drag.key, slot: shown },
     );
+  }, [listRef]);
 
-    const direction = edgeDirection(drag.clientY, box);
-    if (direction === 0 || drag.frame !== null) return;
+  /** Shows where a drop would land now, and scrolls the list when the pointer is at an edge. */
+  const follow = useCallback(() => {
+    showSlot();
+    const drag = session.current;
+    const list = listRef.current;
+    if (drag === null || list === null || drag.frame !== null) return;
+    if (edgeDirection(drag.clientY, list.getBoundingClientRect()) === 0) return;
     drag.frame = requestAnimationFrame(() => {
       drag.frame = null;
+      // The way to scroll is worked out now, not when the frame was asked for. The pointer
+      // may have crossed to the other edge since, and a scroll the old way could find the
+      // list at its end and stop the scrolling for good.
+      const direction = edgeDirection(
+        drag.clientY,
+        list.getBoundingClientRect(),
+      );
+      if (direction === 0) return;
       const before = list.scrollTop;
       list.scrollTop += direction * SCROLL_STEP;
       // Stops once the list has reached its end. Otherwise it follows again, which keeps the
       // list scrolling for as long as the pointer rests at the edge.
       if (list.scrollTop !== before) follow();
     });
-  }, [listRef]);
+  }, [listRef, showSlot]);
 
   // The app changed the list while a row was held, for example by taking a column away. A
   // place only means something in the list it was measured in, so the held row is found again
@@ -247,7 +261,10 @@ export function useColumnDrag({
             const drag = session.current;
             if (drag === null) return;
             drag.middles = measureMiddles(list);
-            follow();
+            // Only the drop line follows a change of size. The list does not start to
+            // scroll: the first report comes with the press itself, and a row that is
+            // only pressed at the list's edge must not move the list.
+            showSlot();
           })
         : null;
       const watchRows = () => {
@@ -279,7 +296,7 @@ export function useColumnDrag({
       watchRows();
       setHeld({ key, slot: null });
     },
-    [listRef, follow, end],
+    [listRef, follow, showSlot, end],
   );
 
   return { key: held.key, slot: held.slot, start };
