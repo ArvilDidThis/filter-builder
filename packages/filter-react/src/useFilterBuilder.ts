@@ -27,18 +27,8 @@ import {
   setGroupLogic,
   wrapInGroup,
 } from "@arvilmena/filter-core";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-} from "react";
-
-// Runs before any other effect of the same render. On a server there is no screen, and older
-// React warns about `useLayoutEffect` there, so the plain effect stands in.
-const useEarlyEffect =
-  typeof window === "undefined" ? useEffect : useLayoutEffect;
+import { useCallback, useMemo, useRef } from "react";
+import { useEarlyEffect } from "./useEarlyEffect";
 
 /** What `useFilterBuilder` needs from the app. */
 export interface UseFilterBuilderOptions {
