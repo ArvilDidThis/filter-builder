@@ -170,12 +170,9 @@ export function useSavedTableState<Values>(
   const { name, id, parts } = options;
   const key = resolveStateKey({ name, id });
 
-  // The controller reads the newest options through this ref. It is written after React has
-  // put a render on screen, not while rendering: React may throw a render away.
+  // The controller reads the newest options through this ref. It is written in an effect
+  // further down, after React has put a render on screen: React may throw a render away.
   const latest = useRef(options);
-  useEarlyEffect(() => {
-    latest.current = options;
-  });
 
   const [first] = useState(() => firstState(key, options));
   const [snapshot, setSnapshot] = useState(first.snapshot);
@@ -190,6 +187,24 @@ export function useSavedTableState<Values>(
     shown = startSnapshot(key, parts);
     setSnapshot(shown);
   }
+
+  // A part added to `parts` while the table is on screen has no value yet. It gets the value
+  // saved under its name, or its default, in this same render.
+  const completed = withMissingParts(
+    shown.values,
+    options,
+    controller.unownedParts(),
+  );
+  if (completed !== shown.values) {
+    shown = { ...shown, values: completed };
+    setSnapshot(shown);
+  }
+
+  // Before the load effect below, which reads the options.
+  useEarlyEffect(() => {
+    latest.current = options;
+    controller.adopt(shown);
+  });
 
   // Loads the state for the key. An early effect, so a store that answers at once (local
   // storage, a cookie) is read before the browser paints and the defaults never flash.
@@ -269,6 +284,30 @@ function startSnapshot<Values>(
     error: undefined,
     errorAction: undefined,
   };
+}
+
+/**
+ * `values` with a value for every part. A part it lacks gets the value saved under its name,
+ * checked, or its default. The same object comes back when nothing is missing.
+ */
+function withMissingParts<Values>(
+  values: Values,
+  options: UseSavedTableStateOptions<Values>,
+  unowned: Readonly<Record<string, unknown>>,
+): Values {
+  const missing = (Object.keys(options.parts) as (keyof Values)[]).filter(
+    (name) => !Object.hasOwn(values as object, name),
+  );
+  if (missing.length === 0) return values;
+  const version = options.version ?? DEFAULT_STATE_VERSION;
+  const read = readSavedState(
+    createSavedState(unowned, version),
+    options.parts,
+    { version },
+  );
+  const completed = { ...values };
+  for (const name of missing) completed[name] = read[name];
+  return completed;
 }
 
 /** The state of the first render, and the saved parts the hook does not own. */
@@ -639,6 +678,28 @@ function createController<Values>(
       leaveSharers();
       queuePending();
       sendNext();
+    },
+
+    /** The saved parts the hook does not own. A part added later may find its value here. */
+    unownedParts(): Readonly<Record<string, unknown>> {
+      return unowned;
+    },
+
+    /**
+     * Takes over the values React filled in for parts that were added while the table was on
+     * screen. `drawn` is the state React drew.
+     */
+    adopt(drawn: Snapshot<Values>): void {
+      if (drawn.key !== live.key) return;
+      let values = live.values;
+      for (const name of Object.keys(
+        drawn.values as object,
+      ) as (keyof Values)[]) {
+        if (Object.hasOwn(live.values as object, name)) continue;
+        if (values === live.values) values = { ...live.values };
+        values[name] = drawn.values[name];
+      }
+      if (values !== live.values) live = { ...live, values };
     },
 
     set(part: keyof Values, change: unknown): void {

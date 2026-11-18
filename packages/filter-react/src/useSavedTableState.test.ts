@@ -502,6 +502,85 @@ describe("useSavedTableState", () => {
     });
   });
 
+  describe("a part added while the table is on screen", () => {
+    const countPart: StatePart<number> = {
+      defaultValue: 25,
+      parse: (saved) => (typeof saved === "number" ? saved : undefined),
+    };
+    type Grown = { sort: Sort | null; pageSize?: number };
+
+    /** Starts with the sort only. `rerender(true)` adds the page size. */
+    const renderGrowing = (store: StateStore) =>
+      renderHook(
+        (withPageSize: boolean) =>
+          useSavedTableState<Grown>({
+            id: "orders",
+            store,
+            // A new object on every render, as when an app builds the parts inline.
+            parts: withPageSize
+              ? { sort: sortPart, pageSize: countPart }
+              : { sort: sortPart },
+          }),
+        { initialProps: false },
+      );
+
+    it("should get its default in the render that adds it", () => {
+      const seen: (number | undefined)[] = [];
+      const store = memoryStore();
+      const { result, rerender } = renderHook(
+        (withPageSize: boolean) => {
+          const saved = useSavedTableState<Grown>({
+            id: "orders",
+            store,
+            parts: withPageSize
+              ? { sort: sortPart, pageSize: countPart }
+              : { sort: sortPart },
+          });
+          if (withPageSize) seen.push(saved.values.pageSize);
+          return saved;
+        },
+        { initialProps: false },
+      );
+      act(() => result.current.set.sort(PRICE_SORT));
+      rerender(true);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(new Set(seen)).toEqual(new Set([25]));
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+    });
+
+    it("should build a change on its default, and save it", () => {
+      const store = memoryStore();
+      const { result, rerender } = renderGrowing(store);
+      rerender(true);
+      act(() => result.current.set.pageSize?.((before = 0) => before * 2));
+      expect(result.current.values.pageSize).toBe(50);
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith({ sort: null, pageSize: 50 }),
+      );
+    });
+
+    it("should get the value saved under its name", () => {
+      const store = memoryStore({
+        orders: savedWith({ sort: NAME_SORT, pageSize: 100 }),
+      });
+      const { result, rerender } = renderGrowing(store);
+      rerender(true);
+      expect(result.current.values.pageSize).toBe(100);
+    });
+
+    it("should keep the other parts the same objects", () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result, rerender } = renderGrowing(store);
+      const before = result.current.values.sort;
+      rerender(true);
+      const added = result.current.values;
+      expect(added.sort).toBe(before);
+      rerender(true);
+      expect(result.current.values).toBe(added);
+    });
+  });
+
   describe("identity", () => {
     it("should keep the setters and functions the same between renders", () => {
       const store = memoryStore();
