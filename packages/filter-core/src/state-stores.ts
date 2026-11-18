@@ -154,10 +154,13 @@ export class CookieTooLargeError extends Error {
  */
 export function cookieStore(options: CookieStoreOptions = {}): StateStore {
   const { maxAgeDays = 365, path = "/", sameSite = "lax" } = options;
-  const limit = Math.min(
-    options.maxBytes ?? COOKIE_SIZE_LIMIT,
-    COOKIE_SIZE_LIMIT,
-  );
+  // Anything that is not a smaller number leaves the browser's limit in place. That covers
+  // `NaN`, which would switch the size check off: no size is larger than `NaN`.
+  const { maxBytes } = options;
+  const limit =
+    maxBytes !== undefined && maxBytes < COOKIE_SIZE_LIMIT
+      ? maxBytes
+      : COOKIE_SIZE_LIMIT;
 
   const write = (name: string, value: string, maxAgeSeconds: number): void => {
     const page = findDocument();

@@ -275,6 +275,18 @@ describe("cookieStore", () => {
     );
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    "should keep the browser's limit when the app's limit is %s",
+    (maxBytes) => {
+      const { written } = stubDocument();
+      const store = cookieStore({ prefix: "", maxBytes });
+      expect(() => store.save("k", "x".repeat(4096 - 7))).toThrow(
+        expect.objectContaining({ limit: 4096 }),
+      );
+      expect(written).toHaveLength(0);
+    },
+  );
+
   it("should do nothing where there is no document", () => {
     const store = cookieStore();
     expect(store.load("orders")).toBeUndefined();
