@@ -705,6 +705,98 @@ describe("ColumnPicker", () => {
       });
     });
 
+    describe("when a box around the picker scrolls while a row is held", () => {
+      const { waiting, drawFrame } = holdFrames();
+      /** Moves the whole list up the screen, as a scroll of a box around the picker does. */
+      const scrollAround = (container: Element, by: number) => {
+        placeAt(screen.getByRole("list"), -by, 1000);
+        rows().forEach((row, index) => {
+          placeAt(row, 100 + index * 30 - by, 30);
+        });
+        // Unlike the page's own, the scroll of a box inside the page does not spread upwards.
+        fireEvent(container, new Event("scroll", { bubbles: false }));
+      };
+
+      /**
+       * Counts how often the list is measured from now on. The popover asks for a frame of
+       * its own on the same scroll, so the frames waiting do not tell the two apart.
+       */
+      const countMeasures = () => {
+        const list = screen.getByRole("list");
+        const measure = vi.fn(list.getBoundingClientRect);
+        list.getBoundingClientRect = measure;
+        return () => measure.mock.calls.length;
+      };
+
+      it("should move the drop line to where a drop would land now", () => {
+        const { container } = renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(180));
+        const notes = rows()[3] as HTMLElement;
+        expect(notes.getAttribute("data-drop")).toBe("before");
+        // The list moves up by one row under the still pointer, which is now below the
+        // middle of "Notes".
+        scrollAround(container, 30);
+        act(drawFrame);
+        expect(notes.getAttribute("data-drop")).toBe("after");
+        // The drop lands where the line says.
+        fireEvent.pointerUp(document, pointer(180));
+        expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      });
+
+      it("should measure once for many scrolls within one screen frame", () => {
+        const { container } = renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(180));
+        scrollAround(container, 10);
+        scrollAround(container, 20);
+        scrollAround(container, 30);
+        const measured = countMeasures();
+        expect(rows()[3]?.getAttribute("data-drop")).toBe("before");
+        act(drawFrame);
+        expect(measured()).toBe(1);
+        expect(rows()[3]?.getAttribute("data-drop")).toBe("after");
+      });
+
+      it("should not start the list scrolling when the pointer is at its edge", () => {
+        const { container } = renderPicker();
+        layOutList();
+        const list = screen.getByRole("list");
+        // Only pressed, at the list's top edge.
+        fireEvent.pointerDown(handle("Name"), pointer(10));
+        scrollAround(container, 0);
+        // The popover's frame and the drop line's. Neither asks for another.
+        act(drawFrame);
+        expect(waiting()).toBe(0);
+        expect(list.scrollTop).toBe(0);
+      });
+
+      it("should ask for no frame when the list itself scrolls", () => {
+        renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(180));
+        // The drag follows the list's own scroll at once, as before.
+        fireEvent(screen.getByRole("list"), new Event("scroll"));
+        expect(waiting()).toBe(0);
+      });
+
+      it("should stop measuring when the drag ends, even with a frame waiting", () => {
+        const { container } = renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        scrollAround(container, 30);
+        fireEvent.pointerUp(document, pointer(115));
+        const measured = countMeasures();
+        act(drawFrame);
+        scrollAround(container, 60);
+        act(drawFrame);
+        expect(measured()).toBe(0);
+      });
+    });
+
     describe("when a row changes height while another is held", () => {
       /** The size watchers the picker has made, each with the rows it watches. */
       const watchers: { rows: Set<Element>; changed: () => void }[] = [];

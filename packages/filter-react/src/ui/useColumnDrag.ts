@@ -249,6 +249,25 @@ export function useColumnDrag({
       // A mouse wheel can scroll the list under a pointer that stays still.
       list.addEventListener("scroll", follow);
 
+      // A box around the picker, or the page itself, can scroll too. That moves the whole
+      // list under a still pointer, so the drop line would show a place the drop does not
+      // land in. A scroll is reported many times a second, so the line is worked out at
+      // most once per screen frame.
+      let lineFrame: number | null = null;
+      const onScrollAround = (scrolled: Event) => {
+        // The list's own scroll is followed above.
+        if (scrolled.target === list || lineFrame !== null) return;
+        lineFrame = requestAnimationFrame(() => {
+          lineFrame = null;
+          // Only the drop line follows. The list does not start to scroll, as for a change
+          // of size below: a row that is only held at the list's edge must not move it.
+          showSlot();
+        });
+      };
+      // A box's scroll does not spread up to the page as other events do. Heard in the
+      // capture phase, the scroll of any box is heard here.
+      stopListening.push(listen("scroll", onScrollAround));
+
       // A row can change height while another is held, such as a row an app draws that opens
       // up. The measured middles are then out of date, and the drop line would show a place
       // the drop does not land in. So the browser is asked to say when a row changes size,
@@ -288,6 +307,7 @@ export function useColumnDrag({
             // The capture was never taken, or is gone already.
           }
           list.removeEventListener("scroll", follow);
+          if (lineFrame !== null) cancelAnimationFrame(lineFrame);
           sizeWatcher?.disconnect();
           const frame = session.current?.frame;
           if (frame != null) cancelAnimationFrame(frame);
