@@ -18,6 +18,12 @@ export interface FixtureNotes {
    * value appears here only if the browser was about to paint it.
    */
   painted: Record<string, string[]>;
+  /**
+   * What each table showed each time the page's scripts came to rest after a change, by
+   * table id, with repeats left out. The browser can paint only while scripts rest. So a
+   * value that is missing here was never on screen, and a value that is here could have been.
+   */
+  rested: Record<string, string[]>;
 }
 
 declare global {
@@ -26,7 +32,12 @@ declare global {
   }
 }
 
-const notes: FixtureNotes = { problems: [], changes: [], painted: {} };
+const notes: FixtureNotes = {
+  problems: [],
+  changes: [],
+  painted: {},
+  rested: {},
+};
 window.fixture = notes;
 
 // React reports a hydration problem (the browser's first draw differing from the server's)
@@ -45,18 +56,35 @@ window.addEventListener("error", (event) => {
 const root = document.getElementById("root") as HTMLElement;
 const setup = readSetup(new URLSearchParams(location.search));
 
-/** Notes what each table shows now. Runs once per screen frame, just before the paint. */
-function notePainted(): void {
+/** Adds what each table shows now to `seen`, by table id, unless it is what it showed last. */
+function noteShown(seen: Record<string, string[]>): void {
   for (const table of root.querySelectorAll("[data-table]")) {
     const id = table.getAttribute("data-table") as string;
     const shown = table.querySelector("[data-shown]")?.textContent ?? "";
-    notes.painted[id] ??= [];
-    const seen = notes.painted[id];
-    if (seen.at(-1) !== shown) seen.push(shown);
+    seen[id] ??= [];
+    if (seen[id].at(-1) !== shown) seen[id].push(shown);
   }
+}
+
+/** Notes what each table shows now. Runs once per screen frame, just before the paint. */
+function notePainted(): void {
+  noteShown(notes.painted);
   requestAnimationFrame(notePainted);
 }
 requestAnimationFrame(notePainted);
+
+// Whether a screen frame falls between two changes is up to the machine's timing, so the
+// frames above can miss a value that was on the page for a moment. This cannot: the browser
+// calls an observer as soon as the scripts that changed the page have come to rest, before
+// it does anything else. Changes made in one go, such as a draw and the early effects that
+// follow it, are seen together, as their end result. Changes with a rest in between, such as
+// a draw and a late effect, are seen one by one.
+noteShown(notes.rested);
+new MutationObserver(() => noteShown(notes.rested)).observe(root, {
+  subtree: true,
+  childList: true,
+  characterData: true,
+});
 
 if (setup.ssr) {
   new MutationObserver((records) => {

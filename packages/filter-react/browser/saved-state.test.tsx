@@ -22,12 +22,22 @@ const PRICE_HIDDEN = '"hidden":["price"]';
 /** The saved text of a table whose "stock" column comes first. */
 const STOCK_FIRST = '"order":["stock","name","price"]';
 
+/**
+ * How long the table takes to draw, in milliseconds. It is several times the 5 milliseconds
+ * after which React gives the browser a turn before it runs its late effects. So state that
+ * was loaded in a late effect would be on the page a moment after the starting columns, and
+ * the page would note both.
+ */
+const SLOW_DRAW = 40;
+
 /** A delay so long that a change is never saved by the clock within a test. */
 const NEVER = 600_000;
 
 describe.each(["local", "cookie"] as const)("state saved in %s", (store) => {
   test("survives a reload of the page (item 10)", async () => {
-    const page = await openTablePage(`store=${store}&tables=orders`);
+    const page = await openTablePage(
+      `store=${store}&tables=orders&slow=${SLOW_DRAW}`,
+    );
     const orders = page.table("orders");
     await expect.poll(orders.status).toBe("ready");
     expect(orders.shown()).toBe("name price stock");
@@ -41,8 +51,11 @@ describe.each(["local", "cookie"] as const)("state saved in %s", (store) => {
     await page.reload();
     await expect.poll(page.table("orders").status).toBe("ready");
     expect(page.table("orders").shown()).toBe("stock name");
-    // The saved state is read before the browser paints, so the starting columns are never
-    // shown, not even for one screen frame.
+    // The saved state is read before the browser can paint. The page's scripts never came
+    // to rest with the starting columns on the page, so the browser had no chance to show
+    // them.
+    expect(page.notes().rested.orders).toEqual(["stock name"]);
+    // And no screen frame showed them.
     await expect
       .poll(() => page.notes().painted.orders)
       .toEqual(["stock name"]);

@@ -5,7 +5,7 @@ import {
   localStorageStore,
   type StateStore,
 } from "@arvilmena/filter-core";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { ColumnPicker } from "../../src/ui/ColumnPicker";
 import { useColumnSettings } from "../../src/useColumnSettings";
 import { useSavedTableState } from "../../src/useSavedTableState";
@@ -39,6 +39,8 @@ export interface PageSetup {
   ssr: boolean;
   /** How long a table waits before it saves, in milliseconds. Left out for the default. */
   saveDelayMs: number | undefined;
+  /** How long each table takes to draw the first time, in milliseconds. */
+  slowDrawMs: number;
 }
 
 /** Reads the setup from an address's query string, such as "?store=cookie&tables=orders". */
@@ -49,6 +51,7 @@ export function readSetup(search: URLSearchParams): PageSetup {
     tables: (search.get("tables") ?? "orders").split(","),
     ssr: search.get("ssr") === "1",
     saveDelayMs: delay === null ? undefined : Number(delay),
+    slowDrawMs: Number(search.get("slow") ?? 0),
   };
 }
 
@@ -94,6 +97,16 @@ function SavedTable({
   serverDrew: boolean;
   initialSaved: unknown;
 }) {
+  // Stands in for a large table, which takes a while to draw. React runs its late effects
+  // straight after a quick draw, with no rest in between, so nothing could be painted
+  // before them. After a slow draw it gives the browser a turn first. A test asks for a slow
+  // draw to make sure of that turn: state that is loaded late is then seen to be late.
+  const isFirstDraw = useRef(true);
+  if (isFirstDraw.current) {
+    isFirstDraw.current = false;
+    const until = performance.now() + setup.slowDrawMs;
+    while (performance.now() < until);
+  }
   const saved = useSavedTableState({
     id,
     parts: PARTS,
