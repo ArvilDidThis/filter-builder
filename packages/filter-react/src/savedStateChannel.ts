@@ -148,8 +148,7 @@ function findOrList(
 ): ListedChannel {
   const place = placeOf(store, key);
   if (place.channel === undefined) {
-    const isSamePlace = kept?.store === store && kept.key === key;
-    if (isSamePlace && kept && !kept.isSuperseded()) {
+    if (kept?.store === store && kept.key === key && !kept.isSuperseded()) {
       place.channel = kept;
     } else {
       place.made += 1;
@@ -233,22 +232,16 @@ function createChannel(
       // The base is the newest state sent: a closing page sends without waiting, and its
       // save must build on the one still on its way.
       const saved = wanted(onItsWay ?? stored.parts);
-      if (saved !== undefined) {
-        const text = JSON.stringify(saved);
-        // The store holds exactly this already. Only this write is counted in `unanswered`.
-        if (unanswered === 1 && text === stored.text) {
-          unanswered -= 1;
-          done(ACCEPTED);
-          return;
-        }
-        writeCount += 1;
-        after = { parts: saved.parts, text, order: writeCount };
-        answer = store.save(key, saved);
-      } else {
-        writeCount += 1;
-        after = { parts: {}, text: undefined, order: writeCount };
-        answer = store.remove(key);
+      const text = saved && JSON.stringify(saved);
+      // The store holds exactly this already. Only this write is counted in `unanswered`.
+      if (saved && unanswered === 1 && text === stored.text) {
+        unanswered -= 1;
+        done(ACCEPTED);
+        return;
       }
+      writeCount += 1;
+      after = { parts: saved?.parts ?? {}, text, order: writeCount };
+      answer = saved ? store.save(key, saved) : store.remove(key);
     } catch (error) {
       unanswered -= 1;
       fail(done, error);
