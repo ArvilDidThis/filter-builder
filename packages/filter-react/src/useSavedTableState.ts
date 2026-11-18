@@ -323,10 +323,7 @@ function withMissingParts<Values>(
     (name) => !Object.hasOwn(values as object, name),
   );
   if (missing.length === 0) return values;
-  const version = options.version ?? DEFAULT_STATE_VERSION;
-  const read = readSavedState(createSavedState(saved, version), options.parts, {
-    version,
-  });
+  const read = readOwnParts(saved, options);
   const completed = { ...values };
   for (const name of missing) completed[name] = read[name];
   return completed;
@@ -837,15 +834,29 @@ function readLoadedState<Values>(
   saved: unknown,
   options: UseSavedTableStateOptions<Values>,
 ): { values: Values; savedParts: SavedParts } {
-  const version = options.version ?? DEFAULT_STATE_VERSION;
-  // Upgraded once here. Wrapped in today's version below, so they are not upgraded again.
+  // Upgraded once, here.
   const savedParts = readSavedParts(saved, options);
-  const values = readSavedState(
+  return {
+    values: readOwnParts(savedParts, options),
+    savedParts: savedParts ?? {},
+  };
+}
+
+/**
+ * Each of the hook's parts, checked, from saved parts that are in today's shape already.
+ * `undefined` gives every part its default.
+ */
+function readOwnParts<Values>(
+  savedParts: SavedParts | undefined,
+  options: UseSavedTableStateOptions<Values>,
+): Values {
+  const version = options.version ?? DEFAULT_STATE_VERSION;
+  // Wrapped in today's version, so that `migrate` does not upgrade the parts a second time.
+  return readSavedState(
     savedParts && createSavedState(savedParts, version),
     options.parts,
     { version },
   );
-  return { values, savedParts: savedParts ?? {} };
 }
 
 /**
