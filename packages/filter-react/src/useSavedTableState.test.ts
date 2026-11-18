@@ -1152,6 +1152,28 @@ describe("useSavedTableState", () => {
       expect(store.items.has("orders")).toBe(false);
     });
 
+    it("should still send a save that waits when the page closes after unmount", async () => {
+      const listen = vi.spyOn(window, "addEventListener");
+      const unlisten = vi.spyOn(window, "removeEventListener");
+      const count = (spy: typeof listen | typeof unlisten) =>
+        spy.mock.calls.filter(([type]) => type === "pagehide").length;
+      const { store, unmount } = withSaveOnItsWay();
+      // The newer save waits behind the one on its way, and the table is gone.
+      unmount();
+      expect(store.requests).toHaveLength(1);
+
+      window.dispatchEvent(new Event("pagehide"));
+      expect(store.requests).toHaveLength(2);
+      act(() => store.requests[0]?.answer());
+      act(() => store.requests[1]?.answer());
+      await settle();
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: NAME_SORT },
+      });
+      // Nothing listens to the page once the store has answered.
+      expect(count(unlisten)).toBe(count(listen));
+    });
+
     it("should send only the newest of the saves that waited", async () => {
       const { store, result } = withSaveOnItsWay();
       act(() => void result.current.flush());

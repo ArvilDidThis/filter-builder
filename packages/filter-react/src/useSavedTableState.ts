@@ -450,6 +450,29 @@ function createController<Values>(
     tell(error, action);
   };
 
+  /** Sends what waits in every channel now. For a closing page only. */
+  const sendWithoutWaiting = (): void => {
+    for (const busy of busyChannels) busy.sendNewestNow();
+  };
+
+  /** Ends the watch that `watchForExit` started. `undefined` when there is none. */
+  let unwatchExit: (() => void) | undefined;
+
+  /**
+   * Watches for a closing page once the table has left the screen, until the store has
+   * answered every write of this hook. The table's own listeners are gone by then, and a save
+   * may still wait behind one on its way.
+   */
+  const watchForExit = (): void => {
+    if (unanswered === 0 || unwatchExit !== undefined) return;
+    window.addEventListener("pagehide", sendWithoutWaiting);
+    unwatchExit = () => {
+      window.removeEventListener("pagehide", sendWithoutWaiting);
+      unwatchExit = undefined;
+    };
+    whenAnswered.push(() => unwatchExit?.());
+  };
+
   /** Forgets the change waiting out the delay. Its parts stay in `unsaved`. */
   const dropPending = (): void => {
     clearTimeout(timer);
@@ -661,6 +684,8 @@ function createController<Values>(
      */
     begin(start: Snapshot<Values>): void {
       active = true;
+      // The table listens to the page itself again.
+      unwatchExit?.();
       const isNewKey = start.key !== live.key;
       if (isNewKey) {
         live = start;
@@ -693,6 +718,7 @@ function createController<Values>(
       active = false;
       queuePending();
       leave();
+      watchForExit();
     },
 
     /**
@@ -759,7 +785,7 @@ function createController<Values>(
      */
     flushWithoutWaiting(): void {
       queuePending();
-      for (const busy of busyChannels) busy.sendNewestNow();
+      sendWithoutWaiting();
     },
 
     clear(): void {
