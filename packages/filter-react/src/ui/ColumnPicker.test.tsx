@@ -1625,6 +1625,103 @@ describe("ColumnPicker", () => {
       expect(stopped).toHaveBeenCalledWith("resize", expect.any(Function));
     });
 
+    describe("when something scrolls", () => {
+      /** The work waiting for the next screen frame. The test page draws no frames itself. */
+      let waiting: FrameRequestCallback[] = [];
+      /** Draws one screen frame: runs the work that was waiting for it. */
+      const drawFrame = () => {
+        const due = waiting;
+        waiting = [];
+        for (const work of due) work(0);
+      };
+      /** How many times the element has been measured since `layOutScreen`. */
+      const timesMeasured = (element: HTMLElement): number =>
+        vi
+          .mocked(HTMLElement.prototype.getBoundingClientRect)
+          .mock.contexts.filter((measured) => measured === element).length;
+      beforeEach(() => {
+        waiting = [];
+        vi.spyOn(window, "requestAnimationFrame").mockImplementation((work) => {
+          waiting.push(work);
+          return waiting.length;
+        });
+        vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {
+          waiting = [];
+        });
+      });
+
+      it("should measure again on the next screen frame after the page scrolls", () => {
+        const place = { left: 420, top: 60, width: 240 };
+        layOutScreen({ width: 800, height: 600 }, place);
+        renderPicker();
+        expect(shift()).toBe("");
+        expect(room()).toBe("532px");
+
+        // The page scrolls, which moves the popover right and down on the screen.
+        place.left = 620;
+        place.top = 100;
+        fireEvent.scroll(document);
+        expect(shift()).toBe("");
+        drawFrame();
+        expect(shift()).toBe("-68px");
+        expect(room()).toBe("492px");
+      });
+
+      it("should measure once for many scrolls within one screen frame", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 420, top: 60, width: 240 },
+        );
+        renderPicker();
+        const before = timesMeasured(popover());
+        fireEvent.scroll(document);
+        fireEvent.scroll(document);
+        fireEvent.scroll(document);
+        expect(waiting).toHaveLength(1);
+        expect(timesMeasured(popover())).toBe(before);
+        drawFrame();
+        expect(timesMeasured(popover())).toBe(before + 1);
+        // The next scroll asks for a frame of its own.
+        fireEvent.scroll(document);
+        expect(waiting).toHaveLength(1);
+      });
+
+      it("should measure again when a box around the picker scrolls", () => {
+        const place = { left: 420, top: 60, width: 240 };
+        layOutScreen({ width: 800, height: 600 }, place);
+        const { container } = renderPicker();
+        place.left = 620;
+        // Unlike the page's own, the scroll of a box inside the page does not spread upwards.
+        fireEvent(container, new Event("scroll", { bubbles: false }));
+        drawFrame();
+        expect(shift()).toBe("-68px");
+      });
+
+      it("should not measure when the list inside the popover scrolls", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 420, top: 60, width: 240 },
+        );
+        renderPicker();
+        fireEvent(screen.getByRole("list"), new Event("scroll"));
+        expect(waiting).toHaveLength(0);
+      });
+
+      it("should stop measuring once the picker closes, even with a frame waiting", () => {
+        const place = { left: 420, top: 60, width: 240 };
+        layOutScreen({ width: 800, height: 600 }, place);
+        renderPicker();
+        const dialog = popover();
+        fireEvent.scroll(document);
+        fireEvent.keyDown(dialog, { key: "Escape" });
+        expect(waiting).toHaveLength(0);
+        const before = timesMeasured(dialog);
+        fireEvent.scroll(document);
+        expect(waiting).toHaveLength(0);
+        expect(timesMeasured(dialog)).toBe(before);
+      });
+    });
+
     it("should not redraw a row to move the popover", () => {
       const size = { width: 800, height: 600 };
       layOutScreen(size, { left: 400, top: 60, width: 288 });

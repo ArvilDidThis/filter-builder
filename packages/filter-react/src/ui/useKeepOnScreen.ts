@@ -23,7 +23,8 @@ const ROOM_VARIABLE = "--fb-popover-room";
 /**
  * Keeps the popover that `popoverRef` points at inside the visible screen while `active` is
  * true. It moves the popover sideways only as far as needed, and caps its height to the room
- * below its top edge.
+ * below its top edge. It measures after each draw, when the window changes size, and when the
+ * page or a box around the popover scrolls.
  *
  * The style sheet does the moving: this only sets `--fb-popover-shift` and `--fb-popover-room`
  * on the popover's own element. Nothing is drawn again for it.
@@ -43,11 +44,35 @@ export function useKeepOnScreen(
     if (!active) return;
     // The popover's own window, which is not the global one when the popover is drawn inside
     // a frame (a page within the page).
-    const view = popoverRef.current?.ownerDocument.defaultView;
-    if (!view) return;
+    const page = popoverRef.current?.ownerDocument;
+    const view = page?.defaultView;
+    if (!page || !view) return;
     const onResize = () => keepOnScreen(popoverRef.current);
     view.addEventListener("resize", onResize);
-    return () => view.removeEventListener("resize", onResize);
+
+    // Scrolling moves the popover on the screen without drawing anything again: the page
+    // itself may scroll, or a scrolling box around the picker. A scroll is reported many
+    // times a second, so the popover is measured at most once per screen frame.
+    let frame: number | null = null;
+    const onScroll = (event: Event) => {
+      const popover = popoverRef.current;
+      // The list inside the popover scrolls without moving the popover.
+      if (popover?.contains(event.target as Node | null)) return;
+      if (frame !== null) return;
+      frame = view.requestAnimationFrame(() => {
+        frame = null;
+        keepOnScreen(popoverRef.current);
+      });
+    };
+    // A box's scroll does not spread up to the page as other events do. Heard in the capture
+    // phase (on the event's way down to its target), the scroll of any box is heard here.
+    page.addEventListener("scroll", onScroll, true);
+
+    return () => {
+      view.removeEventListener("resize", onResize);
+      page.removeEventListener("scroll", onScroll, true);
+      if (frame !== null) view.cancelAnimationFrame(frame);
+    };
   }, [active, popoverRef]);
 }
 
