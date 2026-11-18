@@ -1,7 +1,13 @@
 import axe from "axe-core";
 import { describe, expect, onTestFinished, test } from "vitest";
-import { commands, page, server } from "vitest/browser";
-import { openPicker, PickerApp, type PickerParts } from "./support/apps";
+import { commands, page, server, userEvent } from "vitest/browser";
+import {
+  mountOpenPicker,
+  openPicker,
+  PickerApp,
+  type PickerParts,
+  pickerParts,
+} from "./support/apps";
 import { mount } from "./support/mount";
 
 // How the open picker looks, and whether it passes an accessibility scan, on a light page and
@@ -111,4 +117,63 @@ describe("an accessibility scan of the picker (item 15)", () => {
       expect(await violations()).toEqual([]);
     },
   );
+});
+
+describe("the focus ring on the open list", () => {
+  // Opening the picker moves the focus to the list's box. Whether a ring is then drawn
+  // depends on how the browser judges the way the focus got there: by a key or by a click.
+  // Only a real browser makes that judgement.
+
+  /** The outline drawn around the list's box, once the box holds the focus. */
+  async function outlineOf(picker: PickerParts): Promise<CSSStyleDeclaration> {
+    await expect.poll(() => document.activeElement).toBe(picker.popover());
+    return getComputedStyle(picker.popover() as HTMLElement);
+  }
+
+  test("is drawn when Enter on the button opens the list", async () => {
+    mount(
+      <PickerApp
+        picker={{
+          // The picker's own button, with a place in the Tab order spelled out. Safari on
+          // a Mac leaves a plain button out of that order unless a system setting is on.
+          renderTrigger: (props) => (
+            <button
+              className="fb-button fb-columns-trigger"
+              tabIndex={0}
+              {...props}
+            >
+              Columns
+            </button>
+          ),
+        }}
+      />,
+    );
+    const picker = pickerParts();
+    await expect
+      .poll(() => document.querySelector(".fb-columns-trigger"))
+      .not.toBeNull();
+    // Tab brings the focus to the button, as a person at the keyboard would. A script that
+    // put the focus there after a click elsewhere would not count as the keyboard in every
+    // browser, and the list's box takes after the button.
+    picker.elsewhere().focus();
+    await userEvent.keyboard("{Tab}");
+    await expect.poll(() => document.activeElement).toBe(picker.trigger());
+    await userEvent.keyboard("{Enter}");
+    await expect.poll(picker.popover).not.toBeNull();
+
+    const outline = await outlineOf(picker);
+    expect(outline.outlineStyle).toBe("solid");
+    expect(outline.outlineWidth).toBe("2px");
+    // The same colour as the ring of a control inside the list.
+    picker.handle("Price").focus();
+    expect(outline.outlineStyle).toBe("none");
+    const control = getComputedStyle(picker.handle("Price"));
+    expect(control.outlineStyle).toBe("solid");
+  });
+
+  test("is not drawn when a click on the button opens the list", async () => {
+    const picker = await mountOpenPicker();
+    const outline = await outlineOf(picker);
+    expect(outline.outlineStyle).toBe("none");
+  });
 });
