@@ -4,7 +4,9 @@
 # command). See "Screenshots" under "Browser tests" in the README.
 #
 # The container is Playwright's own image: the same Ubuntu release as CI's machines, with the
-# browsers of the installed Playwright version and the system libraries they need.
+# browsers of the installed Playwright version and the system libraries they need. "noble" in
+# its name is Ubuntu 24.04, which `.github/workflows/browser-tests.yml` names too. Change
+# both together.
 #
 # Usage, from anywhere in the repository:  pnpm test:browser:update:linux
 set -euo pipefail

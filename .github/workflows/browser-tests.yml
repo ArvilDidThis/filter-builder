@@ -31,7 +31,11 @@ permissions:
 jobs:
   browsers:
     name: Chromium, Firefox & WebKit
-    runs-on: ubuntu-latest
+    # One named Ubuntu release, not "latest". The stored screenshots and the cached browsers
+    # were made for this release: text is drawn differently on another, and Playwright's
+    # browsers are built for each. To move to a newer release, change it here, in the cache
+    # key below and in `browser/store-linux-screenshots.sh`, then store new screenshots.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       # Actions are pinned to a full commit (with the version in a comment) so a moved tag
@@ -62,7 +66,7 @@ jobs:
         id: browser-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+          key: playwright-ubuntu-24.04-${{ steps.playwright.outputs.version }}
 
       - name: Download the browsers and the system libraries they need
         if: steps.browser-cache.outputs.cache-hit != 'true'
