@@ -43,6 +43,10 @@ export interface ColumnPickerLabels {
   moveHint: string;
   /** Read out after a move. `position` counts from 1. */
   moved: (label: string, position: number, total: number) => string;
+  /** Read out after the "show all" button is pressed. */
+  showAllDone: string;
+  /** Read out after the "reset" button is pressed. */
+  resetDone: string;
 }
 
 /** The picker's wording in English. Pass `labels` to replace any of it. */
@@ -57,6 +61,8 @@ export const COLUMN_PICKER_LABELS: ColumnPickerLabels = {
     "Press the up or down arrow key to move the column, or Home or End to move it to either end.",
   moved: (label, position, total) =>
     `${label} moved to position ${position} of ${total}.`,
+  showAllDone: "All columns are shown.",
+  resetDone: "The columns are back in their starting order and visibility.",
 };
 
 /** The attributes of the button that opens the picker. Spread them onto your own button. */
@@ -162,7 +168,12 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 }: ColumnPickerProps<Column>) {
   const { orderedColumns, actions } = state;
   const [open, setOpen] = useState(false);
-  const [announcement, setAnnouncement] = useState("");
+  // What a screen reader is told. `count` goes up with every message, so that the same text
+  // said twice is still a new message.
+  const [announcement, setAnnouncement] = useState({ text: "", count: 0 });
+  const announce = useCallback((text: string) => {
+    setAnnouncement((was) => ({ text, count: was.count + 1 }));
+  }, []);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -226,7 +237,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     }
     // The place is read from the list as it is now, so it is right even when the app put the
     // column somewhere other than where it was asked to go.
-    setAnnouncement(
+    announce(
       labels.moved(entry.column.label, index + 1, orderedColumns.length),
     );
   });
@@ -354,6 +365,9 @@ export function ColumnPicker<Column extends ColumnDefinition>({
               onClick={() => {
                 pendingMove.current = null;
                 actions.showAll();
+                // The button stays where it is and the list barely changes, so without
+                // this a screen reader would say nothing.
+                announce(labels.showAllDone);
               }}
               type="button"
             >
@@ -365,6 +379,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
                 // Reset moves columns too. A move still waiting must not take the credit.
                 pendingMove.current = null;
                 actions.reset();
+                announce(labels.resetDone);
               }}
               type="button"
             >
@@ -376,7 +391,9 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 
       {/* Always on the page, so a screen reader hears each new message put into it. */}
       <span aria-live="polite" className="fb-visually-hidden">
-        {announcement}
+        {/* A new element for each message. A screen reader reads out what is added, and
+            putting the same text in again would add nothing. */}
+        <span key={announcement.count}>{announcement.text}</span>
       </span>
     </div>
   );

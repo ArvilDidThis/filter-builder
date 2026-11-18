@@ -244,6 +244,39 @@ describe("ColumnPicker", () => {
     expect(checkbox("Notes").checked).toBe(false);
   });
 
+  it("should tell a screen reader what Show all and Reset did", () => {
+    renderPicker();
+    fireEvent.click(checkbox("Price"));
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(announced()).toBe("All columns are shown.");
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(announced()).toBe(
+      "The columns are back in their starting order and visibility.",
+    );
+  });
+
+  it("should announce the same message again as a new one", () => {
+    renderPicker();
+    const message = () => document.querySelector("[aria-live]")?.firstChild;
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    const first = message();
+    fireEvent.click(checkbox("Price"));
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(announced()).toBe("All columns are shown.");
+    // A screen reader reads out what is added to the page, so the text is put in afresh.
+    expect(message()).not.toBe(first);
+  });
+
+  it("should use the app's wording for what Show all and Reset did", () => {
+    renderPicker({
+      labels: { showAllDone: "Alle sichtbar.", resetDone: "Zurückgesetzt." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(announced()).toBe("Alle sichtbar.");
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(announced()).toBe("Zurückgesetzt.");
+  });
+
   describe("moving with the keyboard", () => {
     it("should move a column down and up with the arrow keys", () => {
       renderPicker();
