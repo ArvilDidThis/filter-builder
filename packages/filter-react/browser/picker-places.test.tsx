@@ -327,6 +327,26 @@ describe("the picker on a phone-sized screen (item 7)", () => {
         .toContain("Name of the product");
     },
   );
+
+  // This test fails today. With the button in the middle of the screen, a popover with long
+  // names is wider than the room on either side of the button, and nothing moves it back in.
+  test.each(["start", "end"] as const)(
+    "keeps the popover inside the screen when its button is in the middle (align %s)",
+    async (align) => {
+      await page.viewport(PHONE.width, PHONE.height);
+      await expect.poll(() => window.innerWidth).toBe(PHONE.width);
+      mount(<Toolbar align={align} place="center" />);
+      const picker = await openPicker();
+
+      const screenWidth = document.documentElement.clientWidth;
+      const box = (picker.popover() as HTMLElement).getBoundingClientRect();
+      expect(box.left).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeLessThanOrEqual(screenWidth);
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+        screenWidth,
+      );
+    },
+  );
 });
 
 describe("the picker inside the filter builder (item 8)", () => {
