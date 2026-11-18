@@ -20,7 +20,7 @@ type Column = (typeof COLUMNS)[number];
 
 /** Writes the picker's list as text: "name price (notes)" has the notes column hidden. */
 const shape = (state: ColumnSettingsState<Column>): string =>
-  state.columns
+  state.orderedColumns
     .map(({ column, visible }) => (visible ? column.key : `(${column.key})`))
     .join(" ");
 
@@ -75,8 +75,8 @@ describe("useColumnSettings", () => {
   it("should hand back the app's own column objects", () => {
     const { result } = renderUncontrolled();
     expect(result.current.visibleColumns[0]).toBe(COLUMNS[0]);
-    expect(result.current.columns[3]?.column).toBe(COLUMNS[3]);
-    expect(result.current.columns[0]?.hideable).toBe(false);
+    expect(result.current.orderedColumns[3]?.column).toBe(COLUMNS[3]);
+    expect(result.current.orderedColumns[0]?.hideable).toBe(false);
   });
 
   it("should hide, show and toggle a column, and report each change", () => {
@@ -198,7 +198,7 @@ describe("useColumnSettings", () => {
     const { result, rerender } = renderUncontrolled();
     const before = result.current;
     rerender();
-    expect(result.current.columns).toBe(before.columns);
+    expect(result.current.orderedColumns).toBe(before.orderedColumns);
     expect(result.current.visibleColumns).toBe(before.visibleColumns);
     expect(result.current.settings).toBe(before.settings);
   });
@@ -221,12 +221,12 @@ describe("useColumnSettings", () => {
 
   it("should reuse the entries of the columns a change did not touch", () => {
     const { result } = renderUncontrolled();
-    const before = result.current.columns;
+    const before = result.current.orderedColumns;
     act(() => result.current.actions.toggle("price"));
-    expect(result.current.columns).not.toBe(before);
-    expect(result.current.columns[0]).toBe(before[0]);
-    expect(result.current.columns[1]).not.toBe(before[1]);
-    expect(result.current.columns[2]).toBe(before[2]);
+    expect(result.current.orderedColumns).not.toBe(before);
+    expect(result.current.orderedColumns[0]).toBe(before[0]);
+    expect(result.current.orderedColumns[1]).not.toBe(before[1]);
+    expect(result.current.orderedColumns[2]).toBe(before[2]);
   });
 
   it("should keep the visible list when the app passes equal settings again", () => {

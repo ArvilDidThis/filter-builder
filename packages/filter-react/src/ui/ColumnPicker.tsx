@@ -154,7 +154,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   renderRow,
   className,
 }: ColumnPickerProps<Column>) {
-  const { columns, actions } = state;
+  const { orderedColumns, actions } = state;
   const [open, setOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
@@ -195,7 +195,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     const key = focusNext.current;
     if (key === null) return;
     focusNext.current = null;
-    const index = columns.findIndex((entry) => entry.column.key === key);
+    const index = orderedColumns.findIndex((entry) => entry.column.key === key);
     listRef.current?.children[index]
       ?.querySelector<HTMLElement>("[data-fb-column-handle]")
       ?.focus();
@@ -203,14 +203,14 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 
   // Reads the newest columns and wording, so the functions below can stay the same between
   // renders and the rows that did not change are not redrawn.
-  const latest = useRef({ columns, labels });
+  const latest = useRef({ orderedColumns, labels });
   useEffect(() => {
-    latest.current = { columns, labels };
+    latest.current = { orderedColumns, labels };
   });
 
   const moveTo = useCallback(
     (from: number, to: number) => {
-      const { columns: list, labels: wording } = latest.current;
+      const { orderedColumns: list, labels: wording } = latest.current;
       const entry = list[from];
       if (entry === undefined || to < 0 || to >= list.length || to === from) {
         return;
@@ -224,8 +224,12 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const drag = useColumnDrag(listRef, moveTo);
 
   const hiddenCount = useMemo(
-    () => columns.reduce((count, entry) => count + (entry.visible ? 0 : 1), 0),
-    [columns],
+    () =>
+      orderedColumns.reduce(
+        (count, entry) => count + (entry.visible ? 0 : 1),
+        0,
+      ),
+    [orderedColumns],
   );
   const triggerProps: ColumnPickerTriggerProps = {
     ref: setTrigger,
@@ -291,14 +295,14 @@ export function ColumnPicker<Column extends ColumnDefinition>({
             data-dragging={drag.from === null ? undefined : ""}
             ref={listRef}
           >
-            {columns.map((entry, index) => (
+            {orderedColumns.map((entry, index) => (
               <Row
                 actions={actions}
-                drop={dropMark(drag.slot, index, columns.length)}
+                drop={dropMark(drag.slot, index, orderedColumns.length)}
                 entry={entry}
                 hintId={hintId}
                 index={index}
-                count={columns.length}
+                count={orderedColumns.length}
                 isDragging={drag.from === index}
                 key={entry.column.key}
                 labels={labels}

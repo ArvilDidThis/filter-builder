@@ -41,7 +41,7 @@ export interface ColumnSettingsActions<Key extends string = string> {
   toggle: (key: Key) => void;
   /**
    * Moves a column so that it ends up at `toIndex` in the order. The order counts hidden
-   * columns too, so the index is the column's place in `columns`.
+   * columns too, so the index is the column's place in `orderedColumns`.
    */
   move: (key: Key, toIndex: number) => void;
   /** Shows every column, keeping the order. */
@@ -56,8 +56,11 @@ export interface ColumnSettingsState<
 > {
   /** The settings now, fitted to the column list. Store this to keep a person's choices. */
   settings: ColumnSettings;
-  /** Every column in its chosen place, each with whether it is shown. A picker draws this. */
-  columns: readonly OrderedColumn<Column>[];
+  /**
+   * Every column in its chosen place, each with whether it is shown. A picker draws this. The
+   * option `columns` is the list the app passed in. This is that list after a person's choices.
+   */
+  orderedColumns: readonly OrderedColumn<Column>[];
   /**
    * The columns the table should draw, in order. The list stays the same object until its
    * content changes, so a memoised table does not redraw for nothing.
@@ -69,7 +72,7 @@ export interface ColumnSettingsState<
 
 /**
  * Which columns a table shows and in what order, with no markup or styling. A table draws
- * `visibleColumns`, and a picker draws `columns` and calls `actions`.
+ * `visibleColumns`, and a picker draws `orderedColumns` and calls `actions`.
  *
  * It works like a form input. Pass `value` and `onChange` to own the settings, or leave `value`
  * out and the hook keeps them, starting from `defaultValue`. Either way the settings are fitted
@@ -157,7 +160,12 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     Object.is,
   );
 
-  return { settings, columns: ordered, visibleColumns: visible, actions };
+  return {
+    settings,
+    orderedColumns: ordered,
+    visibleColumns: visible,
+    actions,
+  };
 }
 
 /** Whether a person may hide the column with this key. */

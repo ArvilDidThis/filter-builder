@@ -128,25 +128,22 @@ The picker reads the `--fb-*` variables from its own class, `.fb-columns`.
 
 ## Your own column picker
 
-`useColumnSettings` holds no markup. It returns every column in order, the visible columns, and
-the actions that change the settings. The `actions` object never changes, and `visibleColumns`
-changes only when its content does, so a memoised table does not redraw for nothing.
+`useColumnSettings` holds no markup. It returns every column in order (`orderedColumns`), the
+visible columns (`visibleColumns`), and the actions that change the settings. The `actions`
+object never changes, and `visibleColumns` changes only when its content does, so a memoised
+table does not redraw for nothing.
 
 ```tsx
 import { useColumnSettings } from "@arvilmena/filter-react";
 
 function Products({ rows }) {
-  const {
-    columns: ordered,
-    visibleColumns,
-    actions,
-  } = useColumnSettings({
+  const { orderedColumns, visibleColumns, actions } = useColumnSettings({
     columns,
   });
   return (
     <>
       <ul>
-        {ordered.map(({ column, visible, hideable }, index) => (
+        {orderedColumns.map(({ column, visible, hideable }, index) => (
           <li key={column.key}>
             <label>
               <input
