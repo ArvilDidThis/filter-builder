@@ -37,8 +37,8 @@ export default defineConfig({
     include: [
       // The same tests as `filter-react` runs itself.
       "src/**/*.test.{ts,tsx}",
-      // And one of this package's own, which checks that React 18 really is in use.
-      fileURLToPath(new URL("./react-version.test.ts", import.meta.url)),
+      // And one that checks that those tests really get React 18.
+      "react-18/react-version.test.ts",
     ],
   },
 });
