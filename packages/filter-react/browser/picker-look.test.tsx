@@ -71,6 +71,14 @@ describe("the open picker's look (item 14)", () => {
       // Text is drawn differently on each system, so a screenshot is compared only with one
       // stored on the same system. Where none is stored yet, there is nothing to compare.
       if (!isUpdating && !(await commands.hasBaseline(name))) {
+        // Linux screenshots are kept in the repository, and CI runs on Linux. A missing one
+        // there means the look is no longer checked, so it fails and does not pass quietly.
+        if (server.platform === "linux") {
+          throw new Error(
+            `The stored screenshot "${name}" for ${server.browser} on Linux is missing. ` +
+              "Store it with `pnpm test:browser:update:linux` and commit it.",
+          );
+        }
         console.warn(
           `No stored screenshot "${name}" for ${server.browser} on ${server.platform}. ` +
             "Nothing was compared. Store one with `pnpm test:browser:update`.",

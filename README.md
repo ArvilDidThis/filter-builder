@@ -77,7 +77,8 @@ Two tests compare the open picker, on a light page and on a dark page, with stor
 screenshots. Text is drawn differently on each system, so each system has its own stored
 screenshots, in `packages/filter-react/browser/__screenshots__/<system>/<browser>/`.
 
-- **Linux** screenshots are the ones CI compares. Only they are kept in the repository.
+- **Linux** screenshots are the ones CI compares. Only they are kept in the repository. On
+  Linux, a missing screenshot fails the test, so the look cannot go unchecked by accident.
 - **Other systems:** your own screenshots stay on your machine, and git ignores them. Where
   none is stored, the test compares nothing, says so, and passes.
 
