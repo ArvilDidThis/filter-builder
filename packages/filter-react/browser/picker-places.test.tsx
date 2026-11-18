@@ -10,7 +10,6 @@ import { commands, page, userEvent } from "vitest/browser";
 import { ColumnPicker, type ColumnPickerProps } from "../src/ui/ColumnPicker";
 import { FilterBuilder } from "../src/ui/FilterBuilder";
 import { useColumnSettings } from "../src/useColumnSettings";
-import { BLANK_PAGE_PATH } from "./fixture-paths";
 import {
   COLUMNS,
   type Counter,
@@ -19,7 +18,7 @@ import {
   PickerApp,
   type PickerParts,
 } from "./support/apps";
-import { untilBlank } from "./support/fixture-page";
+import { openInFrame } from "./support/frame";
 import { mount } from "./support/mount";
 import {
   clickOn,
@@ -29,7 +28,7 @@ import {
   pressOn,
   release,
 } from "./support/pointer";
-import { addStyles, shadowStage } from "./support/shadow";
+import { shadowStage } from "./support/shadow";
 import { VIEWPORT } from "./viewport";
 
 // The picker in the places an app may put it: a closed shadow tree, a frame, a phone-sized
@@ -372,39 +371,6 @@ describe.each(["open", "closed"] as const)(
 );
 
 describe("the picker inside an embedded page (item 6)", () => {
-  /**
-   * Draws the app into a frame (a page within the page) from the outer page, as an app does
-   * that draws into a preview pane. The frame has a document of its own.
-   */
-  async function openInFrame(
-    changed?: Counter,
-    /** Drawn in the frame in place of the usual app around the picker. */
-    app?: ReactNode,
-  ): Promise<{
-    picker: PickerParts;
-    frame: HTMLIFrameElement;
-    inner: Document;
-    outside: HTMLButtonElement;
-  }> {
-    const outside = document.createElement("button");
-    outside.textContent = "Outside the frame";
-    const frame = document.createElement("iframe");
-    frame.title = "Embedded page";
-    frame.style.cssText =
-      "display: block; width: 480px; height: 400px; margin: 24px;";
-    frame.src = BLANK_PAGE_PATH;
-    document.body.append(outside, frame);
-    // A frame starts with a throwaway empty page. The real one is there once it has loaded.
-    await untilBlank(frame);
-    const inner = frame.contentDocument as Document;
-    addStyles(inner.head);
-    mount(
-      app ?? <PickerApp changed={changed} />,
-      inner.body.appendChild(inner.createElement("div")),
-    );
-    return { picker: await openPicker(inner), frame, inner, outside };
-  }
-
   test("stays open for a click inside it, and closes for one outside", async () => {
     const { picker } = await openInFrame();
     await clickOn(picker.row("Price").querySelector("label") as Element);
