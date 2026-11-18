@@ -55,19 +55,31 @@ interface DragSession {
   stop: () => void;
 }
 
-/**
- * Keeps track of a drag in the list `listRef` points at. Each child of the list must be one
- * row, and `keys` must name the rows in the order they are drawn. Keep the same `keys` list
- * between renders until the rows change (see `useMemo`).
- *
- * `onDrop` is called once, with the row's key and its new place, and only when the row landed
- * in a new place.
- */
-export function useColumnDrag(
-  listRef: RefObject<HTMLElement | null>,
-  keys: readonly string[],
-  onDrop: (key: string, to: number) => void,
-): ColumnDrag {
+/** What `useColumnDrag` needs from the list it serves. */
+export interface ColumnDragOptions {
+  /** Points at the list. Each child of the list must be one row. */
+  listRef: RefObject<HTMLElement | null>;
+  /**
+   * The key of each row, in the order the rows are drawn. Keep the same list between renders
+   * until the rows change (see `useMemo`).
+   */
+  keys: readonly string[];
+  /** Whether the list is on the page. A drag ends when this turns false. */
+  active: boolean;
+  /**
+   * Called once per drag, with the row's key and its new place, and only when the row landed
+   * in a new place.
+   */
+  onDrop: (key: string, to: number) => void;
+}
+
+/** Keeps track of a drag in a list of rows. */
+export function useColumnDrag({
+  listRef,
+  keys,
+  active,
+  onDrop,
+}: ColumnDragOptions): ColumnDrag {
   const [held, setHeld] = useState<Pick<ColumnDrag, "key" | "slot">>(IDLE);
   const session = useRef<DragSession | null>(null);
 
@@ -83,7 +95,13 @@ export function useColumnDrag(
     setHeld(IDLE);
   }, []);
 
-  // A picker that closes mid-drag must not leave listeners behind.
+  // The list goes away when the picker closes, and the drag goes with it. Otherwise letting go
+  // of the pointer after the list has closed would still move the column.
+  useEffect(() => {
+    if (!active) end();
+  }, [active, end]);
+
+  // A picker that leaves the page mid-drag must not leave listeners behind.
   useEffect(() => () => session.current?.stop(), []);
 
   /** Works out where a drop would land now, and scrolls the list when the pointer is at an edge. */
@@ -157,6 +175,8 @@ export function useColumnDrag(
         const drag = session.current;
         if (drag === null || released.pointerId !== pointerId) return;
         end();
+        // A drop means nothing once the list it was aimed at has left the page.
+        if (listRef.current !== list) return;
         if (drag.to !== drag.from) latest.current.onDrop(drag.key, drag.to);
       };
       // The browser took the pointer away, for example to scroll the page.

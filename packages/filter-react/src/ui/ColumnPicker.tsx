@@ -232,7 +232,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     () => orderedColumns.map((entry) => entry.column.key),
     [orderedColumns],
   );
-  const drag = useColumnDrag(listRef, keys, moveTo);
+  const drag = useColumnDrag({ listRef, keys, active: open, onDrop: moveTo });
 
   const hiddenCount = useMemo(
     () =>

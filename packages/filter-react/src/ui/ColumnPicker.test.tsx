@@ -358,6 +358,38 @@ describe("ColumnPicker", () => {
       );
     });
 
+    it("should give up the drag when Tab closes the picker", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.blur(handle("Name"), {
+        relatedTarget: screen.getByRole("button", { name: "Elsewhere" }),
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // The pointer is let go only after the list has closed.
+      fireEvent.pointerUp(document, pointer(180));
+      expect(table()).toBe("name price stock");
+      expect(announced()).toBe("");
+      // The picker opens again with nothing held.
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(document.querySelector("[data-dragging]")).toBeNull();
+    });
+
+    it("should give up the drag when a second finger taps outside the picker", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Elsewhere" }), {
+        ...pointer(500),
+        pointerId: 2,
+      });
+      fireEvent.pointerUp(document, pointer(180));
+      expect(table()).toBe("name price stock");
+    });
+
     it("should redraw the table once, on drop, and not while dragging", () => {
       renderPicker();
       layOutList();
