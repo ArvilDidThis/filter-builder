@@ -4,6 +4,7 @@ import {
   type ReadSavedStateOptions,
   readSavedState,
   resolveStateKey,
+  type SavedState,
   type StateParts,
   type StateStore,
 } from "@arvilmena/filter-core";
@@ -72,9 +73,20 @@ export interface SavedTableState<Values> {
   status: SavedTableStateStatus;
   /** What went wrong, while `status` is "error". */
   error: unknown;
-  /** Saves a waiting change now, without waiting out the delay. */
-  flush: () => void;
-  /** Forgets the saved state and puts every part back to its default. */
+  /**
+   * Saves a waiting change now, without waiting out the delay. The promise settles once the
+   * store has answered every save and remove sent so far, so an app can wait for it before it
+   * leaves the page: `await saved.flush()`.
+   *
+   * The promise never rejects. It gives `true` when nothing is left unsaved, and `false` when a
+   * save or remove failed, or when a change cannot be saved because the load has not finished
+   * or has failed. The failure itself is in `error` and goes to `onError`.
+   */
+  flush: () => Promise<boolean>;
+  /**
+   * Forgets everything saved under the key and puts every part back to its default. The remove
+   * is sent after the saves sent before it, so none of them can bring the state back.
+   */
   clear: () => void;
 }
 
@@ -90,6 +102,9 @@ export interface SavedTableState<Values> {
  * - When `name`, `id` or the page's path changes, a waiting change is saved under the old key
  *   and the state for the new key is loaded.
  * - A waiting change is also saved when the page is hidden or closed, and on unmount.
+ * - Saves and removes reach the store one at a time, in the order they were made, so a slow
+ *   answer cannot leave an older state in the store. Only a closing page does not wait for the
+ *   answer before it sends the next one.
  *
  * @example
  * const saved = useSavedTableState({
@@ -143,14 +158,16 @@ export function useSavedTableState<Values>(
   }, [controller, key]);
 
   useEffect(() => {
-    // A phone may close a hidden page without telling it, so a hidden page saves too.
+    // A phone may close a hidden page without telling it, so a hidden page saves too. It may
+    // also come back, so its save waits its turn like any other.
     const flushWhenHidden = () => {
-      if (document.visibilityState === "hidden") controller.flush();
+      if (document.visibilityState === "hidden") void controller.flush();
     };
-    window.addEventListener("pagehide", controller.flush);
+    // A closing page has no time to wait for an answer.
+    window.addEventListener("pagehide", controller.flushWithoutWaiting);
     document.addEventListener("visibilitychange", flushWhenHidden);
     return () => {
-      window.removeEventListener("pagehide", controller.flush);
+      window.removeEventListener("pagehide", controller.flushWithoutWaiting);
       document.removeEventListener("visibilitychange", flushWhenHidden);
     };
   }, [controller]);
@@ -224,17 +241,25 @@ function createController<Values>(
   /** Goes up whenever a load is started or dropped. A load that answers late sees it moved. */
   let loadRun = 0;
 
-  /** The change waiting to be saved, with the key it belongs to. */
+  /** The change waiting out the delay, with the key it belongs to. */
   let pending: { key: string; values: Values } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  /** The text last handed to the store. The same text is not saved twice. */
+  /** The text of the newest save made. The same text is not saved twice. */
   let written: { key: string; json: string } | undefined;
-  /** How many saves the store has not answered yet. */
+  /**
+   * The saves and removes not yet handed to the store, oldest first. They go one at a time:
+   * each waits for the store's answer to the one before it. The store therefore ends with the
+   * newest state, however slowly it answers.
+   */
+  const queue: StoreJob[] = [];
+  /** How many saves and removes the store has not answered yet. */
   let sending = 0;
-  /** Whether a save is waiting for the one before it to be answered. */
-  let queued = false;
-  /** Goes up with every save. Only the newest save may clear an error. */
+  /** Goes up with every save handed to the store. Only the newest save may clear an error. */
   let saveRun = 0;
+  /** Goes up with every failed save or remove. `flush` reads it to tell how its saves went. */
+  let failures = 0;
+  /** Called once the store has answered everything. `flush` waits here. */
+  const whenIdle: (() => void)[] = [];
 
   const store = (): StateStore => {
     if (latest.current.store) return latest.current.store;
@@ -253,23 +278,78 @@ function createController<Values>(
     action: SavedTableStateAction,
     key: string | undefined,
   ): void => {
+    if (action !== "load") failures += 1;
     if (live.key === key) publish({ ...live, status: "error", error });
     latest.current.onError?.(error, action);
   };
 
-  const write = (now = false): void => {
+  /** Hands one save or remove to the store, and deals with its answer. */
+  const send = (job: StoreJob): void => {
+    saveRun += job.kind === "save" ? 1 : 0;
+    const run = saveRun;
+
+    const settle = (failure?: { error: unknown }): void => {
+      if (failure) {
+        // Forget the text, so the next change tries again.
+        if (job.kind === "save" && written === job.record) written = undefined;
+        report(failure.error, job.kind, job.key);
+      } else if (
+        job.kind === "save" &&
+        run === saveRun &&
+        live.key === job.key &&
+        live.status === "error" &&
+        canSave
+      ) {
+        // An earlier save had failed, and this one went through.
+        publish({ ...live, status: "ready", error: undefined });
+      }
+    };
+
+    try {
+      const answer =
+        job.kind === "save"
+          ? store().save(job.key, job.saved)
+          : store().remove(job.key);
+      if (!isPromiseLike(answer)) {
+        settle();
+        return;
+      }
+      sending += 1;
+      answer.then(
+        () => {
+          sending -= 1;
+          settle();
+          sendNext();
+        },
+        (error: unknown) => {
+          sending -= 1;
+          settle({ error });
+          sendNext();
+        },
+      );
+    } catch (error) {
+      settle({ error });
+    }
+  };
+
+  /** Sends what is in the queue, for as long as the store has answered everything before it. */
+  const sendNext = (): void => {
+    while (sending === 0) {
+      const job = queue.shift();
+      if (job === undefined) break;
+      send(job);
+    }
+    if (sending > 0 || queue.length > 0) return;
+    for (const tell of whenIdle.splice(0)) tell();
+  };
+
+  /** Moves the waiting change into the queue, without waiting out the rest of the delay. */
+  const queuePending = (): void => {
     clearTimeout(timer);
     timer = undefined;
     const job = pending;
     if (job === undefined) return;
-    // One save at a time, so an older save cannot land after a newer one. A save that must go
-    // now (the page is closing) does not wait.
-    if (sending > 0 && !now) {
-      queued = true;
-      return;
-    }
     pending = undefined;
-    queued = false;
 
     const saved = createSavedState(
       job.values as Record<string, unknown>,
@@ -283,57 +363,20 @@ function createController<Values>(
       return;
     }
     if (written?.key === job.key && written.json === json) return;
-    const record = { key: job.key, json };
-    written = record;
-    saveRun += 1;
-    const run = saveRun;
-
-    const settle = (failure?: { error: unknown }): void => {
-      if (failure) {
-        // Forget the text, so the next change tries again.
-        if (written === record) written = undefined;
-        report(failure.error, "save", job.key);
-      } else if (
-        run === saveRun &&
-        live.key === job.key &&
-        live.status === "error" &&
-        canSave
-      ) {
-        // An earlier save had failed, and this one went through.
-        publish({ ...live, status: "ready", error: undefined });
-      }
-      if (queued && sending === 0) write();
-    };
-
-    try {
-      const answer = store().save(job.key, saved);
-      if (!isPromiseLike(answer)) {
-        settle();
-        return;
-      }
-      sending += 1;
-      answer.then(
-        () => {
-          sending -= 1;
-          settle();
-        },
-        (error: unknown) => {
-          sending -= 1;
-          settle({ error });
-        },
-      );
-    } catch (error) {
-      settle({ error });
-    }
+    written = { key: job.key, json };
+    // A save still in the queue is out of date now. Only the newest state needs to be sent.
+    const last = queue.at(-1);
+    if (last?.kind === "save" && last.key === job.key) queue.pop();
+    queue.push({ kind: "save", key: job.key, saved, record: written });
   };
 
   const scheduleSave = (key: string): void => {
     pending = { key, values: live.values };
     clearTimeout(timer);
-    timer = setTimeout(
-      write,
-      latest.current.saveDelayMs ?? DEFAULT_SAVE_DELAY_MS,
-    );
+    timer = setTimeout(() => {
+      queuePending();
+      sendNext();
+    }, latest.current.saveDelayMs ?? DEFAULT_SAVE_DELAY_MS);
   };
 
   return {
@@ -385,11 +428,15 @@ function createController<Values>(
       }
     },
 
-    /** Drops a load on its way and saves a waiting change, under the key it belongs to. */
+    /**
+     * Drops a load on its way and saves a waiting change, under the key it belongs to. The save
+     * waits its turn: the queue keeps going after the table has left the screen.
+     */
     stop(): void {
       loadRun += 1;
       active = false;
-      write(true);
+      queuePending();
+      sendNext();
     },
 
     set(part: keyof Values, change: unknown): void {
@@ -403,8 +450,28 @@ function createController<Values>(
       else if (wasLoading) touched.add(part);
     },
 
-    flush(): void {
-      write(true);
+    flush(): Promise<boolean> {
+      const failuresBefore = failures;
+      queuePending();
+      sendNext();
+      // A change made before the load has finished, or after it failed, is not saved.
+      const isAllSaved = (): boolean =>
+        failures === failuresBefore && touched.size === 0;
+      if (sending === 0 && queue.length === 0) {
+        return Promise.resolve(isAllSaved());
+      }
+      return new Promise((resolve) => {
+        whenIdle.push(() => resolve(isAllSaved()));
+      });
+    },
+
+    /**
+     * Sends every waiting save and remove at once, in order, without waiting for the store's
+     * answers. For a closing page only: the answers may come back in another order.
+     */
+    flushWithoutWaiting(): void {
+      queuePending();
+      for (const job of queue.splice(0)) send(job);
     },
 
     clear(): void {
@@ -413,7 +480,6 @@ function createController<Values>(
       clearTimeout(timer);
       timer = undefined;
       pending = undefined;
-      queued = false;
       written = undefined;
       touched.clear();
       const { key } = live;
@@ -425,19 +491,24 @@ function createController<Values>(
       // The stored state is gone on purpose, so saving is safe even after a failed load.
       canSave = true;
       publish({ key, values, status: "ready", error: undefined });
-      try {
-        const answer = store().remove(key);
-        if (isPromiseLike(answer)) {
-          answer.then(undefined, (error: unknown) =>
-            report(error, "remove", key),
-          );
-        }
-      } catch (error) {
-        report(error, "remove", key);
-      }
+      // Through the same queue as the saves. A save made before this cannot land after the
+      // remove, and a save made after this cannot be deleted by it.
+      queue.push({ kind: "remove", key });
+      sendNext();
     },
   };
 }
+
+/** A save or a remove on its way to the store. */
+type StoreJob =
+  | {
+      kind: "save";
+      key: string;
+      saved: SavedState;
+      /** The entry in `written` this save made, to forget it when the save fails. */
+      record: { key: string; json: string };
+    }
+  | { kind: "remove"; key: string };
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (

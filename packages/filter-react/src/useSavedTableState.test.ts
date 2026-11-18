@@ -114,6 +114,40 @@ function memoryStore(initial: Record<string, unknown> = {}) {
   return store satisfies StateStore;
 }
 
+/**
+ * A store that answers a save or a remove only when the test says so, in any order. A value
+ * reaches `items` when its request is answered, as on a real server.
+ */
+function slowStore(initial: Record<string, unknown> = {}) {
+  const memory = memoryStore(initial);
+  const requests: {
+    kind: "save" | "remove";
+    key: string;
+    answer: () => void;
+    fail: (error: unknown) => void;
+  }[] = [];
+  const ask = (kind: "save" | "remove", key: string, apply: () => void) =>
+    new Promise<void>((resolve, reject) => {
+      const answer = () => {
+        apply();
+        resolve();
+      };
+      requests.push({ kind, key, answer, fail: reject });
+    });
+  const store = {
+    items: memory.items,
+    requests,
+    load: memory.load,
+    save: vi.fn((key: string, value: unknown) =>
+      ask("save", key, () => memory.save(key, value)),
+    ),
+    remove: vi.fn((key: string) =>
+      ask("remove", key, () => memory.remove(key)),
+    ),
+  };
+  return store satisfies StateStore;
+}
+
 /** A promise the test settles by hand. */
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -477,11 +511,11 @@ describe("useSavedTableState", () => {
     it("should save at once on flush", () => {
       const store = memoryStore();
       const { result } = renderSaved({ store });
-      act(() => result.current.flush());
+      act(() => void result.current.flush());
       expect(store.save).not.toHaveBeenCalled();
 
       act(() => result.current.set.sort(PRICE_SORT));
-      act(() => result.current.flush());
+      act(() => void result.current.flush());
       expect(store.save).toHaveBeenCalledOnce();
       act(() => vi.advanceTimersByTime(300));
       expect(store.save).toHaveBeenCalledOnce();
@@ -570,6 +604,142 @@ describe("useSavedTableState", () => {
     });
   });
 
+  describe("the order of saves", () => {
+    /** Leaves one save unanswered and a newer change waiting out the delay. */
+    const withSaveOnItsWay = (options: Options = {}) => {
+      const store = slowStore();
+      const hook = renderSaved({ store, ...options });
+      act(() => hook.result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => hook.result.current.set.sort(NAME_SORT));
+      expect(store.requests).toHaveLength(1);
+      return { store, ...hook };
+    };
+
+    it.each([
+      [
+        "flush",
+        ({ result }: ReturnType<typeof withSaveOnItsWay>) =>
+          void result.current.flush(),
+      ],
+      [
+        "a hidden page",
+        () => {
+          vi.spyOn(document, "visibilityState", "get").mockReturnValue(
+            "hidden",
+          );
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      ],
+      [
+        "a change of key",
+        ({ rerender, store }: ReturnType<typeof withSaveOnItsWay>) =>
+          rerender({ id: "archive", store }),
+      ],
+      [
+        "unmount",
+        ({ unmount }: ReturnType<typeof withSaveOnItsWay>) => unmount(),
+      ],
+    ])(
+      "should not let %s overtake a save on its way",
+      async (_label, leave) => {
+        const hook = withSaveOnItsWay();
+        const { store } = hook;
+        act(() => leave(hook));
+        // The first save has not been answered, so the newer one waits.
+        expect(store.save).toHaveBeenCalledOnce();
+
+        act(() => store.requests[0]?.answer());
+        await settle();
+        expect(store.save).toHaveBeenCalledTimes(2);
+        act(() => store.requests[1]?.answer());
+        await settle();
+        expect(store.items.get("orders")).toMatchObject({
+          parts: { sort: NAME_SORT },
+        });
+        vi.restoreAllMocks();
+      },
+    );
+
+    it("should not wait for an answer when the page is closed", () => {
+      const { store } = withSaveOnItsWay();
+      act(() => window.dispatchEvent(new Event("pagehide")));
+      expect(store.save).toHaveBeenCalledTimes(2);
+      expect(store.save.mock.calls[1]?.[1]).toMatchObject({
+        parts: { sort: NAME_SORT },
+      });
+    });
+
+    it("should send only the newest of the saves that waited", async () => {
+      const { store, result } = withSaveOnItsWay();
+      act(() => void result.current.flush());
+      act(() => result.current.set.sort(null));
+      act(() => void result.current.flush());
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(store.save).toHaveBeenCalledTimes(2);
+      expect(store.save.mock.calls[1]?.[1]).toMatchObject({
+        parts: { sort: null },
+      });
+    });
+  });
+
+  describe("flush", () => {
+    it("should settle once the store has answered the save", async () => {
+      const store = slowStore();
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      const done = vi.fn();
+      act(() => void result.current.flush().then(done));
+      await settle();
+      expect(done).not.toHaveBeenCalled();
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(done).toHaveBeenCalledExactlyOnceWith(true);
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: PRICE_SORT },
+      });
+    });
+
+    it("should give true at once when nothing waits", async () => {
+      const { result } = renderSaved({ store: memoryStore() });
+      await expect(result.current.flush()).resolves.toBe(true);
+      act(() => result.current.set.sort(PRICE_SORT));
+      let flushed: Promise<boolean> | undefined;
+      act(() => {
+        flushed = result.current.flush();
+      });
+      await expect(flushed).resolves.toBe(true);
+    });
+
+    it("should give false, and not reject, when the save fails", async () => {
+      const failure = new Error("offline");
+      const store = slowStore();
+      const onError = vi.fn();
+      const { result } = renderSaved({ store, onError });
+      act(() => result.current.set.sort(PRICE_SORT));
+      const done = vi.fn();
+      const failed = vi.fn();
+      act(() => void result.current.flush().then(done, failed));
+      act(() => store.requests[0]?.fail(failure));
+      await settle();
+      expect(done).toHaveBeenCalledExactlyOnceWith(false);
+      expect(failed).not.toHaveBeenCalled();
+      expect(result.current.status).toBe("error");
+      expect(onError).toHaveBeenCalledExactlyOnceWith(failure, "save");
+    });
+
+    it("should give false for a change that cannot be saved yet", async () => {
+      const store = { ...memoryStore(), load: () => new Promise(() => {}) };
+      const { result } = renderSaved({ store });
+      await expect(result.current.flush()).resolves.toBe(true);
+      act(() => result.current.set.sort(PRICE_SORT));
+      await expect(result.current.flush()).resolves.toBe(false);
+      expect(store.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe("a store that answers later", () => {
     it("should show the defaults while loading, then the saved state", async () => {
       const load = deferred<unknown>();
@@ -592,7 +762,7 @@ describe("useSavedTableState", () => {
       act(() => result.current.set.sort(PRICE_SORT));
       expect(result.current.values.sort).toEqual(PRICE_SORT);
       act(() => vi.advanceTimersByTime(1000));
-      act(() => result.current.flush());
+      act(() => void result.current.flush());
       act(() => window.dispatchEvent(new Event("pagehide")));
       expect(store.save).not.toHaveBeenCalled();
 
@@ -777,7 +947,7 @@ describe("useSavedTableState", () => {
       await settle();
       act(() => result.current.set.sort(PRICE_SORT));
       act(() => vi.advanceTimersByTime(1000));
-      act(() => result.current.flush());
+      act(() => void result.current.flush());
       unmount();
       expect(store.save).not.toHaveBeenCalled();
     });
@@ -930,6 +1100,48 @@ describe("useSavedTableState", () => {
       load.resolve(savedWith({ sort: NAME_SORT }));
       await settle();
       expect(result.current.values.sort).toBeNull();
+    });
+
+    it("should not let a save made before it land after the remove", async () => {
+      const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => result.current.clear());
+      // The save has not been answered, so the remove waits.
+      expect(store.remove).not.toHaveBeenCalled();
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(store.requests.map((request) => request.kind)).toEqual([
+        "save",
+        "remove",
+      ]);
+      act(() => store.requests[1]?.answer());
+      await settle();
+      expect(store.items.has("orders")).toBe(false);
+    });
+
+    it("should not delete a save made after it", async () => {
+      const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result } = renderSaved({ store });
+      act(() => result.current.clear());
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => void result.current.flush());
+      // The remove has not been answered, so the save waits.
+      expect(store.save).not.toHaveBeenCalled();
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      act(() => store.requests[1]?.answer());
+      await settle();
+      expect(store.requests.map((request) => request.kind)).toEqual([
+        "remove",
+        "save",
+      ]);
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: PRICE_SORT },
+      });
     });
 
     it("should report a failed remove", async () => {
