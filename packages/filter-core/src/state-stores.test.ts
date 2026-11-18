@@ -497,6 +497,26 @@ describe("fetchStore", () => {
     });
   });
 
+  it.each([
+    ["no body", ""],
+    ["only blank space", " \n"],
+  ])("should count a 200 with %s as nothing saved", async (_label, body) => {
+    const { fetch } = stubFetch(() => ({ text: async () => body }));
+    const store = fetchStore({ url: "/api/table-state", fetch });
+    await expect(store.load("orders")).resolves.toBeUndefined();
+  });
+
+  it("should reject a load whose text is not JSON", async () => {
+    const { fetch } = stubFetch(() => ({ text: async () => "<html>" }));
+    const store = fetchStore({ url: "/api/table-state", fetch });
+    await expect(store.load("orders")).rejects.toMatchObject({
+      name: "FetchStoreError",
+      action: "load",
+      status: 200,
+      message: "Could not load the saved state: the answer was not JSON.",
+    });
+  });
+
   it("should reject clearly where there is no fetch", async () => {
     vi.stubGlobal("fetch", undefined);
     const store = fetchStore({ url: "/api/table-state" });

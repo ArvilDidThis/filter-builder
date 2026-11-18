@@ -1006,6 +1006,17 @@ describe("useSavedTableState", () => {
       // The global `fetch` fits too.
       expectTypeOf(fetch).toExtend<NonNullable<FetchStoreOptions["fetch"]>>();
     });
+
+    it("should count the browser's empty answer as nothing saved", async () => {
+      const store = fetchStore({
+        url: "/api/table-state",
+        fetch: async () => new Response(""),
+      });
+      const { result } = renderSaved({ store });
+      await settle();
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toBeNull();
+    });
   });
 
   describe("on a server", () => {

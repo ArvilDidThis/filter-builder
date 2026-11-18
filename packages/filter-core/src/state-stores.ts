@@ -245,6 +245,11 @@ export interface StateFetchResponse {
   status: number;
   /** Reads the body as JSON. */
   json(): Promise<unknown>;
+  /**
+   * Reads the body as text. The browser's `fetch` has it. When it is there, a load uses it to
+   * tell an empty body, which means nothing is saved, from a body that is not JSON.
+   */
+  text?(): Promise<string>;
 }
 
 /** A function that sends a request, such as the browser's `fetch`. */
@@ -303,7 +308,8 @@ export class FetchStoreError extends Error {
 /**
  * Keeps state on the app's own server:
  *
- * - `load` sends a GET and reads the answer as JSON. A 404 or a 204 means nothing is saved.
+ * - `load` sends a GET and reads the answer as JSON. A 404, a 204 or an empty body means
+ *   nothing is saved.
  * - `save` sends a PUT with the state as a JSON body.
  * - `remove` sends a DELETE. A 404 counts as done.
  *
@@ -370,7 +376,10 @@ export function fetchStore(options: FetchStoreOptions): StateStore {
       // 204 means "no content".
       if (response === undefined || response.status === 204) return undefined;
       try {
-        return await response.json();
+        if (response.text === undefined) return await response.json();
+        const text = await response.text();
+        // Some servers answer 200 with no body when nothing is saved.
+        return text.trim() === "" ? undefined : JSON.parse(text);
       } catch (cause) {
         throw new FetchStoreError(
           "load",
