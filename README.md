@@ -175,6 +175,58 @@ hook alone: it returns every column in order, the visible columns and the action
 [filter-react README](packages/filter-react/README.md) shows both, and the
 [filter-core README](packages/filter-core/README.md) lists the pure functions underneath.
 
+## Saved table state
+
+The `useSavedTableState` hook remembers a table's filter, its column settings and any part an
+app adds. It saves to the browser's local storage by default, and can save to a cookie, to the
+app's own server or to a store the app writes.
+
+```tsx
+import {
+  columnStatePart,
+  createRowPredicate,
+  filterStatePart,
+} from "@arvilmena/filter-core";
+import { useColumnSettings, useSavedTableState } from "@arvilmena/filter-react";
+import { ColumnPicker, FilterBuilder } from "@arvilmena/filter-react/ui";
+import { useMemo } from "react";
+
+const parts = {
+  filter: filterStatePart(),
+  columns: columnStatePart(columns),
+};
+
+function Orders({ rows }) {
+  const saved = useSavedTableState({ id: "orders", parts });
+  const table = useColumnSettings({
+    columns,
+    value: saved.values.columns,
+    onChange: saved.set.columns,
+  });
+  // The rows the saved filter lets through. `valueOf` reads a row's value, as shown above.
+  const shown = useMemo(
+    () => rows.filter(createRowPredicate(saved.values.filter, valueOf)),
+    [rows, saved.values.filter],
+  );
+  return (
+    <>
+      <FilterBuilder
+        value={saved.values.filter}
+        onChange={saved.set.filter}
+        fields={fields}
+      />
+      <ColumnPicker state={table} />
+      <MyTable columns={table.visibleColumns} rows={shown} />
+    </>
+  );
+}
+```
+
+The [filter-react README](packages/filter-react/README.md#saving-a-tables-state) lists the
+hook's options and guarantees. The
+[filter-core README](packages/filter-core/README.md#saved-table-state) describes the key, the
+saved format and the stores, which need no React.
+
 ## Licence
 
 [MIT](LICENSE).
