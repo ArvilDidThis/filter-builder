@@ -297,14 +297,21 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     button: "showAll" | "reset";
     /** The list when the button was pressed. The hook keeps it until its content changes. */
     list: readonly OrderedColumn<Column>[];
+    /** The order of the keys when the button was pressed. */
+    order: readonly string[];
   } | null>(null);
   useEffect(() => {
     const pending = pendingButton.current;
     if (pending === null) return;
-    // A button can only be pressed while it has something to do. So once it has nothing left
-    // to do, its press has landed.
+    // A button can only be pressed while it has something to do. So once the list shows what
+    // the press would give, the press has landed. "Show all" gives every column shown in the
+    // order it was pressed in: an app that shows every column in another order applied
+    // settings of its own. "Reset" gives the starting settings, which is all `isDefault` says.
     const isShowAll = pending.button === "showAll";
-    if (isShowAll ? allVisible : isDefault) {
+    const hasLanded = isShowAll
+      ? allVisible && isSameOrder(keys, pending.order)
+      : isDefault;
+    if (hasLanded) {
       pendingButton.current = null;
       // The button stays where it is and the list may barely change, so without this a
       // screen reader would say nothing.
@@ -319,7 +326,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const press = (button: "showAll" | "reset") => {
     // Either button can change the list. A move still waiting must not take the credit.
     pendingMove.current = null;
-    pendingButton.current = { button, list: orderedColumns };
+    pendingButton.current = { button, list: orderedColumns, order: keys };
     actions[button]();
   };
 

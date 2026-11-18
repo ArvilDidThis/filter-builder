@@ -124,6 +124,14 @@ function OwningApp({
       >
         Put notes first
       </button>
+      <button
+        onClick={() =>
+          setValue({ order: ["notes", "name", "price", "stock"], hidden: [] })
+        }
+        type="button"
+      >
+        Show notes first
+      </button>
       <button type="button">Elsewhere</button>
     </>
   );
@@ -1302,6 +1310,17 @@ describe("ColumnPicker", () => {
       fireEvent.click(checkbox("Notes"));
       apply();
       expect(checkbox("Notes").checked).toBe(true);
+      expect(announced()).toBe("");
+    });
+
+    it("should not announce Show all when the app shows every column in another order", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      // The app turns the press down, and applies settings of its own. They show every
+      // column too, but "Show all" keeps the order and these do not.
+      fireEvent.click(screen.getByRole("button", { name: "Show notes first" }));
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Price ⠿Stock");
+      expect(isUnavailable(showAll())).toBe(true);
       expect(announced()).toBe("");
     });
 
