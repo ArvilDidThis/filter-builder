@@ -45,7 +45,7 @@ function renderUncontrolled(
 }
 
 /** Runs the hook the way an app that owns the settings does ("controlled"). */
-function renderControlled(initial: ColumnSettings) {
+function renderControlled(initial: ColumnSettings | null) {
   const onChange = vi.fn();
   const rendered = renderHook(() => {
     const [value, setValue] = useState(initial);
@@ -161,6 +161,33 @@ describe("useColumnSettings", () => {
       order: initial.order,
       hidden: ["price"],
     });
+  });
+
+  it("should show the defaults when an app that owns the settings has none saved", () => {
+    const { result, onChange } = renderControlled(null);
+    expect(shape(result.current)).toBe("name price stock (notes)");
+    act(() => result.current.actions.toggle("price"));
+    expect(shape(result.current)).toBe("name (price) stock (notes)");
+    expect(result.current.settings).toBe(onChange.mock.lastCall?.[0]);
+  });
+
+  it("should leave the app in charge while its settings are null", () => {
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useColumnSettings({ columns: COLUMNS, value: null, onChange }),
+    );
+    // The app is told about the change and does not pass it back in, so nothing may change.
+    // A hook that took `null` for "keep the settings yourself" would hide the column here.
+    act(() => result.current.actions.toggle("price"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(shape(result.current)).toBe("name price stock (notes)");
+  });
+
+  it("should start from the defaults when the stored settings are null", () => {
+    const { result } = renderUncontrolled({ defaultValue: null });
+    expect(shape(result.current)).toBe("name price stock (notes)");
+    act(() => result.current.actions.toggle("price"));
+    expect(shape(result.current)).toBe("name (price) stock (notes)");
   });
 
   it("should leave the settings alone when the app turns a change down", async () => {

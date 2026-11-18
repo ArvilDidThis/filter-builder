@@ -21,11 +21,18 @@ export interface UseColumnSettingsOptions<
   columns: readonly Column[];
   /**
    * The settings to show, when the app owns them ("controlled"): keep them in state and pass
-   * every change from `onChange` back in. Leave out to let the hook keep them.
+   * every change from `onChange` back in.
+   *
+   * `null` means the app owns the settings and has none saved yet, so the column list's
+   * defaults are shown until the app passes the settings from `onChange` back in. Only leaving
+   * `value` out, or passing `undefined`, lets the hook keep the settings itself.
    */
-  value?: ColumnSettings;
-  /** The settings to start from when the hook keeps them, such as ones read from storage. */
-  defaultValue?: ColumnSettings;
+  value?: ColumnSettings | null;
+  /**
+   * The settings to start from when the hook keeps them, such as ones read from storage.
+   * `null` or leaving it out means nothing was saved, so the column list's defaults are used.
+   */
+  defaultValue?: ColumnSettings | null;
   /** Called with the new settings after every change a person makes. */
   onChange?: (settings: ColumnSettings) => void;
 }
@@ -77,6 +84,7 @@ export interface ColumnSettingsState<
  * It works like a form input. Pass `value` and `onChange` to own the settings, or leave `value`
  * out and the hook keeps them, starting from `defaultValue`. Either way the settings are fitted
  * to the column list first, so stored settings from an older column list are safe to pass in.
+ * Pass `null` as either one when nothing is saved yet: the column list's defaults are used.
  *
  * @example
  * const table = useColumnSettings({ columns });
@@ -87,6 +95,8 @@ export function useColumnSettings<Column extends ColumnDefinition>(
   options: UseColumnSettingsOptions<Column>,
 ): ColumnSettingsState<Column> {
   const { columns, value, defaultValue, onChange } = options;
+  // `null` still counts as the app owning the settings: it only has none saved yet. Otherwise
+  // an app that starts with nothing saved would switch owner on the first change.
   const isControlled = value !== undefined;
   const [own, setOwn] = useState(defaultValue);
   const saved = isControlled ? value : own;
