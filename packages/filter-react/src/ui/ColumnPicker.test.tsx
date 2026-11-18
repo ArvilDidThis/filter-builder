@@ -1382,6 +1382,86 @@ describe("ColumnPicker", () => {
       host.remove();
     });
 
+    it.each(["open", "closed"] as const)(
+      "should close on a press on the bare host of the %s shadow tree it is drawn in",
+      (mode) => {
+        const host = document.createElement("div");
+        document.body.append(host);
+        const container = document.createElement("div");
+        host.attachShadow({ mode }).append(container);
+        const { unmount } = render(<App extra={{}} />, { container });
+        const inside = within(container);
+        fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+        // A press on the host itself, such as on its padding. It is outside the picker, and
+        // no listener inside the tree hears it.
+        fireEvent.pointerDown(host);
+        expect(inside.queryByRole("dialog")).toBeNull();
+        unmount();
+        host.remove();
+      },
+    );
+
+    it("should close on a press on either bare host of a closed tree inside an open one", () => {
+      const outerHost = document.createElement("div");
+      document.body.append(outerHost);
+      const innerHost = document.createElement("div");
+      outerHost.attachShadow({ mode: "open" }).append(innerHost);
+      const container = document.createElement("div");
+      innerHost.attachShadow({ mode: "closed" }).append(container);
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      const trigger = () => inside.getByRole("button", { name: /^Columns/ });
+      fireEvent.click(trigger());
+      fireEvent.pointerDown(innerHost);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      fireEvent.click(trigger());
+      fireEvent.pointerDown(outerHost);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      outerHost.remove();
+    });
+
+    it("should stop listening on the host of a closed shadow tree once it closes", () => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      host.attachShadow({ mode: "closed" }).append(container);
+      const added = vi.spyOn(host, "addEventListener");
+      const removed = vi.spyOn(host, "removeEventListener");
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      expect(added).toHaveBeenCalledTimes(2);
+      fireEvent.keyDown(inside.getByRole("dialog"), { key: "Escape" });
+      expect(removed.mock.calls).toEqual(added.mock.calls);
+      unmount();
+      host.remove();
+    });
+
+    it("should leave a press alone in a browser that calls a closed host's listeners out of order", () => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      host.attachShadow({ mode: "closed" }).append(container);
+      const added = vi.spyOn(host, "addEventListener");
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      // An older browser calls a host's listeners in the order they were added, whichever
+      // way the press is travelling. The host's listener for the way back up then runs
+      // before any listener inside the tree, and cannot know yet whether the press is
+      // inside the picker. The test calls it by hand, as such a browser would.
+      const [firstAdded] = added.mock.calls;
+      const afterHost = firstAdded?.[1] as EventListener;
+      const press = new Event("pointerdown", { bubbles: true });
+      Object.defineProperty(press, "target", { value: host });
+      Object.defineProperty(press, "currentTarget", { value: host });
+      afterHost(press);
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      unmount();
+      host.remove();
+    });
+
     it("should close when Tab moves the focus out of it", () => {
       renderPicker();
       fireEvent.blur(screen.getByRole("button", { name: "Reset" }), {

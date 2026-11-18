@@ -864,6 +864,39 @@ describe("FieldPicker", () => {
     expect(screen.getByRole("button", { name: "Field: Amount" })).toBeTruthy();
   });
 
+  it.each(["open", "closed"] as const)(
+    "should close on a press on the bare host of the %s shadow tree it is drawn in",
+    (mode) => {
+      // A shadow tree is a part of the page that hides its insides from the rest.
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      host.attachShadow({ mode }).append(container);
+      const { unmount } = render(
+        <App
+          extra={{}}
+          initial={{ criteria: [amount("1")], logic: "AND" }}
+          onFilter={() => {}}
+        />,
+        { container },
+      );
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: "Field: Amount" }));
+      const search = inside.getByRole("combobox", { name: "Search fields" });
+      fireEvent.change(search, { target: { value: "sta" } });
+      // A press on the host itself, such as on its padding. It is outside the picker.
+      fireEvent.pointerDown(host);
+      expect(inside.queryByRole("listbox")).toBeNull();
+      // The search is cleared too, so the list is whole when it opens again.
+      fireEvent.click(inside.getByRole("button", { name: "Field: Amount" }));
+      expect(
+        within(inside.getByRole("listbox")).getAllByRole("option"),
+      ).toHaveLength(3);
+      unmount();
+      host.remove();
+    },
+  );
+
   it("should close when the keyboard focus leaves it, and stay open while focus is inside", () => {
     const search = open();
     // Focus moving to the picker's own button is still inside the picker.
