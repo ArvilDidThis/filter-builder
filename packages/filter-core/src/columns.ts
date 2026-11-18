@@ -322,6 +322,66 @@ export function visibleColumns<Column extends ColumnDefinition>(
   return result;
 }
 
+/**
+ * Whether a column matches what a person typed in a search box. A picker lists the columns
+ * that do.
+ *
+ * - The column's label is searched, ignoring case.
+ * - Each word typed must be somewhere in the label, in any order: "price close" finds
+ *   "Close price".
+ * - An empty search, or one of spaces only, matches every column.
+ *
+ * Letters with accents are compared as typed: "cafe" does not find "Café".
+ *
+ * @example
+ * const listed = table.orderedColumns.filter((entry) =>
+ *   columnMatchesSearch(entry.column, search),
+ * );
+ */
+export function columnMatchesSearch(
+  column: Pick<ColumnDefinition, "label">,
+  search: string,
+): boolean {
+  return labelHasWords(column.label, searchWords(search));
+}
+
+/**
+ * The columns that match what a person typed in a search box, in the order given. It follows
+ * the rules of `columnMatchesSearch`, and reads the search once for the whole list.
+ *
+ * It takes plain columns, or the entries of `orderedColumns`. With an empty search the SAME
+ * list comes back.
+ *
+ * @example
+ * const listed = searchColumns(table.orderedColumns, search);
+ */
+export function searchColumns<
+  Item extends ColumnDefinition | OrderedColumn = ColumnDefinition,
+>(items: readonly Item[], search: string): readonly Item[] {
+  const words = searchWords(search);
+  if (words.length === 0) return items;
+  return items.filter((item) => labelHasWords(labelOf(item), words));
+}
+
+/** The label of a plain column, or of an entry of `orderedColumns`. */
+function labelOf(item: ColumnDefinition | OrderedColumn): string {
+  return "column" in item ? item.column.label : item.label;
+}
+
+/** The words of a search, in lower case. */
+function searchWords(search: string): string[] {
+  // Read loosely: an app may pass on whatever its input holds.
+  if (typeof search !== "string") return [];
+  return search.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/** Whether the label holds every one of the words. The words must be in lower case. */
+function labelHasWords(label: string, words: readonly string[]): boolean {
+  if (words.length === 0) return true;
+  const text = String(label).toLowerCase();
+  return words.every((word) => text.includes(word));
+}
+
 /** Calls `visit` once for each column, in the chosen order. */
 function eachColumnInOrder<Column extends ColumnDefinition>(
   columns: readonly Column[],

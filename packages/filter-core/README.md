@@ -111,6 +111,8 @@ settings = resetColumnSettings(columns, settings);
 | `isDefaultColumnSettings` | Whether the settings are the defaults                |
 | `orderedColumns`          | Every column in order, each with whether it is shown |
 | `visibleColumns`          | The shown columns in order, as the app's own objects |
+| `columnMatchesSearch`     | Whether a column's label matches a search            |
+| `searchColumns`           | The columns of a list that match a search            |
 
 ### Pinned columns
 
@@ -155,6 +157,37 @@ The rules:
   pinned column shown.
 - The library draws no table, so it adds no sticky styling. A table reads `pinned` from each
   column of `visibleColumns`, which are the app's own column objects.
+
+### Searching the columns
+
+`columnMatchesSearch` answers whether a column matches what a person typed in a search box, and
+`searchColumns` narrows a whole list. The ready-made picker uses the same rules, so a picker an
+app draws itself finds the same columns.
+
+```ts
+import { columnMatchesSearch, searchColumns } from "@arvilmena/filter-core";
+
+const columns = [
+  { key: "close", label: "Close price" },
+  { key: "open", label: "Open price" },
+  { key: "volume", label: "Volume" },
+];
+
+searchColumns(columns, "PRICE").map((column) => column.key); // ["close", "open"]
+searchColumns(columns, "price close").map((column) => column.key); // ["close"]
+searchColumns(columns, "  ") === columns; // true: an empty search matches every column
+
+columnMatchesSearch(columns[2], "vol"); // true
+```
+
+The rules:
+
+- The label is searched, ignoring case.
+- Every word typed must be somewhere in the label, in any order.
+- An empty search matches every column, and `searchColumns` then returns the same list.
+- Letters with accents are compared as typed: "cafe" does not find "Café".
+
+`searchColumns` also takes the entries of `orderedColumns`, and returns the matching entries.
 
 ## Saved table state
 

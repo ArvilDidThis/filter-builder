@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type ColumnDefinition,
   type ColumnSettings,
+  columnMatchesSearch,
   defaultColumnSettings,
   isDefaultColumnSettings,
   moveColumn,
@@ -9,6 +10,7 @@ import {
   orderedColumns,
   reconcileColumnSettings,
   resetColumnSettings,
+  searchColumns,
   setColumnVisible,
   showAllColumns,
   unpinnedRange,
@@ -625,5 +627,60 @@ describe("pinned columns", () => {
       expect(first).toBe(PINNED[2]);
       expect(first?.pinned).toBe("start");
     });
+  });
+});
+
+describe("columnMatchesSearch", () => {
+  const column = { label: "Close price" };
+
+  it("should match part of the label, ignoring case", () => {
+    expect(columnMatchesSearch(column, "PRI")).toBe(true);
+    expect(columnMatchesSearch(column, "close p")).toBe(true);
+    expect(columnMatchesSearch(column, "open")).toBe(false);
+  });
+
+  it("should ask for every word typed, in any order", () => {
+    expect(columnMatchesSearch(column, "price close")).toBe(true);
+    expect(columnMatchesSearch(column, "price open")).toBe(false);
+  });
+
+  it("should match every column for an empty search", () => {
+    expect(columnMatchesSearch(column, "")).toBe(true);
+    expect(columnMatchesSearch(column, "   ")).toBe(true);
+  });
+
+  it("should not read the search as a pattern", () => {
+    expect(columnMatchesSearch({ label: "Change (%)" }, "(%)")).toBe(true);
+    expect(columnMatchesSearch(column, ".*")).toBe(false);
+  });
+
+  it("should not throw on a search that is not text", () => {
+    expect(columnMatchesSearch(column, undefined as unknown as string)).toBe(
+      true,
+    );
+  });
+});
+
+describe("searchColumns", () => {
+  it("should list the matching columns in the order given", () => {
+    const found = searchColumns(COLUMNS, "o");
+    expect(found.map((column) => column.key)).toEqual(["stock", "notes"]);
+    // The app's own objects, with their extra properties still typed.
+    expect(found[0]?.width).toBe(80);
+  });
+
+  it("should take the entries of orderedColumns", () => {
+    const entries = orderedColumns(COLUMNS, DEFAULTS);
+    const found = searchColumns(entries, "pri");
+    expect(found).toEqual([entries[1]]);
+    expect(found[0]).toBe(entries[1]);
+  });
+
+  it("should return the same list for an empty search", () => {
+    expect(searchColumns(COLUMNS, " ")).toBe(COLUMNS);
+  });
+
+  it("should return nothing when no column matches", () => {
+    expect(searchColumns(COLUMNS, "zzz")).toEqual([]);
   });
 });
