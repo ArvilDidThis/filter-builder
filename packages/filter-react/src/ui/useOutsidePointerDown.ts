@@ -32,7 +32,10 @@ export function useOutsidePointerDown(
     // The picker's own document, which is not the global one when the picker is drawn inside
     // a frame (a page within the page). A press there is never heard on the outer page.
     const page = rootRef.current?.ownerDocument ?? document;
-    page.addEventListener("pointerdown", onPointerDown);
-    return () => page.removeEventListener("pointerdown", onPointerDown);
+    // `true` hears the press on its way down to the pressed element, before any handler of
+    // the app. A handler that stops the press from spreading would otherwise hide it from
+    // here, and the popover would stay open.
+    page.addEventListener("pointerdown", onPointerDown, true);
+    return () => page.removeEventListener("pointerdown", onPointerDown, true);
   }, [active, rootRef]);
 }

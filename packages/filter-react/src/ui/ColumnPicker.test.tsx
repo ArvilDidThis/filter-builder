@@ -751,6 +751,25 @@ describe("ColumnPicker", () => {
       expect(screen.queryByRole("dialog")).toBeNull();
     });
 
+    it("should close on a click outside it that the app stops from spreading", () => {
+      render(
+        <>
+          <App extra={{}} />
+          <button
+            onPointerDown={(event) => event.stopPropagation()}
+            type="button"
+          >
+            Keeps to itself
+          </button>
+        </>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      fireEvent.pointerDown(
+        screen.getByRole("button", { name: "Keeps to itself" }),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
     it("should stay open on a click inside it when it is drawn in a shadow tree", () => {
       // A shadow tree is a part of the page that hides its insides from the rest. A press
       // inside it reaches the page as a press on the tree's host. Only the event's path
