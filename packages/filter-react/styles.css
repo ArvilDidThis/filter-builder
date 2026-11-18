@@ -491,6 +491,10 @@
 }
 
 .fb-columns-search-status {
+  /* As wide as the popover, and no wider: the popover is as wide as its longest column name,
+     and this line must wrap inside it, not stretch it. */
+  width: 0;
+  min-width: 100%;
   margin: 0;
   padding: 0 0.375rem;
   color: var(--fb-muted);
