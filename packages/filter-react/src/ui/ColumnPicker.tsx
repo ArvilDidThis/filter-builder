@@ -1,4 +1,8 @@
-import type { ColumnDefinition, OrderedColumn } from "@arvilmena/filter-core";
+import {
+  type ColumnDefinition,
+  moveColumn,
+  type OrderedColumn,
+} from "@arvilmena/filter-core";
 import {
   type KeyboardEvent,
   memo,
@@ -309,24 +313,18 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   // asks for the move was drawn or picked up.
   const moveTo = useCallback(
     (key: string, to: number) => {
-      const list = latestColumns.current;
-      const from = list.findIndex((item) => item.column.key === key);
-      const entry = list[from];
-      if (entry === undefined || to < 0 || to >= list.length || to === from) {
-        return;
-      }
-      const handle = handleAt(listRef.current, from);
-      const before = list.map((item) => item.column.key);
-      const after = [...before];
-      after.splice(from, 1);
-      after.splice(to, 0, entry.column.key);
+      const before = latestColumns.current.map((item) => item.column.key);
+      // The move itself says what it would do, so the picker holds no copy of its rules.
+      const after = moveColumn({ order: before, hidden: [] }, key, to).order;
+      // The same list back means the move changes nothing.
+      if (after === before) return;
       pendingMove.current = {
-        to,
+        to: after.indexOf(key),
         before,
         after,
-        hadFocus: holdsFocus(handle),
+        hadFocus: holdsFocus(handleAt(listRef.current, before.indexOf(key))),
       };
-      actions.move(entry.column.key, to);
+      actions.move(key, to);
     },
     [actions],
   );
