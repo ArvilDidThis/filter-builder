@@ -14,6 +14,8 @@ afterEach(async () => {
     // screen, for the next test.
     await commands.mouseUp();
     await commands.liftFinger();
+    // A tab that a failed test left open would stay in front of the test page.
+    await commands.closePickerTab();
     await commands.mouseMove({ x: 0, y: 0 });
     await commands.colorScheme("light");
     await page.viewport(VIEWPORT.width, VIEWPORT.height);

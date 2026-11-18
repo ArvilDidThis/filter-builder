@@ -183,6 +183,205 @@ const visitAndLeave: BrowserCommand<
   }
 };
 
+/** Turns the real mouse's wheel where the mouse is, to scroll `deltaY` pixels down. */
+const wheel: BrowserCommand<[deltaY: number]> = async (context, deltaY) => {
+  await context.page.mouse.wheel(0, deltaY);
+};
+
+/** One element as the browser tells it to a screen reader, with the elements inside it. */
+export interface ReaderNode {
+  role: string;
+  name: string;
+  children: ReaderNode[];
+}
+
+/**
+ * The test page as Chromium itself tells it to a screen reader: the browser's own
+ * accessibility tree, read through its debugging interface. Elements that the browser keeps
+ * from a screen reader are left out, and what is inside them moves up a level.
+ *
+ * Only Chromium offers this. Playwright has no way to ask Firefox or WebKit for theirs.
+ */
+const readerTree: BrowserCommand<[]> = async (context): Promise<ReaderNode> => {
+  const line = await debugLine(context);
+  // The test page is drawn in a frame, which has a tree of its own.
+  const frame = await context.frame();
+  interface FrameTree {
+    frame: { id: string; url: string };
+    childFrames?: FrameTree[];
+  }
+  const { frameTree } = (await line.send("Page.getFrameTree")) as {
+    frameTree: FrameTree;
+  };
+  const find = (tree: FrameTree): string | undefined =>
+    tree.frame.url === frame.url()
+      ? tree.frame.id
+      : tree.childFrames?.map(find).find((id) => id !== undefined);
+  const frameId = find(frameTree);
+  if (frameId === undefined) throw new Error("The test page's frame is gone.");
+  await line.send("Accessibility.enable");
+  const { nodes } = await line.send("Accessibility.getFullAXTree", { frameId });
+  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+  const build = (id: string): ReaderNode[] => {
+    const node = byId.get(id);
+    if (node === undefined) return [];
+    const children = (node.childIds ?? []).flatMap(build);
+    if (node.ignored) return children;
+    return [
+      {
+        role: String(node.role?.value ?? ""),
+        name: String(node.name?.value ?? ""),
+        children,
+      },
+    ];
+  };
+  const root = nodes.find((node) => node.parentId === undefined);
+  const [tree] = root ? build(root.nodeId) : [];
+  if (tree === undefined) throw new Error("The browser reported no tree.");
+  return tree;
+};
+
+/**
+ * The element that `selector` finds in the test page, as Playwright reads it for a screen
+ * reader: each element's role and name, as indented text. Playwright works this out itself
+ * from the page, by the rules browsers are meant to follow. It is not the browser's own
+ * account, so it cannot show a browser that departs from those rules.
+ */
+const ariaSnapshot: BrowserCommand<[selector: string]> = async (
+  context,
+  selector,
+) => {
+  const frame = await context.frame();
+  return frame.locator(selector).ariaSnapshot();
+};
+
+/** The tab that `openPickerTab` opened for each test page, until `closePickerTab`. */
+const pickerTabs = new WeakMap<Page, { tab: Page; line: CDPSession }>();
+
+function pickerTab(context: BrowserCommandContext) {
+  const open = pickerTabs.get(context.page);
+  if (open === undefined)
+    throw new Error("No tab is open: call openPickerTab.");
+  return open;
+}
+
+/**
+ * Opens a fixture page in a tab of its own and opens its first column picker with a real
+ * click. A zoom with two fingers changes the part of a whole tab that is in view, and a page
+ * in a frame is never told of it. So a test of that zoom needs a tab. Chromium only: the tab
+ * is driven through its debugging interface.
+ */
+const openPickerTab: BrowserCommand<[path: string]> = async (context, path) => {
+  await closePickerTab(context);
+  const origin = new URL(context.page.url()).origin;
+  const tab = await context.context.newPage();
+  try {
+    await tab.goto(origin + path);
+    await tab.locator("[data-ready]").waitFor();
+    await tab.locator(".fb-columns-trigger").first().click();
+    await tab.locator(".fb-columns-popover").waitFor();
+    const line = await context.context.newCDPSession(tab);
+    pickerTabs.set(context.page, { tab, line });
+  } catch (error) {
+    await tab.close();
+    throw error;
+  }
+};
+
+/** Closes the tab that `openPickerTab` opened. Does nothing when none is open. */
+const closePickerTab: BrowserCommand<[]> = async (context) => {
+  const open = pickerTabs.get(context.page);
+  if (open === undefined) return;
+  pickerTabs.delete(context.page);
+  if (!open.tab.isClosed()) await open.tab.close();
+  // The test page is shown again, as it was before the tab opened over it.
+  await context.page.bringToFront();
+};
+
+/**
+ * The middle of the element that `selector` finds in the open tab, counted from the corner of
+ * the part of the page in view. A finger is put down at such a place.
+ */
+function middleInView(tab: Page, selector: string): Promise<Point> {
+  return tab.evaluate((chosen) => {
+    const view = window.visualViewport as VisualViewport;
+    const element = document.querySelector(chosen);
+    if (element === null) throw new Error(`Nothing matches ${chosen}`);
+    const box = element.getBoundingClientRect();
+    // The debugging interface counts in the page's own pixels, whatever the zoom.
+    return {
+      x: box.left + box.width / 2 - view.offsetLeft,
+      y: box.top + box.height / 2 - view.offsetTop,
+    };
+  }, selector);
+}
+
+/**
+ * Zooms the open tab with two real fingers that move apart, as a person does on a touch
+ * screen. The fingers start on the element that `selector` finds. `scale` is how many times
+ * larger the page gets.
+ */
+const pinchPickerTab: BrowserCommand<
+  [selector: string, scale: number]
+> = async (context, selector, scale) => {
+  const { tab, line } = pickerTab(context);
+  const { x, y } = await middleInView(tab, selector);
+  await line.send("Input.synthesizePinchGesture", {
+    x,
+    y,
+    scaleFactor: scale,
+    gestureSourceType: "touch",
+  });
+};
+
+/**
+ * Slides the zoomed page in the open tab with one real finger. The finger starts on the
+ * element that `selector` finds and moves `right` pixels of the page to the right. The part
+ * in view moves the other way.
+ */
+const panPickerTab: BrowserCommand<[selector: string, right: number]> = async (
+  context,
+  selector,
+  right,
+) => {
+  const { tab, line } = pickerTab(context);
+  const { x, y } = await middleInView(tab, selector);
+  await line.send("Input.synthesizeScrollGesture", {
+    x,
+    y,
+    xDistance: right,
+    gestureSourceType: "touch",
+  });
+};
+
+/** Where the popover in the open tab is, and which part of the tab's page is in view. */
+export interface ZoomReading {
+  /** How many times larger than usual the page is drawn. */
+  scale: number;
+  /** The part of the page in view: where it starts from the page's left edge, and its width. */
+  viewLeft: number;
+  viewWidth: number;
+  /** The popover's left and right edges, from the page's left edge. `null` once it closed. */
+  popoverLeft: number | null;
+  popoverRight: number | null;
+}
+
+/** Reads the open tab: see `ZoomReading`. */
+const readPickerTab: BrowserCommand<[]> = (context): Promise<ZoomReading> =>
+  pickerTab(context).tab.evaluate((): ZoomReading => {
+    const view = window.visualViewport as VisualViewport;
+    const box = document
+      .querySelector(".fb-columns-popover")
+      ?.getBoundingClientRect();
+    return {
+      scale: view.scale,
+      viewLeft: view.offsetLeft,
+      viewWidth: view.width,
+      popoverLeft: box?.left ?? null,
+      popoverRight: box?.right ?? null,
+    };
+  });
+
 /** Every command, by the name the tests call it with. */
 export const browserCommands = {
   mouseMove,
@@ -194,6 +393,14 @@ export const browserCommands = {
   colorScheme,
   hasBaseline,
   visitAndLeave,
+  wheel,
+  readerTree,
+  ariaSnapshot,
+  openPickerTab,
+  closePickerTab,
+  pinchPickerTab,
+  panPickerTab,
+  readPickerTab,
 };
 
 declare module "vitest/browser" {
@@ -211,5 +418,13 @@ declare module "vitest/browser" {
       steps: readonly VisitStep[],
       leave: "close" | "navigate",
     ) => Promise<Held>;
+    wheel: (deltaY: number) => Promise<void>;
+    readerTree: () => Promise<ReaderNode>;
+    ariaSnapshot: (selector: string) => Promise<string>;
+    openPickerTab: (path: string) => Promise<void>;
+    closePickerTab: () => Promise<void>;
+    pinchPickerTab: (selector: string, scale: number) => Promise<void>;
+    panPickerTab: (selector: string, right: number) => Promise<void>;
+    readPickerTab: () => Promise<ZoomReading>;
   }
 }
