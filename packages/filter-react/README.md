@@ -209,6 +209,20 @@ or every row redraws whenever the picker does. `labels` may be written in place.
 
 The picker reads the `--fb-*` variables from its own class, `.fb-columns`.
 
+### In a shadow root or a frame
+
+A stylesheet styles only the document or the shadow root it is loaded in. The import above
+loads it in the main document, which is all a picker drawn there needs.
+
+Load the stylesheet again where the picker is drawn in one of these:
+
+- **A shadow root** (a part of the page that hides its insides, as a web component has): put a
+  `<link rel="stylesheet">` or a `<style>` that holds the stylesheet inside the shadow root.
+- **An iframe:** put it in the iframe's own document.
+
+Without it the list is not drawn as a popover, and the text meant only for screen readers
+shows on the page. The same holds for the ready-made builder.
+
 ## Your own column picker
 
 `useColumnSettings` holds no markup. It returns every column in order (`orderedColumns`), the
