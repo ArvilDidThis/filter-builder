@@ -22,7 +22,12 @@ import {
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
 import { pressInOpenTree, stopPressesAt } from "./shadowPress.testing";
-import { placeFromSlot, slotAt, useColumnDrag } from "./useColumnDrag";
+import {
+  placeFromSlot,
+  slotAt,
+  slotWithin,
+  useColumnDrag,
+} from "./useColumnDrag";
 import { shiftToFit } from "./useKeepOnScreen";
 
 const COLUMNS: readonly ColumnDefinition[] = [
@@ -2845,5 +2850,155 @@ describe("shiftToFit", () => {
   it("should move nothing on a page that reports no width", () => {
     expect(shiftToFit(0, 0, 0)).toBe(0);
     expect(shiftToFit(500, 288, 0)).toBe(0);
+  });
+});
+
+// A column list with pinned columns: "Name" is pinned to the start and "Actions" to the end.
+const PINNED: readonly ColumnDefinition[] = [
+  { key: "name", label: "Name", pinned: "start", hideable: false },
+  { key: "price", label: "Price" },
+  { key: "stock", label: "Stock" },
+  { key: "notes", label: "Notes" },
+  { key: "actions", label: "Actions", pinned: "end" },
+];
+
+/** An app around a picker whose first and last columns are pinned. */
+function PinnedApp({ extra = {} }: { extra?: Partial<ColumnPickerProps> }) {
+  const state = useColumnSettings({ columns: PINNED, onChange: changed });
+  return (
+    <>
+      <ColumnPicker state={state} {...extra} />
+      <Table columns={state.visibleColumns} />
+    </>
+  );
+}
+
+/** Draws the app with pinned columns, and opens the picker. */
+function renderPinned(extra: Partial<ColumnPickerProps> = {}) {
+  changed.mockClear();
+  render(<PinnedApp extra={extra} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+}
+
+describe("ColumnPicker with pinned columns", () => {
+  it("should list a pinned column at its end, with no handle", () => {
+    renderPinned();
+    expect(listed()).toBe("Name ⠿Price ⠿Stock ⠿Notes Actions");
+    expect(screen.queryByRole("button", { name: "Move Name" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move Actions" })).toBeNull();
+    expect(rows().map((row) => row.getAttribute("data-pinned"))).toEqual([
+      "start",
+      null,
+      null,
+      null,
+      "end",
+    ]);
+  });
+
+  it("should tell a screen reader that a pinned column cannot be moved", () => {
+    renderPinned();
+    const hintId = checkbox("Actions").getAttribute("aria-describedby");
+    expect(document.getElementById(hintId as string)?.textContent).toBe(
+      "This column is pinned in place and cannot be moved.",
+    );
+    expect(checkbox("Price").hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("should still let a person hide a pinned column that may be hidden", () => {
+    renderPinned();
+    fireEvent.click(checkbox("Actions"));
+    expect(table()).toBe("name price stock notes");
+    expect(checkbox("Name").disabled).toBe(true);
+  });
+
+  it("should stop a keyboard move at the pinned columns", () => {
+    renderPinned();
+    // "Price" is already next to the pinned column: nothing moves, and nothing is asked for.
+    fireEvent.keyDown(handle("Price"), { key: "ArrowUp" });
+    fireEvent.keyDown(handle("Price"), { key: "Home" });
+    fireEvent.keyDown(handle("Notes"), { key: "ArrowDown" });
+    expect(changed).not.toHaveBeenCalled();
+    expect(announced()).toBe("");
+
+    fireEvent.keyDown(handle("Notes"), { key: "Home" });
+    expect(listed()).toBe("Name ⠿Notes ⠿Price ⠿Stock Actions");
+    expect(announced()).toBe("Notes moved to position 2 of 5.");
+    fireEvent.keyDown(handle("Notes"), { key: "End" });
+    expect(listed()).toBe("Name ⠿Price ⠿Stock ⠿Notes Actions");
+    expect(announced()).toBe("Notes moved to position 4 of 5.");
+    expect(table()).toBe("name price stock notes actions");
+  });
+
+  it("should drop a dragged column next to a pinned one, not past it", () => {
+    renderPinned();
+    layOutList();
+    fireEvent.pointerDown(handle("Stock"), pointer(175));
+    // Above "Name", the pinned first row. The line is drawn below that row, not above it.
+    fireEvent.pointerMove(document, pointer(90));
+    expect(rows().map((row) => row.getAttribute("data-drop"))).toEqual([
+      null,
+      "before",
+      null,
+      null,
+      null,
+    ]);
+    fireEvent.pointerUp(document, pointer(90));
+    expect(listed()).toBe("Name ⠿Stock ⠿Price ⠿Notes Actions");
+
+    layOutList();
+    fireEvent.pointerDown(handle("Stock"), pointer(145));
+    // Below "Actions", the pinned last row.
+    fireEvent.pointerMove(document, pointer(400));
+    expect(rows()[4]?.getAttribute("data-drop")).toBe("before");
+    fireEvent.pointerUp(document, pointer(400));
+    expect(listed()).toBe("Name ⠿Price ⠿Notes ⠿Stock Actions");
+  });
+
+  it("should show no drop line when the nearest free place is the row's own", () => {
+    renderPinned();
+    layOutList();
+    fireEvent.pointerDown(handle("Price"), pointer(145));
+    fireEvent.pointerMove(document, pointer(90));
+    expect(rows().some((row) => row.hasAttribute("data-drop"))).toBe(false);
+    fireEvent.pointerUp(document, pointer(90));
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("should tell an app's own row that the column is pinned, and turn its handle off", () => {
+    const seen = new Map<string, { pinned: unknown; movable: boolean }>();
+    renderPinned({
+      renderRow: (row) => {
+        seen.set(row.column.key, { pinned: row.pinned, movable: row.movable });
+        return (
+          <>
+            <input {...row.checkboxProps} />
+            <button {...row.handleProps}>grip</button>
+            <label htmlFor={row.checkboxProps.id}>{row.column.label}</label>
+          </>
+        );
+      },
+    });
+    expect(seen.get("name")).toEqual({ pinned: "start", movable: false });
+    expect(seen.get("price")).toEqual({ pinned: undefined, movable: true });
+    expect(seen.get("actions")).toEqual({ pinned: "end", movable: false });
+    const grip = handle("Name") as HTMLButtonElement;
+    expect(grip.disabled).toBe(true);
+    expect((handle("Price") as HTMLButtonElement).disabled).toBe(false);
+    // A press or a key on the handle of a pinned row moves nothing.
+    layOutList();
+    fireEvent.pointerDown(grip, pointer(115));
+    fireEvent.pointerUp(document, pointer(180));
+    fireEvent.keyDown(grip, { key: "End" });
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("should keep a slot inside the free places", () => {
+    const free = { first: 1, last: 3 };
+    expect(slotWithin(0, free)).toBe(1);
+    expect(slotWithin(2, free)).toBe(2);
+    // The slot after the last free row is still a place to drop.
+    expect(slotWithin(4, free)).toBe(4);
+    expect(slotWithin(5, free)).toBe(4);
+    expect(slotWithin(5, undefined)).toBe(5);
   });
 });

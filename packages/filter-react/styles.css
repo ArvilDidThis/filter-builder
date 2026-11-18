@@ -561,6 +561,23 @@
   cursor: grabbing;
 }
 
+/* A handle that is turned off, as on a row an app draws for a column that cannot move now. */
+.fb-columns-handle:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Stands where the handle would be on a pinned column, which cannot be moved. */
+.fb-columns-pin {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  color: var(--fb-muted);
+}
+
 .fb-columns-label {
   flex: 1 1 auto;
   min-width: 0;

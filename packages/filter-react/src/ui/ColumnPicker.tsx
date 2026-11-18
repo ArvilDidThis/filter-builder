@@ -1,7 +1,8 @@
 import {
   type ColumnDefinition,
-  moveColumn,
+  moveColumnAroundPinned,
   type OrderedColumn,
+  unpinnedRange,
 } from "@arvilmena/filter-core";
 import {
   type KeyboardEvent,
@@ -24,7 +25,8 @@ import { useKeepOnScreen } from "./useKeepOnScreen";
 import { useOutsidePointerDown } from "./useOutsidePointerDown";
 
 // A ready-made column picker with default styling: a button that opens a list of every column.
-// Each row has a checkbox that shows or hides the column, and a handle that moves it.
+// Each row has a checkbox that shows or hides the column, and a handle that moves it. A pinned
+// column has no handle: it stays at its end of the list.
 //
 // It uses plain HTML controls and the class names in `styles.css`, so it needs no UI kit. An app
 // that wants a different design draws its own picker from `useColumnSettings`.
@@ -50,6 +52,8 @@ export interface ColumnPickerLabels {
   moveHint: string;
   /** Read out after a move. `position` counts from 1. */
   moved: (label: string, position: number, total: number) => string;
+  /** Read out after the name of a pinned column, to say that it cannot be moved. */
+  pinnedHint: string;
   /** Read out once the "show all" button has shown every column. */
   showAllDone: string;
   /** Read out once the "reset" button has put the starting settings back. */
@@ -68,6 +72,7 @@ export const COLUMN_PICKER_LABELS: ColumnPickerLabels = {
     "Press the up or down arrow key to move the column, or Home or End to move it to either end.",
   moved: (label, position, total) =>
     `${label} moved to position ${position} of ${total}.`,
+  pinnedHint: "This column is pinned in place and cannot be moved.",
   showAllDone: "All columns are shown.",
   resetDone: "The columns are back in their starting order and visibility.",
 };
@@ -111,14 +116,21 @@ export interface ColumnPickerRow<
   /** Whether this row is the one being dragged. */
   isDragging: boolean;
   /**
+   * Whether a person may move the column now. It is false for a pinned column. Draw a handle
+   * only for a row that is movable, or draw it and let `handleProps` turn it off.
+   */
+  movable: boolean;
+  /**
    * For the `<input>` that shows or hides the column. Point the column's `<label>` at its
-   * `id`, so a click on the name ticks the box.
+   * `id`, so a click on the name ticks the box. On a pinned column, `aria-describedby` tells
+   * a screen reader that the column cannot be moved.
    */
   checkboxProps: {
     type: "checkbox";
     id: string;
     checked: boolean;
     disabled: boolean;
+    "aria-describedby": string | undefined;
     onChange: () => void;
   };
   /**
@@ -126,9 +138,12 @@ export interface ColumnPickerRow<
    * stops a finger on the handle from scrolling the list. If you set a `style` of your own,
    * spread this one into it. Keep the same element while the row is dragged: a handle that is
    * replaced mid-drag ends the drag.
+   *
+   * `disabled` is true on a row that is not movable, where the handle does nothing.
    */
   handleProps: {
     type: "button";
+    disabled: boolean;
     style: { touchAction: "none" };
     "aria-label": string;
     "aria-describedby": string;
@@ -172,6 +187,9 @@ export interface ColumnPickerProps<
  * A button that opens a list of a table's columns. A person ticks a column to show it, and
  * drags its handle to move it. With a keyboard, the arrow keys on a handle move the column.
  *
+ * A column the app pinned (`pinned: "start"` or `"end"`) is listed at its end with no handle.
+ * The other columns move between the pinned ones.
+ *
  * Load its style sheet once in the app: `import "@arvilmena/filter-react/styles.css"`.
  *
  * @example
@@ -205,6 +223,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const listRef = useRef<HTMLUListElement>(null);
   const popoverId = useId();
   const hintId = useId();
+  const pinnedHintId = useId();
 
   // An app often writes `labels={{ … }}` in place, which is a new object on every render. So
   // nothing below may depend on this object staying the same. A row is given finished text.
@@ -268,6 +287,15 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const keys = useMemo(
     () => orderedColumns.map((entry) => entry.column.key),
     [orderedColumns],
+  );
+  // The rows between the pinned ones. A dragged row may only be dropped among them.
+  const free = useMemo(
+    () =>
+      unpinnedRange(
+        orderedColumns.map((entry) => entry.column),
+        keys,
+      ),
+    [orderedColumns, keys],
   );
 
   // The move a key press or a drop asked for. It waits here until the list shows it. An app
@@ -379,9 +407,16 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   // asks for the move was drawn or picked up.
   const moveTo = useCallback(
     (key: string, to: number) => {
-      const before = latestColumns.current.map((item) => item.column.key);
-      // The move itself says what it would do, so the picker holds no copy of its rules.
-      const after = moveColumn({ order: before, hidden: [] }, key, to).order;
+      const columns = latestColumns.current.map((item) => item.column);
+      const before = columns.map((column) => column.key);
+      // The move itself says what it would do, so the picker holds no copy of its rules. It
+      // is the hook's own move, which leaves pinned columns in place.
+      const after = moveColumnAroundPinned(
+        columns,
+        { order: before, hidden: [] },
+        key,
+        to,
+      ).order;
       // The same list back means the move changes nothing.
       if (after === before) return;
       // A "show all" or "reset" press still waiting gives up. What the list becomes next is
@@ -397,7 +432,13 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     },
     [actions],
   );
-  const drag = useColumnDrag({ listRef, keys, active: open, onDrop: moveTo });
+  const drag = useColumnDrag({
+    listRef,
+    keys,
+    active: open,
+    free,
+    onDrop: moveTo,
+  });
 
   // Ticks or unticks a row's checkbox. As with a move, a button press still waiting gives up,
   // so that it is not read out for what this tick did.
@@ -484,6 +525,9 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           <span hidden id={hintId}>
             {labels.moveHint}
           </span>
+          <span hidden id={pinnedHintId}>
+            {labels.pinnedHint}
+          </span>
           {/* The style sheet takes the bullets off, and Safari then stops telling a screen
               reader that this is a list, and how many columns it holds. Naming the role
               keeps both. */}
@@ -507,6 +551,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
                 onDragStart={drag.start}
                 onMove={moveTo}
                 onToggle={toggle}
+                pinnedHintId={pinnedHintId}
                 renderRow={renderRow}
               />
             ))}
@@ -613,6 +658,8 @@ interface RowProps<Column extends ColumnDefinition> {
    */
   moveLabel: string;
   hintId: string;
+  /** Points at the text that says a pinned column cannot be moved. */
+  pinnedHintId: string;
   onDragStart: (event: PointerEvent<HTMLElement>, key: string) => void;
   onMove: (key: string, to: number) => void;
   onToggle: (key: Column["key"]) => void;
@@ -631,36 +678,45 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
   drop,
   moveLabel,
   hintId,
+  pinnedHintId,
   onDragStart,
   onMove,
   onToggle,
   renderRow,
 }: RowProps<Column>) {
-  const { column, visible, hideable } = entry;
+  const { column, visible, hideable, pinned } = entry;
   const checkboxId = useId();
+  const movable = pinned === undefined;
 
   const row: ColumnPickerRow<Column> = {
     column,
     visible,
     hideable,
+    pinned,
     index,
     isDragging,
+    movable,
     checkboxProps: {
       type: "checkbox",
       id: checkboxId,
       checked: visible,
       disabled: !hideable,
+      "aria-describedby": pinned === undefined ? undefined : pinnedHintId,
       onChange: () => onToggle(column.key),
     },
     handleProps: {
       type: "button",
+      disabled: !movable,
       style: HANDLE_STYLE,
       "aria-label": moveLabel,
       "aria-describedby": hintId,
       "data-fb-column-handle": "",
-      onPointerDown: (event) => onDragStart(event, column.key),
+      // A handle that an app's own row draws on a row that is not movable does nothing.
+      onPointerDown: (event) => {
+        if (movable) onDragStart(event, column.key);
+      },
       onKeyDown: (event) => {
-        const to = keyTarget(event.key, index, count);
+        const to = movable ? keyTarget(event.key, index, count) : undefined;
         if (to === undefined) return;
         // The arrow keys would otherwise scroll the list.
         event.preventDefault();
@@ -675,15 +731,23 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
       data-dragging={isDragging ? "" : undefined}
       data-drop={drop}
       data-fixed={hideable ? undefined : ""}
+      data-pinned={pinned}
     >
       {renderRow ? (
         renderRow(row)
       ) : (
         <>
           <input className="fb-columns-checkbox" {...row.checkboxProps} />
-          <button className="fb-columns-handle" {...row.handleProps}>
-            <span aria-hidden="true">⠿</span>
-          </button>
+          {pinned === undefined ? (
+            <button className="fb-columns-handle" {...row.handleProps}>
+              <span aria-hidden="true">⠿</span>
+            </button>
+          ) : (
+            // A pinned column has no handle. A pin stands in its place, so the names line up.
+            <span className="fb-columns-pin">
+              <PinIcon />
+            </span>
+          )}
           <label className="fb-columns-label" htmlFor={checkboxId}>
             {column.label}
           </label>
@@ -693,6 +757,25 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
   );
   // `memo` drops the row's type parameter, so it is put back here.
 }) as <Column extends ColumnDefinition>(props: RowProps<Column>) => ReactNode;
+
+/** A small drawing of a pin, in the colour of the text around it. A screen reader skips it. */
+function PinIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.5"
+      viewBox="0 0 16 16"
+      width="14"
+    >
+      <path d="M5 2h6M6 2v5l-2 3h8l-2-3V2M8 10v4" />
+    </svg>
+  );
+}
 
 /**
  * Without this a finger on a handle scrolls the list, and the drag never starts. It is set on

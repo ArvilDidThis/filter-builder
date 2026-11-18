@@ -67,10 +67,22 @@ export interface ColumnDragOptions {
   /** Whether the list is on the page. A drag ends when this turns false. */
   active: boolean;
   /**
+   * The places a row may be dropped in: from `first` to `last`, counting from 0. The rows
+   * before and after them are pinned, and a drop aimed past them lands at the nearest place.
+   * Leave it out when every row may move.
+   */
+  free?: FreePlaces;
+  /**
    * Called once per drag, with the row's key and its new place, and only when the row landed
    * in a new place.
    */
   onDrop: (key: string, to: number) => void;
+}
+
+/** The places of a list that a row may be dropped in, from `first` to `last`. */
+export interface FreePlaces {
+  first: number;
+  last: number;
 }
 
 /** Keeps track of a drag in a list of rows. */
@@ -78,15 +90,16 @@ export function useColumnDrag({
   listRef,
   keys,
   active,
+  free,
   onDrop,
 }: ColumnDragOptions): ColumnDrag {
   const [held, setHeld] = useState<Pick<ColumnDrag, "key" | "slot">>(IDLE);
   const session = useRef<DragSession | null>(null);
 
   // Read through a ref, so `start` can stay the same function between renders.
-  const latest = useRef({ keys, onDrop });
+  const latest = useRef({ keys, free, onDrop });
   useEarlyEffect(() => {
-    latest.current = { keys, onDrop };
+    latest.current = { keys, free, onDrop };
   });
 
   const end = useCallback(() => {
@@ -112,7 +125,10 @@ export function useColumnDrag({
     // One read of the list's place per pointer move. The rows were measured already, so no
     // row is measured here. They are measured again only when one of them changes size.
     const box = list.getBoundingClientRect();
-    const slot = slotAt(drag.middles, drag.clientY - box.top + list.scrollTop);
+    const slot = slotWithin(
+      slotAt(drag.middles, drag.clientY - box.top + list.scrollTop),
+      latest.current.free,
+    );
     const shown = placeFromSlot(drag.from, slot) === drag.from ? null : slot;
     // The pointer moves many times a second, so the state changes only when the slot does.
     setHeld((was) =>
@@ -210,7 +226,11 @@ export function useColumnDrag({
         if (from === -1) return;
         const y =
           released.clientY - list.getBoundingClientRect().top + list.scrollTop;
-        const to = placeFromSlot(from, slotAt(measureMiddles(list), y));
+        const slot = slotWithin(
+          slotAt(measureMiddles(list), y),
+          latest.current.free,
+        );
+        const to = placeFromSlot(from, slot);
         if (to !== from) latest.current.onDrop(drag.key, to);
       };
       // The browser took the pointer away, for example to scroll the page, or took the
@@ -341,6 +361,15 @@ export function slotAt(middles: readonly number[], y: number): number {
   let slot = 0;
   while (slot < middles.length && (middles[slot] as number) < y) slot++;
   return slot;
+}
+
+/**
+ * The slot nearest to `slot` that a drop may land in. A slot is the gap before a row, so the
+ * free places from `first` to `last` have one more slot than rows: the last is after `last`.
+ */
+export function slotWithin(slot: number, free: FreePlaces | undefined): number {
+  if (free === undefined) return slot;
+  return Math.min(Math.max(slot, free.first), free.last + 1);
 }
 
 /**

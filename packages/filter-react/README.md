@@ -122,6 +122,73 @@ A column keeps any extra properties you give it, such as a width or a cell rende
 `onChange`. The table needs the same state as the picker, so the hook runs once and its result
 goes to both.
 
+### Pinned columns
+
+Give a column `pinned: "start"` or `pinned: "end"` to keep it at that end of the table. Use it
+for a column that must stay in view while the table scrolls sideways, such as the one that
+names the row.
+
+```tsx
+import { type ColumnDefinition, columnPin } from "@arvilmena/filter-core";
+
+const columns = [
+  { key: "name", label: "Name", pinned: "start", hideable: false },
+  { key: "price", label: "Price" },
+  { key: "notes", label: "Notes" },
+  { key: "actions", label: "Actions", pinned: "end" },
+] as const satisfies readonly ColumnDefinition[];
+
+function Products() {
+  const table = useColumnSettings({ columns });
+  return (
+    <>
+      <ColumnPicker state={table} />
+      <table>
+        <thead>
+          <tr>
+            {table.visibleColumns.map((column) => (
+              // "start", "end" or nothing. Your own CSS makes the column sticky.
+              <th key={column.key} data-pinned={columnPin(column)}>
+                {column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+      </table>
+    </>
+  );
+}
+```
+
+```css
+th[data-pinned="start"] {
+  position: sticky;
+  left: 0;
+}
+th[data-pinned="end"] {
+  position: sticky;
+  right: 0;
+}
+```
+
+What pinning does:
+
+- **The column keeps its place.** It is at its end of `visibleColumns` and `orderedColumns`
+  whatever the saved order says. Settings saved before the column was pinned still load.
+- **Nothing moves it.** `actions.move` on a pinned column changes nothing and does not call
+  `onChange`. Another column stops at the pinned ones: moved to a pinned column's place, it
+  lands in the nearest place it may take.
+- **The picker shows it as fixed.** Its row has a pin where the handle would be, so the arrow
+  keys and a drag cannot move it. A screen reader hears that the column cannot be moved.
+- **It may still be hidden.** Pinning says where a column stands. Add `hideable: false` to
+  keep it shown too.
+
+The library draws no table, so it adds no sticky styling. Each entry of `orderedColumns` has
+`pinned`, and the columns of `visibleColumns` are your own objects. `columnPin(column)` reads
+the pin from either, and also compiles for a list written with `as const`. Several columns
+pinned to one end stand in the order of your column list, and each needs its own `left` or
+`right` offset in your CSS.
+
 ### Who keeps the settings
 
 The hook works like a form input. The settings are plain JSON, and the hook fits them to the
@@ -206,7 +273,8 @@ near the bottom of the screen it keeps a usable height, so it can still pass the
 and the page scrolls to show the rest of it.
 
 Spread all of `handleProps` onto your handle. It carries the `touch-action` style that lets a
-finger drag the handle. Keep the same `renderRow` function between renders (see `useCallback`),
+finger drag the handle. A row also has `pinned` and `movable`. On a row that is not movable,
+such as a pinned one, `handleProps` turns the handle off, or you can leave the handle out. Keep the same `renderRow` function between renders (see `useCallback`),
 or every row redraws whenever the picker does. `labels` may be written in place.
 
 The picker reads the `--fb-*` variables from its own class, `.fb-columns`.
