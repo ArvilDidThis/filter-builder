@@ -450,9 +450,12 @@ function createController<Values>(
   };
 
   /** A closing page has no time to wait for an answer. */
-  const onPageExit = (): void => {
+  const onPageExit = (event: PageTransitionEvent): void => {
     // Off screen, a change that waits stays where it is: only what is queued is sent.
     if (active) queuePending();
+    // `persisted` says the browser keeps the page, to show it again on "back". Such a page
+    // can still hear the answers, so its saves wait their turn and stay in order.
+    if (event.persisted) return;
     for (const busy of busyChannels) busy.sendNewestNow();
   };
 

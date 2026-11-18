@@ -1104,6 +1104,24 @@ describe("useSavedTableState", () => {
       });
     });
 
+    it("should wait for the answer when the hidden page may come back", async () => {
+      const { store } = withSaveOnItsWay();
+      // `persisted` says the browser keeps the page, to show it again on "back".
+      const kept = Object.assign(new Event("pagehide"), { persisted: true });
+      act(() => window.dispatchEvent(kept));
+      // The first save has not been answered, so the newer one waits.
+      expect(store.save).toHaveBeenCalledOnce();
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(store.save).toHaveBeenCalledTimes(2);
+      act(() => store.requests[1]?.answer());
+      await settle();
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: NAME_SORT },
+      });
+    });
+
     it("should send one request for the final state when the page is closed", async () => {
       const store = slowStore({ orders: savedWith({ pageSize: 50 }) });
       const { result } = renderSaved({ store });

@@ -433,7 +433,8 @@ What the hook guarantees:
 - **A closing page sends once, without waiting.** It sends the newest state in one request,
   whatever still waits. A save already on its way then may reach the store after that
   request, or not at all, so the store can end with the older state. Wait for `flush()`
-  where the app decides when to leave.
+  where the app decides when to leave. A page the browser keeps, to show it again on "back",
+  is not closing: its saves wait their turn.
 - **Parts the hook does not own are kept.** A save writes back the other parts found under the
   key. `clear()` removes them too.
 - **A saved value is checked before use.** A broken part falls back to its default alone.
