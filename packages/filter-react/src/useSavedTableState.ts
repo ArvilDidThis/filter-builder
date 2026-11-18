@@ -292,18 +292,19 @@ const READY = {
   errorAction: undefined,
 } as const;
 
+/** The status of a key whose state is still being read. */
+const LOADING = {
+  status: "loading",
+  error: undefined,
+  errorAction: undefined,
+} as const;
+
 /** The state before anything is loaded: every part's default. */
 function startSnapshot<Values>(
   key: string | undefined,
   parts: StateParts<Values>,
 ): Snapshot<Values> {
-  return {
-    key,
-    values: readSavedState(undefined, parts),
-    status: "loading",
-    error: undefined,
-    errorAction: undefined,
-  };
+  return { key, values: readSavedState(undefined, parts), ...LOADING };
 }
 
 /**
@@ -479,16 +480,18 @@ function createController<Values>(
     pending = undefined;
   };
 
+  /** Forgets every change not saved yet, and what was known about the key's stored state. */
+  const forgetChanges = (): void => {
+    dropPending();
+    unsaved.clear();
+    removeFailed = false;
+    holdsDefaults = true;
+  };
+
   /** Turns saving off until the state for `live.key` has been read again. */
   const awaitLoad = (): void => {
     canSave = false;
-    if (live.status === "loading") return;
-    publish({
-      ...live,
-      status: "loading",
-      error: undefined,
-      errorAction: undefined,
-    });
+    if (live.status !== "loading") publish({ ...live, ...LOADING });
   };
 
   const leave = (): void => {
@@ -514,10 +517,8 @@ function createController<Values>(
    * The store to use from here on. The hook keeps the store it loaded the key's state from. It
    * takes the store the app asks for now only when it is about to load.
    */
-  const storeFor = (isNewKey: boolean): StateStore => {
-    const keepsStore = !isNewKey && canSave && channel !== undefined;
-    return keepsStore && channel ? channel.store : storeOf(latest.current);
-  };
+  const storeToUse = (): StateStore =>
+    canSave && channel ? channel.store : storeOf(latest.current);
 
   /** Hands a save or a remove to a channel, and counts it until it has ended. */
   const send = (target: StateChannel, write: Write): void => {
@@ -573,10 +574,8 @@ function createController<Values>(
 
   /** Hands the waiting change to its channel, without waiting out the rest of the delay. */
   const queuePending = (): void => {
-    clearTimeout(timer);
-    timer = undefined;
     const change = pending;
-    pending = undefined;
+    dropPending();
     // A change of key queues the waiting change before it joins the new key's channel, so
     // the channel is the change's own. A change left over from another key is dropped: one
     // key's state must never be saved under another key.
@@ -690,10 +689,7 @@ function createController<Values>(
         live = start;
         canSave = false;
         // A save that failed on the way out of the old key is not tried under the new one.
-        pending = undefined;
-        unsaved.clear();
-        removeFailed = false;
-        holdsDefaults = true;
+        forgetChanges();
       } else if (canSave && channel?.isSuperseded()) {
         // Another table used the key while this one was off screen. What this hook knows
         // about the store is out of date, so it reads again. Changes not saved yet are kept.
@@ -703,7 +699,7 @@ function createController<Values>(
         // The state moved on while nothing could be drawn. Show it now.
         draw(live);
       }
-      if (live.key !== undefined) join(storeFor(isNewKey), live.key);
+      if (live.key !== undefined) join(storeToUse(), live.key);
       // Still to load: a first visit, or a load that was dropped or failed.
       if (!canSave) load();
     },
@@ -781,10 +777,7 @@ function createController<Values>(
     clear(): void {
       // A load still on its way must not bring the old state back.
       loadRun += 1;
-      dropPending();
-      unsaved.clear();
-      removeFailed = false;
-      holdsDefaults = true;
+      forgetChanges();
       const { key } = live;
       const values = readSavedState(undefined, latest.current.parts);
       if (key === undefined || channel === undefined) {
