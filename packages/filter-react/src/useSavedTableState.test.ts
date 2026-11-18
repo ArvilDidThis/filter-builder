@@ -2115,6 +2115,49 @@ describe("useSavedTableState", () => {
       });
     });
   });
+
+  describe("what counts as already saved", () => {
+    it("should save a value again when a reload found the store changed", () => {
+      const store = memoryStore();
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      // Something else wrote the key: another tab, or the server.
+      store.items.set(
+        "orders",
+        savedWith({
+          filter: EMPTY_FILTER,
+          columns: COLUMN_DEFAULTS,
+          sort: NAME_SORT,
+        }),
+      );
+      act(() => result.current.reload());
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.save).toHaveBeenCalledTimes(2);
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: PRICE_SORT },
+      });
+    });
+
+    it("should not save a value the store was just read to hold", () => {
+      const store = memoryStore({
+        orders: savedWith({
+          filter: EMPTY_FILTER,
+          columns: COLUMN_DEFAULTS,
+          sort: PRICE_SORT,
+        }),
+      });
+      const { result } = renderSaved({ store });
+      // There and back within one delay: the value is the one the store holds.
+      act(() => result.current.set.sort(NAME_SORT));
+      act(() => result.current.set.sort({ ...PRICE_SORT }));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.save).not.toHaveBeenCalled();
+    });
+  });
 });
 
 /** A table that hands its saved state to the test, for the tests that hide and show it. */

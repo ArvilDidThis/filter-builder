@@ -58,11 +58,14 @@ export interface StateChannel {
   /** A number that goes up with every save and remove sent. See `noteRead`. */
   writeCount(): number;
   /**
-   * Takes over the parts that a read of the store found. `countAtRead` is `writeCount()` from
-   * the moment the read began. When a write was sent since, the read is older than what the
-   * channel knows and is left out.
+   * Takes over what a read of the store found: `saved` is the value as the store gave it, and
+   * `parts` are its parts in today's shape. A save of exactly that value is then skipped, and
+   * any other save is sent.
+   *
+   * `countAtRead` is `writeCount()` from the moment the read began. When a write was sent
+   * since, the read is older than what the channel knows and is left out.
    */
-  noteRead(parts: SavedParts, countAtRead: number): void;
+  noteRead(saved: unknown, parts: SavedParts, countAtRead: number): void;
 }
 
 /** A channel, with the count that only this file changes. */
@@ -260,12 +263,23 @@ function createChannel(store: StateStore, key: string): ListedChannel {
       else idleWaiters.push(then);
     },
 
-    noteRead(parts, countAtRead) {
+    noteRead(saved, parts, countAtRead) {
       if (countAtRead !== writeCount) return;
-      stored = { ...stored, parts };
+      stored = { ...stored, parts, text: textOf(saved) };
     },
   };
   return channel;
+}
+
+/** A value read from a store, as the text a save of it would send. `undefined` for none. */
+function textOf(saved: unknown): string | undefined {
+  if (saved === null || saved === undefined) return undefined;
+  try {
+    return JSON.stringify(saved);
+  } catch {
+    // Not plain JSON, so no save can equal it.
+    return undefined;
+  }
 }
 
 /** Whether a store answered with a promise, and not at once. */

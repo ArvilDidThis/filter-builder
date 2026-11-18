@@ -118,11 +118,36 @@ describe("the channel of a store and key", () => {
     const channel = joinChannel(quickStore(), "orders");
     const countAtRead = channel.writeCount();
     save(channel, { sort: "price" });
-    channel.noteRead({ sort: "name" }, countAtRead);
+    const read = savedWith({ sort: "name" });
+    channel.noteRead(read, read.parts, countAtRead);
     expect(channel.storedParts()).toEqual({ sort: "price" });
 
-    channel.noteRead({ sort: "name" }, channel.writeCount());
+    channel.noteRead(read, read.parts, channel.writeCount());
     expect(channel.storedParts()).toEqual({ sort: "name" });
+  });
+
+  it("should skip a save of what a read found, and send any other", () => {
+    const store = quickStore();
+    const channel = joinChannel(store, "orders");
+    save(channel, { sort: "price" });
+    // The store was changed from outside, and read again.
+    const read = savedWith({ sort: "name" });
+    channel.noteRead(read, read.parts, channel.writeCount());
+
+    const same = save(channel, { sort: "name" });
+    expect(same).toHaveBeenCalledExactlyOnceWith({ status: "accepted" });
+    expect(store.save).toHaveBeenCalledOnce();
+    save(channel, { sort: "price" });
+    expect(store.save).toHaveBeenCalledTimes(2);
+  });
+
+  it("should send a save after a read that found nothing", () => {
+    const store = quickStore();
+    const channel = joinChannel(store, "orders");
+    save(channel, { sort: "price" });
+    channel.noteRead(undefined, {}, channel.writeCount());
+    save(channel, { sort: "price" });
+    expect(store.save).toHaveBeenCalledTimes(2);
   });
 
   describe("when its last hook leaves", () => {

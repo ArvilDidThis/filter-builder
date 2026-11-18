@@ -330,10 +330,16 @@ function withMissingParts<Values>(
   return completed;
 }
 
-/** The state of the first render, and the saved parts a server read for it, if any. */
+/** The state of the first render, and what a server read for it, if anything. */
 interface FirstState<Values> {
   snapshot: Snapshot<Values>;
-  serverParts: SavedParts | undefined;
+  serverRead: StoreRead | undefined;
+}
+
+/** What a read of the store found: the value as it came, and its parts in today's shape. */
+interface StoreRead {
+  saved: unknown;
+  parts: SavedParts;
 }
 
 /**
@@ -347,13 +353,13 @@ function firstState<Values>(
   if (options.initialSaved === undefined) {
     return {
       snapshot: startSnapshot(key, options.parts),
-      serverParts: undefined,
+      serverRead: undefined,
     };
   }
   const loaded = readLoadedState(options.initialSaved, options);
   return {
     snapshot: { key, values: loaded.values, ...READY },
-    serverParts: loaded.savedParts,
+    serverRead: { saved: options.initialSaved, parts: loaded.savedParts },
   };
 }
 
@@ -386,8 +392,8 @@ function createController<Values>(
   let channel: StateChannel | undefined;
   /** Whether the hook counts among the hooks on `channel`. Only while the table is on screen. */
   let isJoined = false;
-  /** The saved parts a server read, until the first channel takes them over. */
-  let serverParts = first.serverParts;
+  /** What a server read, until the first channel takes it over. */
+  let serverRead = first.serverRead;
   /**
    * The parts a person changed that the store has not taken yet: saving was off, the save
    * still waits, or it failed. A load never replaces them, and `flush` gives false while one
@@ -446,10 +452,10 @@ function createController<Values>(
     leave();
     channel = joinChannel(store, key, channel);
     isJoined = true;
-    if (serverParts !== undefined) {
+    if (serverRead !== undefined) {
       // Only when nothing was written yet: a write is newer than what the server read.
-      channel.noteRead(serverParts, 0);
-      serverParts = undefined;
+      channel.noteRead(serverRead.saved, serverRead.parts, 0);
+      serverRead = undefined;
     }
     if (channel.hookCount() > 1) warnAboutSharedKey(key);
   };
@@ -566,7 +572,7 @@ function createController<Values>(
       let values = live.values;
       if (saved !== null && saved !== undefined) {
         const loaded = readLoadedState(saved, latest.current);
-        source.noteRead(loaded.savedParts, writesAtRead);
+        source.noteRead(saved, loaded.savedParts, writesAtRead);
         values = loaded.values;
         // A change the store has not taken is kept, and saved below.
         for (const part of unsaved) values[part] = live.values[part];
@@ -634,7 +640,7 @@ function createController<Values>(
      * its value here.
      */
     savedParts(): SavedParts {
-      return channel?.storedParts() ?? serverParts ?? {};
+      return channel?.storedParts() ?? serverRead?.parts ?? {};
     },
 
     /**
