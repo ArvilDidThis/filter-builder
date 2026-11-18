@@ -7,7 +7,7 @@ import type {
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { describe, expect, test } from "vitest";
 import { commands, page, userEvent } from "vitest/browser";
-import { ColumnPicker } from "../src/ui/ColumnPicker";
+import { ColumnPicker, type ColumnPickerProps } from "../src/ui/ColumnPicker";
 import { FilterBuilder } from "../src/ui/FilterBuilder";
 import { useColumnSettings } from "../src/useColumnSettings";
 import { BLANK_PAGE_PATH } from "./fixture-paths";
@@ -143,7 +143,13 @@ interface LateControl {
  * An app that owns the column settings, and applies a change only when the test says so. An
  * app does this when it saves a change first, and draws it once the save has answered.
  */
-function LateApp({ control }: { control: LateControl }) {
+function LateApp({
+  control,
+  renderTrigger,
+}: {
+  control: LateControl;
+  renderTrigger?: ColumnPickerProps["renderTrigger"];
+}) {
   const [value, setValue] = useState<ColumnSettings | null>(null);
   const waiting = useRef<ColumnSettings | null>(null);
   const state = useColumnSettings({
@@ -157,8 +163,21 @@ function LateApp({ control }: { control: LateControl }) {
   useEffect(() => {
     control.apply = () => setValue(waiting.current);
   }, [control]);
-  return <ColumnPicker state={state} />;
+  return <ColumnPicker renderTrigger={renderTrigger} state={state} />;
 }
+
+/**
+ * The picker's button with plain text beside it, inside the picker's own element. A click on
+ * the text is a click inside the picker, so the list stays open, and the text takes no focus.
+ */
+const triggerWithText: ColumnPickerProps["renderTrigger"] = (props) => (
+  <>
+    <button className="fb-button fb-columns-trigger" {...props}>
+      Columns
+    </button>
+    <span data-testid="beside-trigger"> of the table</span>
+  </>
+);
 
 /** A real builder with the picker in its header, so the builder's styles are all around it. */
 function BuilderWithPicker() {
@@ -174,126 +193,169 @@ function BuilderWithPicker() {
   );
 }
 
-describe("the picker inside a closed shadow tree (item 6)", () => {
-  /**
-   * Draws the app inside a closed shadow tree: a part of the page that hides its insides,
-   * even from scripts. Only this test keeps a way in.
-   */
-  async function openInShadow(
-    changed?: Counter,
-    /** Drawn in the tree in place of the usual app around the picker. */
-    app?: ReactNode,
-  ): Promise<{
-    picker: PickerParts;
-    shadow: ShadowRoot;
-    outside: HTMLButtonElement;
-  }> {
-    const { host, shadow, container, outside } = shadowStage("closed");
-    mount(app ?? <PickerApp changed={changed} />, container);
-    // The page cannot see into the tree.
-    expect(host.shadowRoot).toBeNull();
-    return { picker: await openPicker(shadow), shadow, outside };
-  }
+describe.each(["open", "closed"] as const)(
+  "the picker inside a shadow tree that is %s (item 6)",
+  (mode) => {
+    /**
+     * Draws the app inside a shadow tree: a part of the page that hides its insides. A closed
+     * one hides them even from scripts, and only this test keeps a way in.
+     */
+    async function openInShadow(
+      changed?: Counter,
+      /** Drawn in the tree in place of the usual app around the picker. */
+      app?: ReactNode,
+    ): Promise<{
+      picker: PickerParts;
+      shadow: ShadowRoot;
+      outside: HTMLButtonElement;
+    }> {
+      const { host, shadow, container, outside } = shadowStage(mode);
+      mount(app ?? <PickerApp changed={changed} />, container);
+      // The page cannot see into a closed tree.
+      expect(host.shadowRoot).toBe(mode === "open" ? shadow : null);
+      return { picker: await openPicker(shadow), shadow, outside };
+    }
 
-  test("stays open for a click inside it, and closes for one outside", async () => {
-    const { picker, outside } = await openInShadow();
-    await clickOn(picker.row("Price").querySelector("label") as Element);
-    await expect.poll(picker.table).toBe("name stock");
-    expect(picker.popover()).not.toBeNull();
-    await clickOn(picker.handle("Stock"));
-    expect(picker.popover()).not.toBeNull();
+    test("stays open for a click inside it, and closes for one outside", async () => {
+      const { picker, outside } = await openInShadow();
+      await clickOn(picker.row("Price").querySelector("label") as Element);
+      await expect.poll(picker.table).toBe("name stock");
+      expect(picker.popover()).not.toBeNull();
+      await clickOn(picker.handle("Stock"));
+      expect(picker.popover()).not.toBeNull();
 
-    // Outside the picker, but inside the same shadow tree. The text takes no focus, so
-    // only the place of the click can tell the picker to close.
-    await clickOn(picker.plainText());
-    await expect.poll(picker.popover).toBeNull();
+      // Outside the picker, but inside the same shadow tree. The text takes no focus, so
+      // only the place of the click can tell the picker to close.
+      await clickOn(picker.plainText());
+      await expect.poll(picker.popover).toBeNull();
 
-    // A click on a button there closes it too.
-    await clickOn(picker.trigger());
-    await expect.poll(picker.popover).not.toBeNull();
-    await clickOn(picker.elsewhere());
-    await expect.poll(picker.popover).toBeNull();
+      // A click on a button there closes it too.
+      await clickOn(picker.trigger());
+      await expect.poll(picker.popover).not.toBeNull();
+      await clickOn(picker.elsewhere());
+      await expect.poll(picker.popover).toBeNull();
 
-    // Outside the shadow tree altogether.
-    await clickOn(picker.trigger());
-    await expect.poll(picker.popover).not.toBeNull();
-    await clickOn(outside);
-    await expect.poll(picker.popover).toBeNull();
-  });
+      // Outside the shadow tree altogether.
+      await clickOn(picker.trigger());
+      await expect.poll(picker.popover).not.toBeNull();
+      await clickOn(outside);
+      await expect.poll(picker.popover).toBeNull();
+    });
 
-  test("moves a column by a real drag", async () => {
-    const changed: Counter = { count: 0 };
-    const { picker } = await openInShadow(changed);
-    await pressOn(picker.handle("Name"));
-    await moveTo(lowerHalf(picker.row("Stock")));
-    await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
-    await release();
-    await expect.poll(picker.table).toBe("price stock name");
-    expect(changed.count).toBe(1);
-    expect(picker.popover()).not.toBeNull();
-  });
+    test("moves a column by a real drag", async () => {
+      const changed: Counter = { count: 0 };
+      const { picker } = await openInShadow(changed);
+      await pressOn(picker.handle("Name"));
+      await moveTo(lowerHalf(picker.row("Stock")));
+      await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
+      await release();
+      await expect.poll(picker.table).toBe("price stock name");
+      expect(changed.count).toBe(1);
+      expect(picker.popover()).not.toBeNull();
+    });
 
-  // Moving a row takes it off the page and puts it back, which loses the keyboard focus. On
-  // a plain page and in a frame React itself puts the focus back, so the tests there pass
-  // with or without the picker's own code for it. React does not look inside a shadow tree.
-  // So these two tests are the ones that fail when the picker's code is taken out.
-  test("keeps the focus on the handle after a move by keyboard", async () => {
-    const { picker, shadow } = await openInShadow();
-    picker.handle("Price").focus();
-    await userEvent.keyboard("{ArrowDown}");
-    await expect
-      .poll(picker.listed)
-      .toEqual(["Name", "Stock", "Price", "Notes"]);
-    await expect.poll(() => shadow.activeElement).toBe(picker.handle("Price"));
-    await userEvent.keyboard("{ArrowDown}");
-    await expect
-      .poll(picker.listed)
-      .toEqual(["Name", "Stock", "Notes", "Price"]);
-    await expect.poll(() => shadow.activeElement).toBe(picker.handle("Price"));
-    expect(picker.announced()).toBe("Price moved to position 4 of 4.");
+    // Moving a row takes it off the page and puts it back, which loses the keyboard focus. On
+    // a plain page and in a frame React itself puts the focus back, so the tests there pass
+    // with or without the picker's own code for it. React does not look inside a shadow tree.
+    // So these two tests are the ones that fail when the picker's code is taken out.
+    test("keeps the focus on the handle after a move by keyboard", async () => {
+      const { picker, shadow } = await openInShadow();
+      picker.handle("Price").focus();
+      await userEvent.keyboard("{ArrowDown}");
+      await expect
+        .poll(picker.listed)
+        .toEqual(["Name", "Stock", "Price", "Notes"]);
+      await expect
+        .poll(() => shadow.activeElement)
+        .toBe(picker.handle("Price"));
+      await userEvent.keyboard("{ArrowDown}");
+      await expect
+        .poll(picker.listed)
+        .toEqual(["Name", "Stock", "Notes", "Price"]);
+      await expect
+        .poll(() => shadow.activeElement)
+        .toBe(picker.handle("Price"));
+      expect(picker.announced()).toBe("Price moved to position 4 of 4.");
 
-    // Escape closes the picker and hands the focus back to its button.
-    await userEvent.keyboard("{Escape}");
-    await expect.poll(picker.popover).toBeNull();
-    expect(shadow.activeElement).toBe(picker.trigger());
-  });
+      // Escape closes the picker and hands the focus back to its button.
+      await userEvent.keyboard("{Escape}");
+      await expect.poll(picker.popover).toBeNull();
+      expect(shadow.activeElement).toBe(picker.trigger());
+    });
 
-  test("keeps the focus on the handle when the app applies the move late", async () => {
-    const control: LateControl = { apply: () => {}, asked: 0 };
-    const { picker, shadow } = await openInShadow(
-      undefined,
-      <LateApp control={control} />,
-    );
-    const before = ["Name", "Price", "Stock", "Notes"];
-    const after = ["Name", "Stock", "Price", "Notes"];
+    test("keeps the focus on the handle when the app applies the move late", async () => {
+      const control: LateControl = { apply: () => {}, asked: 0 };
+      const { picker, shadow } = await openInShadow(
+        undefined,
+        <LateApp control={control} />,
+      );
+      const before = ["Name", "Price", "Stock", "Notes"];
+      const after = ["Name", "Stock", "Price", "Notes"];
 
-    picker.handle("Price").focus();
-    await userEvent.keyboard("{ArrowDown}");
-    await expect.poll(() => control.asked).toBe(1);
-    // The app has the move and has not applied it: nothing on the page has changed.
-    expect(picker.listed()).toEqual(before);
-    expect(picker.announced()).toBe("");
+      picker.handle("Price").focus();
+      await userEvent.keyboard("{ArrowDown}");
+      await expect.poll(() => control.asked).toBe(1);
+      // The app has the move and has not applied it: nothing on the page has changed.
+      expect(picker.listed()).toEqual(before);
+      expect(picker.announced()).toBe("");
 
-    control.apply();
-    await expect.poll(picker.listed).toEqual(after);
-    await expect.poll(() => shadow.activeElement).toBe(picker.handle("Price"));
-    expect(picker.announced()).toBe("Price moved to position 3 of 4.");
-    // The key can be pressed again, and moves the same column.
-    await userEvent.keyboard("{ArrowUp}");
-    await expect.poll(() => control.asked).toBe(2);
-    control.apply();
-    await expect.poll(picker.listed).toEqual(before);
-    await expect.poll(() => shadow.activeElement).toBe(picker.handle("Price"));
+      control.apply();
+      await expect.poll(picker.listed).toEqual(after);
+      await expect
+        .poll(() => shadow.activeElement)
+        .toBe(picker.handle("Price"));
+      expect(picker.announced()).toBe("Price moved to position 3 of 4.");
+      // The key can be pressed again, and moves the same column.
+      await userEvent.keyboard("{ArrowUp}");
+      await expect.poll(() => control.asked).toBe(2);
+      control.apply();
+      await expect.poll(picker.listed).toEqual(before);
+      await expect
+        .poll(() => shadow.activeElement)
+        .toBe(picker.handle("Price"));
 
-    // A person who went on to another control meanwhile keeps their place.
-    await userEvent.keyboard("{ArrowDown}");
-    await expect.poll(() => control.asked).toBe(3);
-    picker.reset().focus();
-    control.apply();
-    await expect.poll(picker.listed).toEqual(after);
-    expect(shadow.activeElement).toBe(picker.reset());
-  });
-});
+      // A person who went on to another control meanwhile keeps their place.
+      await userEvent.keyboard("{ArrowDown}");
+      await expect.poll(() => control.asked).toBe(3);
+      picker.reset().focus();
+      control.apply();
+      await expect.poll(picker.listed).toEqual(after);
+      expect(shadow.activeElement).toBe(picker.reset());
+    });
+
+    test("leaves the focus alone when a click took it from the handle before a late move", async () => {
+      const control: LateControl = { apply: () => {}, asked: 0 };
+      const { picker, shadow } = await openInShadow(
+        undefined,
+        <LateApp control={control} renderTrigger={triggerWithText} />,
+      );
+      picker.handle("Price").focus();
+      await userEvent.keyboard("{ArrowDown}");
+      await expect.poll(() => control.asked).toBe(1);
+
+      // The person clicks plain text while the app still holds the move. Nothing holds the
+      // focus afterwards, and the list is still open.
+      await clickOn(
+        shadow.querySelector('[data-testid="beside-trigger"]') as Element,
+      );
+      await expect.poll(() => shadow.activeElement).toBeNull();
+      expect(picker.popover()).not.toBeNull();
+
+      control.apply();
+      await expect
+        .poll(picker.listed)
+        .toEqual(["Name", "Stock", "Price", "Notes"]);
+      // The move is read out in the same step that would give the focus back. So once it has
+      // been read out, the focus is where that step left it.
+      await expect
+        .poll(picker.announced)
+        .toBe("Price moved to position 3 of 4.");
+      // The move did not take the focus away, so the handle does not take it back.
+      expect(shadow.activeElement).toBeNull();
+      expect(document.activeElement).toBe(document.body);
+    });
+  },
+);
 
 describe("the picker inside an embedded page (item 6)", () => {
   /**
