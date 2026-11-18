@@ -1,0 +1,16 @@
+# Exceptions for the dependency scan (.github/workflows/dependency-audit.yml).
+# OSV-Scanner reads this file by itself, because it sits beside pnpm-lock.yaml.
+#
+# Rules for every entry:
+#   - Name one advisory by its id. Never ignore a whole package or a severity level.
+#   - Give a reason, and an `ignoreUntil` date about one month out. After that date the
+#     scan fails again, which forces a new check.
+#   - Never add a MAL-* (malicious package) advisory. Remove the package instead.
+
+# picomatch 4.0.7: a crafted file-matching pattern can make it run for a very long time.
+# Remove this entry once a fix ships. Tracked in
+# https://github.com/ArvilDidThis/filter-builder/issues/13
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2026-12-18
+reason = "No fixed version of picomatch exists. Only build and test tools use it (tsdown, vite and vitest, through tinyglobby and fdir), so the published packages do not include it. When a fix ships, remove this entry and upgrade picomatch."
