@@ -1,11 +1,16 @@
+import { useCallback, useEffect, useState } from "react";
 import { describe, expect, onTestFinished, test } from "vitest";
 import { commands, server, userEvent } from "vitest/browser";
+import type { ColumnPickerProps } from "../src/ui/ColumnPicker";
 import {
   type Counter,
   manyColumns,
   mountOpenPicker,
+  openPicker,
+  PickerApp,
   type PickerParts,
 } from "./support/apps";
+import { mount } from "./support/mount";
 import {
   moveTo,
   type Point,
@@ -25,11 +30,75 @@ const upperHalf = (row: Element): Point => pointOn(row, 0.5, 0.1);
 const isDragging = (picker: PickerParts): boolean =>
   picker.list().hasAttribute("data-dragging");
 
+/** Lets a test tell `ReplacingApp` to draw every handle anew. */
+interface HandleControl {
+  replaceHandles: () => void;
+}
+
+/**
+ * An app that draws its own rows, and can replace every handle with a new element while the
+ * picker stays open. The picker's notes ask an app not to do this to a row that is held.
+ */
+function ReplacingApp({
+  control,
+  changed,
+}: {
+  control: HandleControl;
+  changed: Counter;
+}) {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    control.replaceHandles = () => setVersion((was) => was + 1);
+  }, [control]);
+  const renderRow = useCallback<NonNullable<ColumnPickerProps["renderRow"]>>(
+    (row) => (
+      <>
+        <input className="fb-columns-checkbox" {...row.checkboxProps} />
+        {/* A new `key` makes React put a new element in the old one's place. */}
+        <button
+          className="fb-columns-handle"
+          key={version}
+          {...row.handleProps}
+        >
+          <span aria-hidden="true">⠿</span>
+        </button>
+        <label className="fb-columns-label" htmlFor={row.checkboxProps.id}>
+          {row.column.label}
+        </label>
+      </>
+    ),
+    [version],
+  );
+  return <PickerApp changed={changed} picker={{ renderRow }} />;
+}
+
 /** Resolves once the browser has drawn two more screen frames. */
 const twoFrames = (): Promise<void> =>
   new Promise((done) => {
     requestAnimationFrame(() => requestAnimationFrame(() => done()));
   });
+
+/**
+ * Sends the page one of the events a finger would cause, at a real place on the screen. The
+ * browser knows of no such finger, so it gives the handle no pointer capture (the browser
+ * sending every later event of a pointer to one element), and never takes one away.
+ */
+function sendTouch(target: EventTarget, type: string, at: Point): void {
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      pointerId: 7,
+      pointerType: "touch",
+      isPrimary: true,
+      button: type === "pointermove" ? -1 : 0,
+      buttons: type === "pointerup" ? 0 : 1,
+      clientX: at.x,
+      clientY: at.y,
+    }),
+  );
+}
 
 describe("dragging a column by mouse (item 1)", () => {
   test("moves the column to where it is dropped", async () => {
@@ -145,27 +214,11 @@ describe("dragging a column by touch (item 1)", () => {
     // finger would cause, at the real places of the rows.
     test("moves the column under touch events sent to the page", async () => {
       const picker = await mountOpenPicker();
-      const send = (target: EventTarget, type: string, at: Point): void => {
-        target.dispatchEvent(
-          new PointerEvent(type, {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            pointerId: 7,
-            pointerType: "touch",
-            isPrimary: true,
-            button: type === "pointermove" ? -1 : 0,
-            buttons: type === "pointerup" ? 0 : 1,
-            clientX: at.x,
-            clientY: at.y,
-          }),
-        );
-      };
       const handle = picker.handle("Name");
-      send(handle, "pointerdown", pointOn(handle));
-      send(handle, "pointermove", lowerHalf(picker.row("Stock")));
+      sendTouch(handle, "pointerdown", pointOn(handle));
+      sendTouch(handle, "pointermove", lowerHalf(picker.row("Stock")));
       await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
-      send(handle, "pointerup", lowerHalf(picker.row("Stock")));
+      sendTouch(handle, "pointerup", lowerHalf(picker.row("Stock")));
       await expect.poll(picker.table).toBe("price stock name");
     });
   }
@@ -216,6 +269,16 @@ describe("a drag that reaches the list's edge (item 2)", () => {
 });
 
 describe("a drag that does not end with a drop (item 3)", () => {
+  // The picker has three ways to end a drag that does not end with a drop on its list. Each
+  // has a test of its own, which fails when that way alone is taken out:
+  //
+  // 1. The list closing ends the drag: "holds nothing when it opens again before the release".
+  // 2. The browser taking the capture away ends it: "ends when its handle is replaced".
+  // 3. A release is ignored once its list has left the page. No real pointer reaches this one
+  //    alone, because ways 1 and 2 always come first. `ColumnPicker.test.tsx` guards it, in
+  //    "should ignore a release once the list it was aimed at is gone".
+  //
+  // This first test is the outcome a person sees. Any one of the three is enough for it.
   test("ends when the popover closes, and moves nothing", async () => {
     const changed: Counter = { count: 0 };
     const picker = await mountOpenPicker({ changed });
@@ -236,6 +299,75 @@ describe("a drag that does not end with a drop (item 3)", () => {
     expect(isDragging(picker)).toBe(false);
     expect(picker.rows().some((row) => row.dataset.drop)).toBe(false);
   });
+
+  test("holds nothing when it opens again before the release", async () => {
+    const changed: Counter = { count: 0 };
+    const picker = await mountOpenPicker({ changed });
+    // A finger the browser gives no capture for. So closing the list takes no capture away,
+    // and only the picker itself can end the drag.
+    const handle = picker.handle("Name");
+    sendTouch(handle, "pointerdown", pointOn(handle));
+    sendTouch(handle, "pointermove", lowerHalf(picker.row("Stock")));
+    await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
+
+    picker.elsewhere().focus();
+    await expect.poll(picker.popover).toBeNull();
+    // The finger is still down when the picker opens again.
+    await mountedAgain(picker);
+    expect(isDragging(picker)).toBe(false);
+    expect(picker.rows().some((row) => row.hasAttribute("data-dragging"))).toBe(
+      false,
+    );
+    expect(picker.rows().some((row) => row.dataset.drop)).toBe(false);
+
+    // Lifting the finger over the new list moves nothing.
+    sendTouch(document, "pointerup", lowerHalf(picker.row("Stock")));
+    await drag(picker, "Price", "Stock");
+    expect(picker.table()).toBe("name stock price");
+    expect(changed.count).toBe(1);
+  });
+
+  test("ends when its handle is replaced while the row is held", async () => {
+    const changed: Counter = { count: 0 };
+    const control: HandleControl = { replaceHandles: () => {} };
+    mount(<ReplacingApp changed={changed} control={control} />);
+    const picker = await openPicker();
+
+    const held = picker.handle("Name");
+    await pressOn(held);
+    await moveTo(lowerHalf(picker.row("Price")));
+    await expect.poll(() => picker.row("Stock").dataset.drop).toBe("before");
+
+    // The app draws every handle anew. The browser had captured the pointer on the old
+    // handle, and takes the capture away now that the handle is off the page.
+    control.replaceHandles();
+    await expect.poll(() => picker.handle("Name") !== held).toBe(true);
+    // The picker stays open: only the drag ends. The browser tells the page of the lost
+    // capture when the pointer next moves.
+    await moveTo(lowerHalf(picker.row("Stock")));
+    await expect.poll(() => isDragging(picker)).toBe(false);
+    expect(picker.popover()).not.toBeNull();
+    expect(picker.rows().some((row) => row.dataset.drop)).toBe(false);
+
+    await release();
+    // A drag that works again proves the release above was dealt with, and moved nothing.
+    await drag(picker, "Price", "Stock");
+    expect(picker.table()).toBe("name stock price");
+    expect(changed.count).toBe(1);
+  });
+
+  /** Drags the row named `from` to just below the row named `to` with the real mouse. */
+  async function drag(
+    picker: PickerParts,
+    from: string,
+    to: string,
+  ): Promise<void> {
+    const before = picker.table();
+    await pressOn(picker.handle(from));
+    await moveTo(lowerHalf(picker.row(to)));
+    await release();
+    await expect.poll(picker.table).not.toBe(before);
+  }
 
   /** Opens the same picker again with a real click. */
   async function mountedAgain(picker: PickerParts): Promise<void> {
