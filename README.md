@@ -96,6 +96,19 @@ To update the Linux screenshots after a change to the look that you intend:
    `packages/filter-react/browser/__screenshots__/linux/`.
 4. Look at each picture, then commit them.
 
+GitHub offers **Run workflow** only once the workflow file is on the default branch. Before
+that, or to store Linux screenshots without pushing, use Docker on your own machine:
+
+```sh
+pnpm test:browser:update:linux
+```
+
+It runs the two screenshot tests in a Linux container, with the same Ubuntu release, kind of
+processor and Playwright version as CI, and stores the pictures in the same folder. Your
+`node_modules` is left alone. Look at each picture, then commit them. If CI then reports a
+difference, its machines draw text differently from the container: replace the pictures with
+the ones from a workflow run, as above.
+
 ### React 18
 
 `@arvilmena/filter-react` supports React from version 18, and its own tests run against the
