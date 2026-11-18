@@ -600,6 +600,77 @@ describe("the picker on a phone-sized screen (item 7)", () => {
   });
 });
 
+describe("the buttons below the list", () => {
+  /** The two buttons below the list, whatever their wording. */
+  const footerButtons = (picker: PickerParts): HTMLElement[] =>
+    Array.from(
+      (picker.popover() as HTMLElement).querySelectorAll<HTMLElement>(
+        ".fb-columns-footer button",
+      ),
+    );
+
+  test("stay inside a narrow popover and wrap when their labels are long", async () => {
+    // The popover is at most nine tenths of the screen wide: 216 pixels here.
+    await resizeTo({ width: 240, height: 568 });
+    mount(
+      <PickerApp
+        columns={LONG}
+        picker={{
+          labels: {
+            // Several words, and one word longer than the popover is wide.
+            showAll: "Alle Spalten der Tabelle wieder einblenden",
+            reset: "Ausgangseinstellungenwiederherstellen",
+          },
+        }}
+      />,
+    );
+    const picker = await openPicker();
+    const popover = picker.popover() as HTMLElement;
+    const box = popover.getBoundingClientRect();
+    expect(box.width).toBeCloseTo(216, 0);
+    expect(isInsideScreen(popover)).toBe(true);
+
+    const usualHeight = picker.trigger().getBoundingClientRect().height;
+    const [showAll, reset] = footerButtons(picker).map((button) =>
+      button.getBoundingClientRect(),
+    ) as [DOMRect, DOMRect];
+    for (const button of [showAll, reset]) {
+      // Inside the popover on both sides. Half a pixel is let through for rounding.
+      expect(button.left).toBeGreaterThanOrEqual(box.left - 0.5);
+      expect(button.right).toBeLessThanOrEqual(box.right + 0.5);
+      // Its label broke into lines, so it is taller than a one-line button.
+      expect(button.height).toBeGreaterThan(usualHeight + 1);
+    }
+    // Each button has a line of its own.
+    expect(reset.top).toBeGreaterThanOrEqual(showAll.bottom);
+    // Nothing is cut off or pushed out: neither the popover nor the page scrolls sideways.
+    expect(popover.scrollWidth).toBeLessThanOrEqual(popover.clientWidth);
+    for (const button of footerButtons(picker)) {
+      expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
+    }
+    expect(scrollsSideways()).toBe(false);
+
+    // They still work: a real click on the wrapped button shows every column.
+    await clickOn(picker.checkbox(LONG[1]?.label as string));
+    await expect.poll(picker.table).toBe("name stock");
+    await clickOn(footerButtons(picker)[0] as HTMLElement);
+    await expect.poll(picker.table).toBe("name price stock");
+  });
+
+  test("keep the usual height and share one line when their labels are short", async () => {
+    mount(<PickerApp />);
+    const picker = await openPicker();
+    // The picker's own button is drawn by the same rule, at the usual height of a control.
+    const usualHeight = picker.trigger().getBoundingClientRect().height;
+    const showAll = picker.showAll().getBoundingClientRect();
+    const reset = picker.reset().getBoundingClientRect();
+    expect(showAll.height).toBe(usualHeight);
+    expect(reset.height).toBe(usualHeight);
+    expect(reset.top).toBe(showAll.top);
+    expect(reset.left).toBeGreaterThan(showAll.right);
+  });
+});
+
 describe("the picker's popover while something scrolls sideways", () => {
   /** Whether the popover's left edge is on its button's left edge, where `align` puts it. */
   const isLinedUp = (picker: PickerParts): boolean =>
