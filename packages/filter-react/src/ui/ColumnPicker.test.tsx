@@ -3,6 +3,7 @@ import type { ColumnDefinition, ColumnSettings } from "@arvilmena/filter-core";
 import {
   act,
   cleanup,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -133,6 +134,41 @@ function OwningApp({
         Show notes first
       </button>
       <button type="button">Elsewhere</button>
+    </>
+  );
+}
+
+/**
+ * An app that owns the settings, changes the order, and lets the pointer go above the first
+ * row as that change is drawn.
+ */
+function ReleasingApp() {
+  const [value, setValue] = useState<ColumnSettings | null>(null);
+  const state = useColumnSettings({
+    columns: COLUMNS,
+    value,
+    onChange: changed,
+  });
+  // A layout effect runs as the change is drawn, before the picker's plain effects. It
+  // stands after the hook, whose actions read the settings from a layout effect of its own.
+  useLayoutEffect(() => {
+    if (value === null) return;
+    document.dispatchEvent(createEvent.pointerUp(document, pointer(50)));
+  }, [value]);
+  return (
+    <>
+      <ColumnPicker state={state} />
+      <button
+        onClick={() =>
+          setValue({
+            order: ["price", "name", "stock", "notes"],
+            hidden: ["notes"],
+          })
+        }
+        type="button"
+      >
+        Put price first
+      </button>
     </>
   );
 }
@@ -777,6 +813,21 @@ describe("ColumnPicker", () => {
         fireEvent.pointerMove(document, pointer(180));
         fireEvent.pointerUp(document, pointer(180));
         expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+      });
+    });
+
+    it("should drop into the order just drawn when the release comes with that draw", () => {
+      changed.mockClear();
+      render(<ReleasingApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      // The app moves "Name" down to second place, and the pointer lets go above the first
+      // row in the same draw. In the order just drawn, that moves "Name" back up.
+      fireEvent.click(screen.getByRole("button", { name: "Put price first" }));
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(changed.mock.calls[0]?.[0]).toMatchObject({
+        order: ["name", "price", "stock", "notes"],
       });
     });
 

@@ -17,6 +17,7 @@ import {
   useState,
 } from "react";
 import type { ColumnSettingsState } from "../useColumnSettings";
+import { useEarlyEffect } from "../useEarlyEffect";
 import { useColumnDrag } from "./useColumnDrag";
 import { useKeepOnScreen } from "./useKeepOnScreen";
 import { useOutsidePointerDown } from "./useOutsidePointerDown";
@@ -332,8 +333,12 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 
   // Reads the newest columns, so the function below can stay the same between renders and the
   // rows that did not change are not redrawn.
+  // It is kept in an early effect, as the drag keeps its own copy of the order. A pointer can
+  // be let go while a new order is being drawn, and the drop is worked out from the drag's
+  // copy. A plain effect would run later, and the move below would be checked against the
+  // order before.
   const latestColumns = useRef(orderedColumns);
-  useEffect(() => {
+  useEarlyEffect(() => {
     latestColumns.current = orderedColumns;
   });
 
