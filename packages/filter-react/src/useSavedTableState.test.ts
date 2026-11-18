@@ -1909,6 +1909,84 @@ describe("useSavedTableState", () => {
       expect(first.save).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe("a change of store", () => {
+    it("should keep the store it loaded from until it loads again", () => {
+      const first = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const second = memoryStore({ orders: savedWith({ sort: PRICE_SORT }) });
+      const { result, rerender } = renderSaved({ store: first });
+      rerender({ store: second });
+      // A new store alone does not load again, and the state loaded from the first store
+      // is not written into the second.
+      expect(second.load).not.toHaveBeenCalled();
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+      act(() => result.current.set.filter(priceFilter("10")));
+      act(() => vi.advanceTimersByTime(300));
+      expect(first.save).toHaveBeenCalledOnce();
+      expect(second.save).not.toHaveBeenCalled();
+
+      act(() => result.current.reload());
+      expect(second.load).toHaveBeenCalledExactlyOnceWith("orders");
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+      act(() => result.current.set.filter(priceFilter("20")));
+      act(() => vi.advanceTimersByTime(300));
+      expect(first.save).toHaveBeenCalledOnce();
+      expect(second.items.get("orders")).toMatchObject({
+        parts: { filter: priceFilter("20"), sort: PRICE_SORT },
+      });
+    });
+
+    it("should share its key with the hooks of the new store once it has loaded from it", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const first = memoryStore();
+      const second = memoryStore();
+      const moved = renderHook(
+        (store: StateStore) =>
+          useSavedTableState({ id: "moved", store, parts: { sort: sortPart } }),
+        { initialProps: first },
+      );
+      moved.rerender(second);
+      act(() => moved.result.current.reload());
+
+      const other = renderHook(() =>
+        useSavedTableState({
+          id: "moved",
+          store: second,
+          parts: { filter: filterStatePart() },
+        }),
+      );
+      expect(warn).toHaveBeenCalledOnce();
+      act(() => other.result.current.set.filter(priceFilter("10")));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => moved.result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(second.items.get("moved")).toEqual(
+        savedWith({ sort: PRICE_SORT, filter: priceFilter("10") }),
+      );
+      expect(first.save).not.toHaveBeenCalled();
+    });
+
+    it("should keep its place when the app makes a new store object on every render", () => {
+      const kept = memoryStore();
+      const { result, rerender } = renderHook(() =>
+        useSavedTableState({
+          id: "orders",
+          parts: PARTS,
+          // A new object on every render, as with an inline `cookieStore()`.
+          store: { load: kept.load, save: kept.save, remove: kept.remove },
+        }),
+      );
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      rerender();
+      // There and back: the value is the one already saved, so it is not saved again.
+      act(() => result.current.set.sort(NAME_SORT));
+      act(() => result.current.set.sort({ ...PRICE_SORT }));
+      act(() => vi.advanceTimersByTime(300));
+      expect(kept.load).toHaveBeenCalledOnce();
+      expect(kept.save).toHaveBeenCalledOnce();
+    });
+  });
 });
 
 /** A table that hands its saved state to the test, for the tests that hide and show it. */

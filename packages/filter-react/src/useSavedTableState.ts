@@ -51,8 +51,13 @@ export interface UseSavedTableStateOptions<Values>
    */
   parts: StateParts<Values>;
   /**
-   * Where the state is kept. Defaults to the browser's local storage. A different store given
-   * while the table is on screen is used from the next load or save on.
+   * Where the state is kept. Defaults to the browser's local storage.
+   *
+   * The hook keeps the store it last loaded from, and saves there. A different `store` given
+   * while the table is on screen does not load again by itself. It is used from the next load
+   * on: a change of key, or `reload()`. So the state read from one store is never written into
+   * another, and a store made anew on every render (`store: cookieStore()` inside the
+   * component) behaves like one store.
    */
   store?: StateStore;
   /**
@@ -433,6 +438,15 @@ function createController<Values>(
     if (channel.hookCount() > 1) warnAboutSharedKey(key);
   };
 
+  /**
+   * The store to use from here on. The hook keeps the store it loaded the key's state from. It
+   * takes the store the app asks for now only when it is about to load.
+   */
+  const storeFor = (isNewKey: boolean): StateStore => {
+    const keepsStore = !isNewKey && canSave && channel !== undefined;
+    return keepsStore && channel ? channel.store : storeOf(latest.current);
+  };
+
   /** Hands a save or a remove to a channel, and counts it until it has ended. */
   const send = (target: StateChannel, write: Write): void => {
     unanswered += 1;
@@ -574,13 +588,7 @@ function createController<Values>(
         // The state moved on while nothing could be drawn. Show it now.
         draw(live);
       }
-      if (live.key !== undefined) {
-        const keepsStore = !isNewKey && channel !== undefined;
-        join(
-          keepsStore && channel ? channel.store : storeOf(latest.current),
-          live.key,
-        );
-      }
+      if (live.key !== undefined) join(storeFor(isNewKey), live.key);
       // Still to load: a first visit, or a load that was dropped or failed.
       if (!canSave) load();
     },
@@ -644,6 +652,10 @@ function createController<Values>(
           errorAction: undefined,
         });
       }
+      // The app may have passed another store since the last load. Off screen, the table
+      // joins and loads when it is shown again.
+      if (!active) return;
+      if (live.key !== undefined) join(storeOf(latest.current), live.key);
       load();
     },
 

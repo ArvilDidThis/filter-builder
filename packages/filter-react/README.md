@@ -534,6 +534,10 @@ Two things the hook does not do:
 Pass a `store` to keep the state somewhere else. Keep the store out of the component, or in
 `useMemo`, so it is made once.
 
+The hook keeps the store it last loaded from, and saves there. A different `store` passed
+later does not load again by itself. It is used from the next load on: a change of key, or
+`reload()`.
+
 ```tsx
 import {
   cookieStore,
