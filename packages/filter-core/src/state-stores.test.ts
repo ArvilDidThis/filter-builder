@@ -347,6 +347,16 @@ describe("fetchStore", () => {
     expect(requests[0]?.url).toBe("/api/state?app=shop&key=%2Forders%26x%3D1");
   });
 
+  it.each([
+    ["/api/state#top", "/api/state?key=orders#top"],
+    ["/api/state?app=shop#top", "/api/state?app=shop&key=orders#top"],
+    ["/api/state#top?x=1", "/api/state?key=orders#top?x=1"],
+  ])("should put the key in front of the fragment of %s", async (url, sent) => {
+    const { fetch, requests } = stubFetch(() => ({}));
+    await fetchStore({ url, fetch }).load("orders");
+    expect(requests[0]?.url).toBe(sent);
+  });
+
   it("should let the app build the address from the key", async () => {
     const { fetch, requests } = stubFetch(() => ({}));
     const store = fetchStore({

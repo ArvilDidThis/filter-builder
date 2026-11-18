@@ -392,8 +392,13 @@ export function fetchStore(options: FetchStoreOptions): StateStore {
 /** The address for a key. Text gets the key as a `key` query parameter. */
 function addressFor(url: FetchStoreOptions["url"], key: string): string {
   if (typeof url === "function") return url(key);
-  const joiner = url.includes("?") ? "&" : "?";
-  return `${url}${joiner}key=${encodeURIComponent(key)}`;
+  // A fragment (the "#top" at the end of an address) is never sent to the server, so the key
+  // goes in front of it.
+  const fragmentStart = url.indexOf("#");
+  const address = fragmentStart === -1 ? url : url.slice(0, fragmentStart);
+  const fragment = fragmentStart === -1 ? "" : url.slice(fragmentStart);
+  const joiner = address.includes("?") ? "&" : "?";
+  return `${address}${joiner}key=${encodeURIComponent(key)}${fragment}`;
 }
 
 /** The JSON value in `text`, or `undefined` when the text is not JSON. */
