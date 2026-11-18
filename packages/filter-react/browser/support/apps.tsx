@@ -99,8 +99,10 @@ export function pickerParts(within: ParentNode = document) {
   const rows = (): HTMLElement[] =>
     Array.from(within.querySelectorAll<HTMLElement>(".fb-columns-row"));
   const row = (label: string): HTMLElement => {
-    const found = rows().find((item) =>
-      item.textContent?.trim().endsWith(label),
+    // By the label's whole text, so "Price" never finds a row named "Unit price".
+    const found = rows().find(
+      (item) =>
+        item.querySelector(".fb-columns-label")?.textContent?.trim() === label,
     );
     if (found === undefined) throw new Error(`No row is named ${label}`);
     return found;
