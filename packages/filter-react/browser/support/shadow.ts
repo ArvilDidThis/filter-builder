@@ -52,3 +52,63 @@ export function barePadding(host: HTMLElement): { x: number; y: number } {
     throw new Error("The host's padding is covered by something else.");
   return point;
 }
+
+/** Where a scrolling box is put: on the plain page, or in or around a shadow tree. */
+export type BoxPlace =
+  | "the page"
+  | "an open shadow tree"
+  | "a closed shadow tree"
+  | "an open tree's slot";
+
+/** Every place a scrolling box can be put, for a test that runs in each. */
+export const BOX_PLACES: readonly BoxPlace[] = [
+  "the page",
+  "an open shadow tree",
+  "a closed shadow tree",
+  "an open tree's slot",
+];
+
+/** A scrolling box on the page, with what a test needs around it. */
+export interface ScrollStage {
+  /** The box that scrolls. */
+  scroller: HTMLElement;
+  /** An empty element inside the box, to draw an app into. */
+  container: HTMLElement;
+  /** Where to look for what the app draws: the page, or the shadow tree that holds it. */
+  within: ParentNode;
+}
+
+/**
+ * Puts a box that scrolls on the page, `width` by `height` pixels, for an app that is larger
+ * than the box. With a shadow tree, the box is inside the tree, where the page never hears
+ * its scroll. With "an open tree's slot" the app itself stays on the plain page, and the box
+ * shows it through a slot (a gap in the tree), as a web component that scrolls its content
+ * does.
+ */
+export function scrollStage(
+  place: BoxPlace,
+  size: { width: number; height: number },
+): ScrollStage {
+  const scroller = document.createElement("div");
+  scroller.style.cssText = `width: ${size.width}px; height: ${size.height}px; overflow: auto;`;
+  const container = document.createElement("div");
+  if (place === "the page") {
+    scroller.append(container);
+    document.body.append(scroller);
+    return { scroller, container, within: document };
+  }
+  if (place === "an open tree's slot") {
+    const host = document.createElement("div");
+    document.body.append(host);
+    host.attachShadow({ mode: "open" }).append(scroller);
+    scroller.append(document.createElement("slot"));
+    host.append(container);
+    return { scroller, container, within: document };
+  }
+  const { shadow, container: inTree } = shadowStage(
+    place === "an open shadow tree" ? "open" : "closed",
+  );
+  scroller.append(container);
+  inTree.append(scroller);
+  return { scroller, container, within: shadow };
+}

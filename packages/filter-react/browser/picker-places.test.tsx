@@ -28,7 +28,7 @@ import {
   pressOn,
   release,
 } from "./support/pointer";
-import { shadowStage } from "./support/shadow";
+import { BOX_PLACES, scrollStage, shadowStage } from "./support/shadow";
 import { VIEWPORT } from "./viewport";
 
 // The picker in the places an app may put it: a closed shadow tree, a frame, a phone-sized
@@ -627,31 +627,32 @@ describe("the picker's popover while something scrolls sideways", () => {
     expect(isInsideScreen(picker.popover())).toBe(true);
   });
 
-  test("stays inside the screen when a box around the picker scrolls", async () => {
-    mount(
-      <div
-        data-testid="scroller"
-        style={{ width: 600, height: 420, overflow: "auto" }}
-      >
-        <WideContent />
-      </div>,
-    );
-    const picker = await openPicker();
-    const scroller = page.getByTestId("scroller").element();
-    // The box scrolls, and the page does not.
-    expect(scrollsSideways()).toBe(false);
-    expect(isLinedUp(picker)).toBe(true);
+  // Inside a shadow tree (a part of the page that hides its insides), the page never hears
+  // the box scroll. The picker listens in the tree as well.
+  test.each(BOX_PLACES)(
+    "stays inside the screen when a box around the picker scrolls, in %s",
+    async (place) => {
+      const { scroller, container, within } = scrollStage(place, {
+        width: 600,
+        height: 420,
+      });
+      mount(<WideContent />, container);
+      const picker = await openPicker(within);
+      // The box scrolls, and the page does not.
+      expect(scrollsSideways()).toBe(false);
+      expect(isLinedUp(picker)).toBe(true);
 
-    scroller.scrollLeft = PAST_THE_EDGE;
-    await expect.poll(() => scroller.scrollLeft).toBe(PAST_THE_EDGE);
-    expect(picker.trigger().getBoundingClientRect().left).toBeLessThan(0);
-    await expect.poll(() => isInsideScreen(picker.popover())).toBe(true);
+      scroller.scrollLeft = PAST_THE_EDGE;
+      await expect.poll(() => scroller.scrollLeft).toBe(PAST_THE_EDGE);
+      expect(picker.trigger().getBoundingClientRect().left).toBeLessThan(0);
+      await expect.poll(() => isInsideScreen(picker.popover())).toBe(true);
 
-    scroller.scrollLeft = 0;
-    await expect.poll(() => scroller.scrollLeft).toBe(0);
-    await expect.poll(() => isLinedUp(picker)).toBe(true);
-    expect(isInsideScreen(picker.popover())).toBe(true);
-  });
+      scroller.scrollLeft = 0;
+      await expect.poll(() => scroller.scrollLeft).toBe(0);
+      await expect.poll(() => isLinedUp(picker)).toBe(true);
+      expect(isInsideScreen(picker.popover())).toBe(true);
+    },
+  );
 });
 
 describe("the picker inside the filter builder (item 8)", () => {
