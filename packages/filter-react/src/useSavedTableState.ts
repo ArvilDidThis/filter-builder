@@ -32,7 +32,7 @@ export type SavedTableStateAction = "load" | "save" | "remove";
 
 /** What `useSavedTableState` needs from the app. */
 export interface UseSavedTableStateOptions<Values>
-  extends ReadSavedStateOptions {
+  extends ReadSavedStateOptions<Values> {
   /**
    * A name for the saved state. Use it when the same table appears on several pages, or when
    * several tables share an id. It wins over `id`.
@@ -48,6 +48,10 @@ export interface UseSavedTableStateOptions<Values>
   /**
    * The parts to remember, by name. Each has a default and a `parse` that checks the saved
    * value. `filterStatePart()` and `columnStatePart(columns)` cover the filter and the columns.
+   *
+   * The parts may be built inside the component, and need not be memoised: a new object on
+   * every render starts no load and no save. The hook uses the newest parts whenever it reads
+   * a saved value. Values it has read already are not parsed again when the parts change.
    */
   parts: StateParts<Values>;
   /**
@@ -58,6 +62,8 @@ export interface UseSavedTableStateOptions<Values>
    * on: a change of key, or `reload()`. So the state read from one store is never written into
    * another, and a store made anew on every render (`store: cookieStore()` inside the
    * component) behaves like one store.
+   *
+   * To take over state the app kept elsewhere before, wrap the store in `carryOverStore`.
    */
   store?: StateStore;
   /**
@@ -165,6 +171,8 @@ export interface SavedTableState<Values> {
  * - A change whose save failed is kept, and saved again with the next save.
  * - Parts saved under the key that this hook does not own are kept, and written back with its
  *   own. `clear()` removes them too.
+ * - `check` corrects parts that depend on each other, each time a saved value is read. It does
+ *   not run on the changes a person makes.
  * - A load still on its way when the table leaves the screen, or when its key changes, is not
  *   cancelled. Its answer is ignored.
  * - Saves and removes reach the store one at a time, in the order they were made, so a slow
@@ -885,7 +893,7 @@ function readOwnParts<Values>(
   return readSavedState(
     savedParts && createSavedState(savedParts, version),
     options.parts,
-    { version },
+    { version, check: options.check },
   );
 }
 

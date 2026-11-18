@@ -10,6 +10,7 @@ import {
   filterStatePart,
   type SavedState,
   type StatePart,
+  type StateParts,
   type StateStore,
 } from "@arvilmena/filter-core";
 import { act, cleanup, render, renderHook } from "@testing-library/react";
@@ -2562,6 +2563,140 @@ describe("useSavedTableState", () => {
       act(() => vi.advanceTimersByTime(1000));
       expect(store.save).toHaveBeenCalledOnce();
       expect(store.items.has("archive")).toBe(false);
+    });
+  });
+
+  describe("parts built inside the component", () => {
+    it("should load once, though the parts are a new object on every render", () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result, rerender } = renderHook(() =>
+        useSavedTableState({
+          id: "orders",
+          store,
+          parts: { filter: filterStatePart(), sort: sortPart },
+        }),
+      );
+      const before = result.current.values;
+      rerender();
+      rerender();
+      expect(store.load).toHaveBeenCalledOnce();
+      expect(result.current.values).toBe(before);
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+    });
+  });
+
+  describe("parts and values typed with an interface", () => {
+    interface TableValues {
+      filter: FilterDefinition;
+      sort: Sort | null;
+    }
+    interface TableParts {
+      filter: StatePart<FilterDefinition>;
+      sort: StatePart<Sort | null>;
+    }
+
+    it("should take parts declared as an interface", () => {
+      const parts: TableParts = { filter: filterStatePart(), sort: sortPart };
+      const { result } = renderHook(() =>
+        useSavedTableState({ id: "orders", parts, store: memoryStore() }),
+      );
+      expectTypeOf(result.current.values.sort).toEqualTypeOf<Sort | null>();
+      expect(result.current.values.sort).toBeNull();
+    });
+
+    it("should take values declared as an interface", () => {
+      const parts: StateParts<TableValues> = {
+        filter: filterStatePart(),
+        sort: sortPart,
+      };
+      const { result } = renderHook(() =>
+        useSavedTableState<TableValues>({
+          id: "orders",
+          parts,
+          store: memoryStore(),
+        }),
+      );
+      const values: Readonly<TableValues> = result.current.values;
+      act(() => result.current.set.sort(PRICE_SORT));
+      expect(values.sort).toBeNull();
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+    });
+  });
+
+  describe("a rule that spans parts (`check`)", () => {
+    /** Drops the sort when the saved filter was not usable. */
+    const dropSortWithoutFilter: NonNullable<Options["check"]> = (
+      _values,
+      defaulted,
+    ) => (defaulted.includes("filter") ? { sort: null } : undefined);
+
+    it("should correct the loaded parts, and save nothing", () => {
+      const store = memoryStore({
+        orders: savedWith({ filter: "broken", sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store, check: dropSortWithoutFilter });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toBeNull();
+      act(() => vi.advanceTimersByTime(1000));
+      expect(store.save).not.toHaveBeenCalled();
+    });
+
+    it("should leave the parts alone when the rule has nothing to correct", () => {
+      const store = memoryStore({
+        orders: savedWith({ filter: priceFilter("10"), sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store, check: dropSortWithoutFilter });
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+    });
+
+    it("should use the parsed parts when the rule throws", () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const onError = vi.fn();
+      const { result } = renderSaved({
+        store,
+        onError,
+        check: () => {
+          throw new Error("the rule broke");
+        },
+      });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it("should correct the state a server already read", () => {
+      const { result } = renderSaved({
+        store: memoryStore(),
+        initialSaved: savedWith({ filter: "broken", sort: NAME_SORT }),
+        check: dropSortWithoutFilter,
+      });
+      expect(result.current.values.sort).toBeNull();
+    });
+
+    it("should correct what a store that answers later hands back", async () => {
+      const load = deferred<unknown>();
+      const store = { ...memoryStore(), load: () => load.promise };
+      const { result } = renderSaved({ store, check: dropSortWithoutFilter });
+      load.resolve(savedWith({ filter: "broken", sort: NAME_SORT }));
+      await settle();
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toBeNull();
+    });
+
+    it("should save the corrected part with the next change", () => {
+      const store = memoryStore({
+        orders: savedWith({ filter: "broken", sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store, check: dropSortWithoutFilter });
+      act(() => result.current.set.filter(priceFilter("10")));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          filter: priceFilter("10"),
+          sort: null,
+          columns: COLUMN_DEFAULTS,
+        }),
+      );
     });
   });
 });
