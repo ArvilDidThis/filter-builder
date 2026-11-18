@@ -1813,6 +1813,36 @@ describe("useSavedTableState", () => {
       });
     });
 
+    it("should not count a change made after it as saved by a save from before it", async () => {
+      const store = slowStore();
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => result.current.clear());
+      // The same value as before the clear, so the two saves look alike.
+      act(() => result.current.set.sort(PRICE_SORT));
+      let flushed: Promise<boolean> | undefined;
+      act(() => {
+        flushed = result.current.flush();
+      });
+
+      // The save from before the clear and the remove go through. The save after it fails.
+      act(() => store.requests[0]?.answer());
+      await settle();
+      act(() => store.requests[1]?.answer());
+      await settle();
+      act(() => store.requests[2]?.fail(new Error("offline")));
+      await settle();
+      expect(store.requests.map((request) => request.kind)).toEqual([
+        "save",
+        "remove",
+        "save",
+      ]);
+      expect(store.items.has("orders")).toBe(false);
+      await expect(flushed).resolves.toBe(false);
+      expect(result.current.errorAction).toBe("save");
+    });
+
     it("should report a failed remove", async () => {
       const failure = new Error("offline");
       const store = {

@@ -405,6 +405,8 @@ function createController<Values>(
   let removeFailed = false;
   /** Goes up whenever a load is started or dropped. A load that answers late sees it moved. */
   let loadRun = 0;
+  /** Goes up with every `clear()`. A save from before a clear sees it moved when it ends. */
+  let clearRun = 0;
 
   /** The change waiting out the delay, with the key it belongs to. */
   let pending: Change<Values> | undefined;
@@ -552,11 +554,14 @@ function createController<Values>(
       }
       // The change waits again, so that the next flush or the next change tries once more.
       if (isForKeyOnScreen && canSave)
-        pending ??= { ...change, values: live.values };
+        pending ??= { key: change.key, values: live.values, clearRun };
       report(outcome.error, "save", change.key);
       return;
     }
     if (outcome.status === "replaced" || !isForKeyOnScreen) return;
+    // `clear()` came after this save was made, and its remove follows this save into the
+    // store. So this save says nothing about a change made since, even one to the same value.
+    if (change.clearRun !== clearRun) return;
 
     removeFailed = false;
     holdsDefaults = false;
@@ -602,7 +607,7 @@ function createController<Values>(
   };
 
   const scheduleSave = (key: string): void => {
-    pending = { key, values: live.values };
+    pending = { key, values: live.values, clearRun };
     clearTimeout(timer);
     timer = setTimeout(
       queuePending,
@@ -777,6 +782,7 @@ function createController<Values>(
     clear(): void {
       // A load still on its way must not bring the old state back.
       loadRun += 1;
+      clearRun += 1;
       forgetChanges();
       const { key } = live;
       const values = readSavedState(undefined, latest.current.parts);
@@ -805,6 +811,8 @@ function createController<Values>(
 interface Change<Values> {
   key: string;
   values: Values;
+  /** How many times `clear()` had been called when the change was made. */
+  clearRun: number;
 }
 
 // Made on first use, so an app that passes its own store never makes this one.
