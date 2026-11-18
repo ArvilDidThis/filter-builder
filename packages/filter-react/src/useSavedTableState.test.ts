@@ -1987,6 +1987,58 @@ describe("useSavedTableState", () => {
       expect(kept.save).toHaveBeenCalledOnce();
     });
   });
+
+  describe("an onError that throws", () => {
+    const throwingOnError = () =>
+      vi.fn(() => {
+        throw new Error("thrown by the app");
+      });
+
+    it("should still send the next save and settle flush", async () => {
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      const store = slowStore();
+      const onError = throwingOnError();
+      const { result, unmount } = renderSaved({ store, onError });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => result.current.set.sort(NAME_SORT));
+      const done = vi.fn();
+      act(() => void result.current.flush().then(done));
+
+      act(() => store.requests[0]?.fail(new Error("offline")));
+      await settle();
+      expect(onError).toHaveBeenCalledOnce();
+      // The queue went on to the next save.
+      expect(store.save).toHaveBeenCalledTimes(2);
+      act(() => store.requests[1]?.fail(new Error("still offline")));
+      await settle();
+      expect(done).toHaveBeenCalledExactlyOnceWith(false);
+      expect(result.current.status).toBe("error");
+      expect(logged).toHaveBeenCalled();
+      act(() => result.current.clear());
+      unmount();
+    });
+
+    it("should not let the throw out of flush when the store answers at once", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const store = memoryStore();
+      store.save.mockImplementation(() => {
+        throw new Error("full");
+      });
+      const { result, unmount } = renderSaved({
+        store,
+        onError: throwingOnError(),
+      });
+      act(() => result.current.set.sort(PRICE_SORT));
+      let flushed: Promise<boolean> | undefined;
+      act(() => {
+        flushed = result.current.flush();
+      });
+      await expect(flushed).resolves.toBe(false);
+      act(() => result.current.clear());
+      unmount();
+    });
+  });
 });
 
 /** A table that hands its saved state to the test, for the tests that hide and show it. */

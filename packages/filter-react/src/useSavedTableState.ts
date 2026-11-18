@@ -81,7 +81,10 @@ export interface UseSavedTableStateOptions<Values>
    * that time are saved together. Defaults to 300.
    */
   saveDelayMs?: number;
-  /** Called when a load, a save or a remove fails. The table keeps working. */
+  /**
+   * Called when a load, a save or a remove fails. The table keeps working. An error thrown
+   * inside this callback is logged to the console and goes no further.
+   */
   onError?: (error: unknown, action: SavedTableStateAction) => void;
 }
 
@@ -416,7 +419,13 @@ function createController<Values>(
     if (action !== "load") failures += 1;
     if (live.key === key)
       publish({ ...live, status: "error", error, errorAction: action });
-    latest.current.onError?.(error, action);
+    try {
+      latest.current.onError?.(error, action);
+    } catch (thrown) {
+      // The app's own callback failed. Its error is logged, not passed on: it must not stop
+      // the next save or make `flush` fail.
+      console.error(thrown);
+    }
   };
 
   const leave = (): void => {
