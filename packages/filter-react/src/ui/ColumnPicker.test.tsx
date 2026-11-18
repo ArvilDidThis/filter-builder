@@ -500,6 +500,45 @@ describe("ColumnPicker", () => {
       expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
     });
 
+    it("should finish a drag whose events the app stops from spreading", () => {
+      renderPicker();
+      layOutList();
+      // Something around the picker, such as a toolbar, keeps every pointer event to itself.
+      const keep = (event: Event) => event.stopPropagation();
+      const around = screen.getByRole("dialog").parentElement as HTMLElement;
+      const stopped = ["pointermove", "pointerup"] as const;
+      for (const type of stopped) around.addEventListener(type, keep);
+      // A captured pointer sends its events to the handle.
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(handle("Name"), pointer(180));
+      expect(rows()[3]?.getAttribute("data-drop")).toBe("before");
+      fireEvent.pointerUp(handle("Name"), pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+      expect(rows().some((row) => row.hasAttribute("data-dragging"))).toBe(
+        false,
+      );
+      for (const type of stopped) around.removeEventListener(type, keep);
+    });
+
+    it("should give up a drag whose cancel the app stops from spreading", () => {
+      renderPicker();
+      layOutList();
+      const keep = (event: Event) => event.stopPropagation();
+      const around = screen.getByRole("dialog").parentElement as HTMLElement;
+      const stopped = ["pointercancel", "lostpointercapture"] as const;
+      for (const type of stopped) around.addEventListener(type, keep);
+      for (const type of stopped) {
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        expect(rows()[0]?.hasAttribute("data-dragging")).toBe(true);
+        fireEvent(
+          handle("Name"),
+          new PointerEvent(type, { bubbles: true, pointerId: 1 }),
+        );
+        expect(rows()[0]?.hasAttribute("data-dragging")).toBe(false);
+      }
+      for (const type of stopped) around.removeEventListener(type, keep);
+    });
+
     it("should leave a column in place when its handle is only pressed", () => {
       renderPicker();
       layOutList();

@@ -213,12 +213,25 @@ export function useColumnDrag({
       // The list's own document, which is not the global one when the picker is drawn inside
       // a frame (a page within the page). The pointer's events are heard only there.
       const page = list.ownerDocument;
-      page.addEventListener("pointermove", onMove);
-      page.addEventListener("pointerup", onUp);
-      page.addEventListener("pointercancel", onCancel);
-      page.addEventListener("lostpointercapture", onCancel);
-      // `true` lets this hear the key before the picker does.
-      page.addEventListener("keydown", onKeyDown, true);
+      // Every one is heard in the capture phase (on the event's way down to its target,
+      // before any element hears it). An element around the picker that stops an event from
+      // spreading, as a toolbar might, then cannot hide it from the drag and leave the drag
+      // unfinished. It also lets Escape be heard here before the picker hears it.
+      // Each call hands back how to stop listening, so both use the same phase.
+      const listen = <Type extends keyof DocumentEventMap>(
+        type: Type,
+        listener: (event: DocumentEventMap[Type]) => void,
+      ) => {
+        page.addEventListener(type, listener, true);
+        return () => page.removeEventListener(type, listener, true);
+      };
+      const stopListening = [
+        listen("pointermove", onMove),
+        listen("pointerup", onUp),
+        listen("pointercancel", onCancel),
+        listen("lostpointercapture", onCancel),
+        listen("keydown", onKeyDown),
+      ];
       // A mouse wheel can scroll the list under a pointer that stays still.
       list.addEventListener("scroll", follow);
 
@@ -251,16 +264,12 @@ export function useColumnDrag({
         frame: null,
         watchRows,
         stop: () => {
-          page.removeEventListener("pointermove", onMove);
-          page.removeEventListener("pointerup", onUp);
-          page.removeEventListener("pointercancel", onCancel);
-          page.removeEventListener("lostpointercapture", onCancel);
+          for (const stopOne of stopListening) stopOne();
           try {
             handle.releasePointerCapture(pointerId);
           } catch {
             // The capture was never taken, or is gone already.
           }
-          page.removeEventListener("keydown", onKeyDown, true);
           list.removeEventListener("scroll", follow);
           sizeWatcher?.disconnect();
           const frame = session.current?.frame;
