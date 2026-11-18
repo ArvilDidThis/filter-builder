@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { describe, expect, onTestFinished, test } from "vitest";
 import { commands, server, userEvent } from "vitest/browser";
 import type { ColumnPickerProps } from "../src/ui/ColumnPicker";
@@ -50,6 +50,68 @@ function ReplacingApp({
     [version],
   );
   return <PickerApp changed={changed} picker={{ renderRow }} />;
+}
+
+/** Lets a test tell `ExpandingApp` which row to open up. */
+interface ExpandControl {
+  expand: (label: string) => void;
+}
+
+/** How much taller a row gets when `ExpandingApp` opens it up, in pixels. */
+const EXTRA_HEIGHT = 60;
+
+/**
+ * An app that draws its own rows, and can open one up to show more below its name while the
+ * picker stays open. The row gets taller, which moves every row below it down.
+ */
+function ExpandingApp({ control }: { control: ExpandControl }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  useEffect(() => {
+    control.expand = setExpanded;
+  }, [control]);
+  const renderRow = useCallback<NonNullable<ColumnPickerProps["renderRow"]>>(
+    (row) => (
+      <>
+        {standardRow(row)}
+        {row.column.label === expanded && (
+          // Taller than the row, so the row grows by the difference.
+          <span
+            data-testid="details"
+            style={{ alignSelf: "flex-start", height: 32 + EXTRA_HEIGHT }}
+          />
+        )}
+      </>
+    ),
+    [expanded],
+  );
+  return <PickerApp picker={{ renderRow }} />;
+}
+
+/**
+ * An app with an element around the picker that keeps two of the pointer's events to itself:
+ * they do not spread from it to the page. A toolbar that handles its own drags may do this.
+ */
+function StoppingApp({ stopped }: { stopped: Counter }) {
+  const around = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = around.current;
+    if (element === null) return;
+    const stop = (event: Event): void => {
+      stopped.count += 1;
+      event.stopPropagation();
+    };
+    element.addEventListener("pointermove", stop);
+    element.addEventListener("pointerup", stop);
+    return () => {
+      element.removeEventListener("pointermove", stop);
+      element.removeEventListener("pointerup", stop);
+    };
+  }, [stopped]);
+  return (
+    <div ref={around}>
+      <PickerApp />
+    </div>
+  );
 }
 
 /**
@@ -133,6 +195,51 @@ describe("dragging a column by mouse (item 1)", () => {
     await release();
     await expect.poll(picker.table).toBe("name stock price");
     expect(changed.count).toBe(1);
+  });
+});
+
+describe("a drag in an app that changes things around it", () => {
+  test("drops where the line shows after a row opens up mid-drag", async () => {
+    const control: ExpandControl = { expand: () => {} };
+    mount(<ExpandingApp control={control} />);
+    const picker = await openPicker();
+
+    await pressOn(picker.handle("Name"));
+    await moveTo(lowerHalf(picker.row("Stock")));
+    await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
+
+    // "Price" opens up, which pushes "Stock" and "Notes" down. The mouse rests where it
+    // was, and that place is now the lower half of "Price".
+    const before = picker.row("Price").getBoundingClientRect().height;
+    control.expand("Price");
+    await expect
+      .poll(() => picker.row("Price").getBoundingClientRect().height)
+      .toBeGreaterThanOrEqual(before + EXTRA_HEIGHT);
+    // The line moves to where a drop would land now, with no move of the mouse.
+    await expect.poll(() => picker.row("Stock").dataset.drop).toBe("before");
+    expect(picker.row("Notes").dataset.drop).toBeUndefined();
+
+    await release();
+    // The drop lands where the line was.
+    await expect
+      .poll(picker.listed)
+      .toEqual(["Price", "Name", "Stock", "Notes"]);
+  });
+
+  test("moves the column when an element around the picker stops the pointer's events", async () => {
+    const stopped: Counter = { count: 0 };
+    mount(<StoppingApp stopped={stopped} />);
+    const picker = await openPicker();
+
+    await pressOn(picker.handle("Name"));
+    await moveTo(lowerHalf(picker.row("Stock")));
+    await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
+    await release();
+    await expect.poll(picker.table).toBe("price stock name");
+    expect(picker.isDragging()).toBe(false);
+    // The element really did keep the events of this drag from the page: the moves, and
+    // the release.
+    expect(stopped.count).toBeGreaterThan(1);
   });
 });
 
