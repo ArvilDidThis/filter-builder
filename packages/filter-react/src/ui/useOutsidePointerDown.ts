@@ -21,7 +21,10 @@ export function useOutsidePointerDown(
     const onPointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) latest.current();
     };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
+    // The picker's own document, which is not the global one when the picker is drawn inside
+    // a frame (a page within the page). A press there is never heard on the outer page.
+    const page = rootRef.current?.ownerDocument ?? document;
+    page.addEventListener("pointerdown", onPointerDown);
+    return () => page.removeEventListener("pointerdown", onPointerDown);
   }, [active, rootRef]);
 }

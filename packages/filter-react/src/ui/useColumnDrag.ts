@@ -203,12 +203,15 @@ export function useColumnDrag({
         end();
       };
 
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onCancel);
-      document.addEventListener("lostpointercapture", onCancel);
+      // The list's own document, which is not the global one when the picker is drawn inside
+      // a frame (a page within the page). The pointer's events are heard only there.
+      const page = list.ownerDocument;
+      page.addEventListener("pointermove", onMove);
+      page.addEventListener("pointerup", onUp);
+      page.addEventListener("pointercancel", onCancel);
+      page.addEventListener("lostpointercapture", onCancel);
       // `true` lets this hear the key before the picker does.
-      document.addEventListener("keydown", onKeyDown, true);
+      page.addEventListener("keydown", onKeyDown, true);
       // A mouse wheel can scroll the list under a pointer that stays still.
       list.addEventListener("scroll", follow);
       session.current = {
@@ -221,16 +224,16 @@ export function useColumnDrag({
         middles: measureMiddles(list),
         frame: null,
         stop: () => {
-          document.removeEventListener("pointermove", onMove);
-          document.removeEventListener("pointerup", onUp);
-          document.removeEventListener("pointercancel", onCancel);
-          document.removeEventListener("lostpointercapture", onCancel);
+          page.removeEventListener("pointermove", onMove);
+          page.removeEventListener("pointerup", onUp);
+          page.removeEventListener("pointercancel", onCancel);
+          page.removeEventListener("lostpointercapture", onCancel);
           try {
             handle.releasePointerCapture(pointerId);
           } catch {
             // The capture was never taken, or is gone already.
           }
-          document.removeEventListener("keydown", onKeyDown, true);
+          page.removeEventListener("keydown", onKeyDown, true);
           list.removeEventListener("scroll", follow);
           const frame = session.current?.frame;
           if (frame != null) cancelAnimationFrame(frame);

@@ -639,6 +639,43 @@ describe("ColumnPicker", () => {
     });
   });
 
+  describe("inside a frame", () => {
+    /**
+     * Draws the app with the open picker in a document of its own, as a frame (a page within
+     * the page) has. The test page cannot load a real frame. What matters is the same: what
+     * happens in that document is not heard on the outer page's document.
+     */
+    function renderInFrame() {
+      const page = document.implementation.createHTMLDocument();
+      // A frame's document has a window. The test helpers need one to build an event.
+      Object.defineProperty(page, "defaultView", { value: window });
+      const container = page.body.appendChild(page.createElement("div"));
+      render(<App extra={{}} />, { container, baseElement: page.body });
+      const inside = within(page.body);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      return { page, inside };
+    }
+
+    it("should close on a click outside it", () => {
+      const { inside } = renderInFrame();
+      fireEvent.pointerDown(inside.getByRole("button", { name: "Elsewhere" }));
+      expect(inside.queryByRole("dialog")).toBeNull();
+    });
+
+    it("should move a column to where its handle is dropped", () => {
+      const { page, inside } = renderInFrame();
+      placeAt(inside.getByRole("list"), 0, 1000);
+      inside.getAllByRole("listitem").forEach((row, index) => {
+        placeAt(row, 100 + index * 30, 30);
+      });
+      const name = inside.getByRole("button", { name: "Move Name" });
+      fireEvent.pointerDown(name, pointer(115));
+      fireEvent.pointerMove(page, pointer(180));
+      fireEvent.pointerUp(page, pointer(180));
+      expect(inside.getByTestId("table").textContent).toBe("price stock name");
+    });
+  });
+
   describe("in an app that owns the settings", () => {
     const openOwningApp = () => {
       render(<OwningApp />);
