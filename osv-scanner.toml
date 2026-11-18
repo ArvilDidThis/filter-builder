@@ -4,7 +4,9 @@
 # Rules for every entry:
 #   - Name one advisory by its id. Never ignore a whole package or a severity level.
 #   - Give a reason, and an `ignoreUntil` date about one month out. After that date the
-#     scan fails again, which forces a new check.
+#     scanner stops ignoring the advisory, so it is reported again if it still applies.
+#   - Remove an entry as soon as its fix is installed. The scan passes once the fix is in,
+#     so it will not remind you about a leftover entry.
 #   - Never add a MAL-* (malicious package) advisory. Remove the package instead.
 
 # picomatch 4.0.7: a crafted file-matching pattern can make it run for a very long time.
