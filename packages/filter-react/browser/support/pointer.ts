@@ -40,12 +40,26 @@ export function pointOn(element: Element, across = 0.5, down = 0.5): Point {
 }
 
 /**
+ * The middle of `element`, for real input to aim at. Throws when there is nothing to aim at:
+ * the element was taken off its page, or it is drawn with no size. Its place would then read
+ * as the page's corner, and the input would land on whatever is there.
+ */
+function aimAt(element: Element): Point {
+  if (!element.isConnected)
+    throw new Error("The element to press is no longer on the page.");
+  const box = element.getBoundingClientRect();
+  if (box.width === 0 && box.height === 0)
+    throw new Error("The element to press is not drawn: it has no size.");
+  return pointOn(element);
+}
+
+/**
  * Waits until `element` has kept its place for one screen frame. A list may still be scrolling
  * or being laid out just after it changed, and a press aimed too early would miss.
  */
 async function untilStill(element: Element): Promise<void> {
   const place = (): string => {
-    const { x, y } = pointOn(element);
+    const { x, y } = aimAt(element);
     return `${x},${y}`;
   };
   let before = place();
@@ -60,7 +74,8 @@ async function untilStill(element: Element): Promise<void> {
 /** Presses the mouse button on the middle of `element`, and keeps it held. */
 export async function pressOn(element: Element): Promise<void> {
   await untilStill(element);
-  await commands.mouseMove(pointOn(element));
+  // Checked again here: the element may have gone while the last frame was awaited.
+  await commands.mouseMove(aimAt(element));
   await commands.mouseDown();
 }
 
