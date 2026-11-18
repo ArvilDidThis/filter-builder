@@ -146,7 +146,7 @@ interface StateAfterWrite {
 function createChannel(store: StateStore, key: string): ListedChannel {
   /** The writes not yet handed to the store, oldest first. */
   const queue: Write[] = [];
-  /** How many writes the store has not answered yet. */
+  /** How many writes were handed to the store and have not ended yet. */
   let unanswered = 0;
   let writeCount = 0;
   /** What the store holds, as far as its answers tell. */
@@ -165,6 +165,10 @@ function createChannel(store: StateStore, key: string): ListedChannel {
 
   /** Hands one write to the store, and deals with its answer. */
   const send = (write: Write): void => {
+    // The write takes its turn before any code of the app or the store runs. Such code may
+    // ask for another save in the middle of this one. That save then waits, and builds on
+    // what this one leaves in the store.
+    unanswered += 1;
     let after: StateAfterWrite;
     let answer: unknown;
     try {
@@ -173,8 +177,9 @@ function createChannel(store: StateStore, key: string): ListedChannel {
         // closing page) still build on each other.
         const saved = write.build(onItsWay ?? stored.parts);
         const text = JSON.stringify(saved);
-        // The store holds exactly this already.
-        if (unanswered === 0 && text === stored.text) {
+        // The store holds exactly this already. Only this write is counted in `unanswered`.
+        if (unanswered === 1 && text === stored.text) {
+          unanswered -= 1;
           write.done(ACCEPTED);
           return;
         }
@@ -187,16 +192,17 @@ function createChannel(store: StateStore, key: string): ListedChannel {
         answer = store.remove(key);
       }
     } catch (error) {
+      unanswered -= 1;
       write.done({ status: "failed", error });
       return;
     }
 
     if (!isPromiseLike(answer)) {
       accept(after);
+      unanswered -= 1;
       write.done(ACCEPTED);
       return;
     }
-    unanswered += 1;
     onItsWay = after.parts;
     const answered = (outcome: WriteOutcome): void => {
       unanswered -= 1;
@@ -256,6 +262,8 @@ function createChannel(store: StateStore, key: string): ListedChannel {
 
     sendAllNow() {
       for (const write of queue.splice(0)) send(write);
+      // A write asked for in the middle of the ones above waits in the queue.
+      sendNext();
     },
 
     whenIdle(then) {

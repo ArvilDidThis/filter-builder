@@ -96,6 +96,48 @@ describe("the channel of a store and key", () => {
     expect(channel.storedParts()).toEqual({});
   });
 
+  it.each([
+    ["answers at once", false],
+    ["answers later", true],
+  ])(
+    "should make a save asked for inside the store's own save wait, when the store %s",
+    async (_label, isSlow) => {
+      const store = quickStore();
+      const sent: unknown[] = [];
+      let channel: StateChannel | undefined;
+      vi.mocked(store.save).mockImplementation((_key, value) => {
+        sent.push(value);
+        // The store calls back into the channel in the middle of its first save.
+        if (sent.length === 1 && channel) save(channel, { pageSize: 50 });
+        return isSlow ? Promise.resolve() : undefined;
+      });
+      channel = joinChannel(store, "orders");
+      save(channel, { sort: "price" });
+      await Promise.resolve();
+
+      // The inner save was sent second, and carries the part of the save it interrupted.
+      expect(sent).toEqual([
+        savedWith({ sort: "price" }),
+        savedWith({ sort: "price", pageSize: 50 }),
+      ]);
+      await Promise.resolve();
+      expect(channel.storedParts()).toEqual({ sort: "price", pageSize: 50 });
+      expect(channel.isIdle()).toBe(true);
+    },
+  );
+
+  it("should free the queue when the store's save throws", () => {
+    const store = quickStore();
+    vi.mocked(store.save).mockImplementationOnce(() => {
+      throw new Error("full");
+    });
+    const channel = joinChannel(store, "orders");
+    save(channel, { sort: "price" });
+    expect(channel.isIdle()).toBe(true);
+    const next = save(channel, { sort: "name" });
+    expect(next).toHaveBeenCalledExactlyOnceWith({ status: "accepted" });
+  });
+
   it("should replace a waiting save of the same owner only", async () => {
     const store = slowStore();
     const channel = joinChannel(store, "orders");
