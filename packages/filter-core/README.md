@@ -49,6 +49,7 @@ import {
   defaultColumnSettings,
   moveColumn,
   reconcileColumnSettings,
+  resetColumnSettings,
   setColumnVisible,
   visibleColumns,
 } from "@arvilmena/filter-core";
@@ -70,7 +71,12 @@ visibleColumns(columns, settings).map((column) => column.key);
 
 // Settings read from storage may be old or broken. This fits them to the columns the app has
 // now: unknown keys go, new columns keep their default place, and nothing throws.
-settings = reconcileColumnSettings(columns, JSON.parse(stored));
+const stored: unknown = { order: ["price", "gone"], hidden: ["price"] };
+settings = reconcileColumnSettings(columns, stored);
+// { order: ["name", "price", "notes"], hidden: ["price", "notes"] }
+
+settings = resetColumnSettings(columns, settings);
+// { order: ["name", "price", "notes"], hidden: ["notes"] }
 ```
 
 | Function                  | Does                                                 |

@@ -154,7 +154,7 @@ export interface ColumnPickerProps<
  * return (
  *   <>
  *     <ColumnPicker state={table} />
- *     <MyTable columns={table.visibleColumns} rows={rows} />
+ *     <p>{table.visibleColumns.map((column) => column.label).join(", ")}</p>
  *   </>
  * );
  */

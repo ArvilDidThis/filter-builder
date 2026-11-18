@@ -151,12 +151,20 @@ const columns = [
   { key: "notes", label: "Notes", defaultHidden: true },
 ] as const satisfies readonly ColumnDefinition[];
 
-function Products({ rows }) {
+function Products() {
   const table = useColumnSettings({ columns });
   return (
     <>
       <ColumnPicker state={table} />
-      <MyTable columns={table.visibleColumns} rows={rows} />
+      <table>
+        <thead>
+          <tr>
+            {table.visibleColumns.map((column) => (
+              <th key={column.key}>{column.label}</th>
+            ))}
+          </tr>
+        </thead>
+      </table>
     </>
   );
 }
