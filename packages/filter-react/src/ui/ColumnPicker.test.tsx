@@ -218,6 +218,42 @@ function renderPicker(extra: Partial<ColumnPickerProps> = {}, open = true) {
   return rendered;
 }
 
+/**
+ * Makes a box that can scroll, inside a shadow tree (a part of the page that hides its
+ * insides), and an empty element in the box to draw an app into. With `slotted`, that element
+ * stays outside the tree, and the box shows it through a slot (a gap in the tree).
+ */
+function shadowBox(mode: ShadowRootMode, slotted = false) {
+  const host = document.createElement("div");
+  document.body.append(host);
+  onTestFinished(() => host.remove());
+  const tree = host.attachShadow({ mode });
+  const box = tree.appendChild(document.createElement("div"));
+  const container = document.createElement("div");
+  if (slotted) {
+    const slot = box.appendChild(document.createElement("slot"));
+    host.append(container);
+    // The test page does not say which slot shows an element, as a browser does.
+    Object.defineProperty(container, "assignedSlot", { value: slot });
+  } else {
+    box.append(container);
+  }
+  return { tree, box, container };
+}
+
+/** Draws the app in the box that `shadowBox` makes, and opens the picker. */
+function renderInShadowBox(mode: ShadowRootMode, slotted = false) {
+  const { tree, box, container } = shadowBox(mode, slotted);
+  render(<App extra={{}} />, { container });
+  const inside = within(container);
+  fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+  return { tree, box, inside };
+}
+
+/** Sends the scroll of a box, which does not spread upwards as the page's own does. */
+const scrollBox = (box: Element) =>
+  fireEvent(box, new Event("scroll", { bubbles: false }));
+
 const table = (): string => screen.getByTestId("table").textContent ?? "";
 const rows = (): HTMLElement[] => screen.getAllByRole("listitem");
 /** The names in the picker's list, in order. */
@@ -751,6 +787,63 @@ describe("ColumnPicker", () => {
         // The drop lands where the line says.
         fireEvent.pointerUp(document, pointer(180));
         expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      });
+
+      describe.each([
+        { mode: "open", slotted: false, where: "inside an open shadow tree" },
+        {
+          mode: "closed",
+          slotted: false,
+          where: "inside a closed shadow tree",
+        },
+        {
+          mode: "open",
+          slotted: true,
+          where: "shown through an open tree's slot",
+        },
+      ] as const)("with the picker $where", ({ mode, slotted }) => {
+        // The page never hears the scroll of a box inside a shadow tree, not even on the
+        // scroll's way down. Only a listener inside that tree does.
+        it("should move the drop line when a box of that tree scrolls", () => {
+          const { box, inside } = renderInShadowBox(mode, slotted);
+          const list = inside.getByRole("list");
+          const listRows = inside.getAllByRole("listitem");
+          const layOut = (scrolledBy: number) => {
+            placeAt(list, -scrolledBy, 1000);
+            listRows.forEach((row, index) => {
+              placeAt(row, 100 + index * 30 - scrolledBy, 30);
+            });
+          };
+          layOut(0);
+          fireEvent.pointerDown(
+            inside.getByRole("button", { name: "Move Name" }),
+            pointer(115),
+          );
+          fireEvent.pointerMove(document, pointer(180));
+          const notes = listRows[3] as HTMLElement;
+          expect(notes.getAttribute("data-drop")).toBe("before");
+          layOut(30);
+          scrollBox(box);
+          act(drawFrame);
+          expect(notes.getAttribute("data-drop")).toBe("after");
+        });
+
+        it("should stop listening in that tree when the drag ends", () => {
+          const { tree, inside } = renderInShadowBox(mode, slotted);
+          const added = vi.spyOn(tree, "addEventListener");
+          const removed = vi.spyOn(tree, "removeEventListener");
+          const scrollCalls = (calls: unknown[][]) =>
+            calls.filter(([type]) => type === "scroll");
+          fireEvent.pointerDown(
+            inside.getByRole("button", { name: "Move Name" }),
+            pointer(115),
+          );
+          expect(scrollCalls(added.mock.calls)).toHaveLength(1);
+          fireEvent.pointerUp(document, pointer(115));
+          expect(scrollCalls(removed.mock.calls)).toEqual(
+            scrollCalls(added.mock.calls),
+          );
+        });
       });
 
       it("should measure once for many scrolls within one screen frame", () => {
@@ -2306,6 +2399,67 @@ describe("ColumnPicker", () => {
         fireEvent(container, new Event("scroll", { bubbles: false }));
         drawFrame();
         expect(shift()).toBe("-68px");
+      });
+
+      describe.each([
+        { mode: "open", slotted: false, where: "inside an open shadow tree" },
+        {
+          mode: "closed",
+          slotted: false,
+          where: "inside a closed shadow tree",
+        },
+        {
+          mode: "open",
+          slotted: true,
+          where: "shown through an open tree's slot",
+        },
+      ] as const)("with the picker $where", ({ mode, slotted }) => {
+        // The page never hears the scroll of a box inside a shadow tree, not even on the
+        // scroll's way down. Only a listener inside that tree does.
+        it("should measure again when a box of that tree scrolls", () => {
+          const place = { left: 420, top: 60, width: 240 };
+          layOutScreen({ width: 800, height: 600 }, place);
+          const { box, inside } = renderInShadowBox(mode, slotted);
+          const dialog = inside.getByRole("dialog");
+          place.left = 620;
+          scrollBox(box);
+          scrollBox(box);
+          // Still at most one measurement per screen frame.
+          expect(waiting()).toBe(1);
+          const before = timesMeasured(dialog);
+          drawFrame();
+          expect(timesMeasured(dialog)).toBe(before + 1);
+          expect(dialog.style.getPropertyValue("--fb-popover-shift")).toBe(
+            "-68px",
+          );
+        });
+
+        it("should not measure when the list inside the popover scrolls", () => {
+          layOutScreen(
+            { width: 800, height: 600 },
+            { left: 420, top: 60, width: 240 },
+          );
+          const { inside } = renderInShadowBox(mode, slotted);
+          scrollBox(inside.getByRole("list"));
+          expect(waiting()).toBe(0);
+        });
+
+        it("should stop listening in that tree once the picker closes", () => {
+          // The tree is watched before the picker opens.
+          const { tree, container } = shadowBox(mode, slotted);
+          const added = vi.spyOn(tree, "addEventListener");
+          const removed = vi.spyOn(tree, "removeEventListener");
+          const scrollCalls = (calls: unknown[][]) =>
+            calls.filter(([type]) => type === "scroll");
+          render(<App extra={{}} />, { container });
+          const inside = within(container);
+          fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+          expect(scrollCalls(added.mock.calls)).toHaveLength(1);
+          fireEvent.keyDown(inside.getByRole("dialog"), { key: "Escape" });
+          expect(scrollCalls(removed.mock.calls)).toEqual(
+            scrollCalls(added.mock.calls),
+          );
+        });
       });
 
       it("should not measure when the list inside the popover scrolls", () => {

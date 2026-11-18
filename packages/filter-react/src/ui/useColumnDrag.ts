@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { useEarlyEffect } from "../useEarlyEffect";
+import { listenForScrollAround } from "./scrollAround";
 
 // Dragging a row of the column picker to a new place. It uses Pointer Events (one set of
 // browser events for mouse, touch and pen), because the browser's own drag and drop does not
@@ -264,9 +265,8 @@ export function useColumnDrag({
           showSlot();
         });
       };
-      // A box's scroll does not spread up to the page as other events do. Heard in the
-      // capture phase, the scroll of any box is heard here.
-      stopListening.push(listen("scroll", onScrollAround));
+      // Heard on the page and in every shadow tree the list is drawn in.
+      stopListening.push(listenForScrollAround(list, onScrollAround));
 
       // A row can change height while another is held, such as a row an app draws that opens
       // up. The measured middles are then out of date, and the drop line would show a place

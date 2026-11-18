@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import { useEarlyEffect } from "../useEarlyEffect";
+import { listenForScrollAround } from "./scrollAround";
 
 // Keeps a popover inside the visible screen. The style sheet places the popover beside its
 // button. Where that would run past an edge of the screen, this measures by how much and hands
@@ -45,11 +46,11 @@ export function useKeepOnScreen(
 
   useEarlyEffect(() => {
     if (!active) return;
+    const popover = popoverRef.current;
     // The popover's own window, which is not the global one when the popover is drawn inside
     // a frame (a page within the page).
-    const page = popoverRef.current?.ownerDocument;
-    const view = page?.defaultView;
-    if (!page || !view) return;
+    const view = popover?.ownerDocument.defaultView;
+    if (!popover || !view) return;
     const onResize = () => keepOnScreen(popoverRef.current);
     view.addEventListener("resize", onResize);
 
@@ -65,14 +66,12 @@ export function useKeepOnScreen(
       });
     };
     const onScroll = (event: Event) => {
-      const popover = popoverRef.current;
       // The list inside the popover scrolls without moving the popover.
-      if (popover?.contains(event.target as Node | null)) return;
+      if (popoverRef.current?.contains(event.target as Node | null)) return;
       measureSoon();
     };
-    // A box's scroll does not spread up to the page as other events do. Heard in the capture
-    // phase (on the event's way down to its target), the scroll of any box is heard here.
-    page.addEventListener("scroll", onScroll, true);
+    // Heard on the page and in every shadow tree the popover is drawn in.
+    const stopHearingScrolls = listenForScrollAround(popover, onScroll);
 
     // The part of the page in view (the browser's "visual viewport") changes when a person
     // zooms in with two fingers, and when they slide the zoomed page. Both are reported many
@@ -84,7 +83,7 @@ export function useKeepOnScreen(
 
     return () => {
       view.removeEventListener("resize", onResize);
-      page.removeEventListener("scroll", onScroll, true);
+      stopHearingScrolls();
       seen?.removeEventListener("resize", measureSoon);
       seen?.removeEventListener("scroll", measureSoon);
       if (frame !== null) view.cancelAnimationFrame(frame);

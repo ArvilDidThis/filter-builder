@@ -1,5 +1,6 @@
 import { type RefObject, useEffect, useRef } from "react";
 import { useEarlyEffect } from "../useEarlyEffect";
+import { isShadowTree } from "./shadowTrees";
 
 /**
  * Calls `onOutside` when a person clicks or taps anywhere outside `rootRef` while `active` is
@@ -140,12 +141,4 @@ export function useOutsidePointerDown(
       }
     };
   }, [active, rootRef]);
-}
-
-/**
- * Whether a node is the top of a shadow tree. It is told by its shape and not by
- * `instanceof`, because a tree in a frame is built from the frame's own classes.
- */
-function isShadowTree(node: Node | undefined): node is ShadowRoot {
-  return node !== undefined && node.nodeType === 11 && "host" in node;
 }
