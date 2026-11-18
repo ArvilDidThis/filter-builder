@@ -182,9 +182,14 @@ app adds. It saves to the browser's local storage by default, and can save to a 
 app's own server or to a store the app writes.
 
 ```tsx
-import { columnStatePart, filterStatePart } from "@arvilmena/filter-core";
+import {
+  columnStatePart,
+  createRowPredicate,
+  filterStatePart,
+} from "@arvilmena/filter-core";
 import { useColumnSettings, useSavedTableState } from "@arvilmena/filter-react";
 import { ColumnPicker, FilterBuilder } from "@arvilmena/filter-react/ui";
+import { useMemo } from "react";
 
 const parts = {
   filter: filterStatePart(),
@@ -198,6 +203,11 @@ function Orders({ rows }) {
     value: saved.values.columns,
     onChange: saved.set.columns,
   });
+  // The rows the saved filter lets through. `valueOf` reads a row's value, as shown above.
+  const shown = useMemo(
+    () => rows.filter(createRowPredicate(saved.values.filter, valueOf)),
+    [rows, saved.values.filter],
+  );
   return (
     <>
       <FilterBuilder
@@ -206,7 +216,7 @@ function Orders({ rows }) {
         fields={fields}
       />
       <ColumnPicker state={table} />
-      <MyTable columns={table.visibleColumns} rows={rows} />
+      <MyTable columns={table.visibleColumns} rows={shown} />
     </>
   );
 }
