@@ -302,6 +302,13 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     }
   });
 
+  const press = (button: "showAll" | "reset") => {
+    // Either button can change the list. A move still waiting must not take the credit.
+    pendingMove.current = null;
+    pendingButton.current = { button, list: orderedColumns };
+    actions[button]();
+  };
+
   // Reads the newest columns, so the function below can stay the same between renders and the
   // rows that did not change are not redrawn.
   const latestColumns = useRef(orderedColumns);
@@ -427,28 +434,13 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           </ul>
           <div className="fb-columns-footer">
             <FooterButton
-              onPress={() => {
-                pendingMove.current = null;
-                pendingButton.current = {
-                  button: "showAll",
-                  list: orderedColumns,
-                };
-                actions.showAll();
-              }}
+              onPress={() => press("showAll")}
               unavailable={allVisible}
             >
               {labels.showAll}
             </FooterButton>
             <FooterButton
-              onPress={() => {
-                // Reset moves columns too. A move still waiting must not take the credit.
-                pendingMove.current = null;
-                pendingButton.current = {
-                  button: "reset",
-                  list: orderedColumns,
-                };
-                actions.reset();
-              }}
+              onPress={() => press("reset")}
               unavailable={isDefault}
             >
               {labels.reset}
