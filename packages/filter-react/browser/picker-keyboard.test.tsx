@@ -1,6 +1,17 @@
+import type { ColumnSettings } from "@arvilmena/filter-core";
+import { useEffect, useState } from "react";
 import { describe, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import { type Counter, manyColumns, mountOpenPicker } from "./support/apps";
+import { ColumnPicker } from "../src/ui/ColumnPicker";
+import { useColumnSettings } from "../src/useColumnSettings";
+import {
+  COLUMNS,
+  type Counter,
+  manyColumns,
+  mountOpenPicker,
+  openPicker,
+} from "./support/apps";
+import { mount } from "./support/mount";
 import { clickOn } from "./support/pointer";
 
 // The picker under a real keyboard: which element holds the focus after a key press is
@@ -150,5 +161,75 @@ describe("the Show all and Reset buttons (item 5)", () => {
     await expect
       .poll(picker.announced)
       .toBe("The columns are back in their starting order and visibility.");
+  });
+});
+
+/** Lets a test see what `OwningApp` was asked for, and apply settings of its choice. */
+interface OwnerControl {
+  /** Every change the picker has asked for, oldest first. */
+  asked: ColumnSettings[];
+  apply: (settings: ColumnSettings) => void;
+}
+
+/**
+ * An app that owns the column settings. It applies nothing by itself: the test decides
+ * what is applied and when, as an app does that saves a change first, or turns it down.
+ */
+function OwningApp({ control }: { control: OwnerControl }) {
+  const [value, setValue] = useState<ColumnSettings | null>(null);
+  const state = useColumnSettings({
+    columns: COLUMNS,
+    value,
+    onChange: (next) => control.asked.push(next),
+  });
+  useEffect(() => {
+    control.apply = setValue;
+  }, [control]);
+  return (
+    <>
+      <ColumnPicker state={state} />
+      <p data-testid="table">
+        {state.visibleColumns.map((column) => column.key).join(" ")}
+      </p>
+    </>
+  );
+}
+
+describe("what Show all tells a screen reader in an app that owns the settings", () => {
+  const isUnavailable = (button: Element): boolean =>
+    button.getAttribute("aria-disabled") === "true";
+
+  test("says nothing when the app turns it down and shows every column in another order", async () => {
+    const control: OwnerControl = { asked: [], apply: () => {} };
+    mount(<OwningApp control={control} />);
+    const picker = await openPicker();
+
+    await clickOn(picker.showAll());
+    await expect.poll(() => control.asked.length).toBe(1);
+    // The app has the press and has not applied it: nothing on the page has changed.
+    expect(picker.table()).toBe("name price stock");
+
+    // The app applies settings of its own instead. They show every column too, in another
+    // order, so they are not what the press asked for.
+    control.apply({ order: ["price", "name", "stock", "notes"], hidden: [] });
+    await expect.poll(picker.table).toBe("price name stock notes");
+    await expect.poll(() => isUnavailable(picker.showAll())).toBe(true);
+    // A message is put on the page in the same step as the button's new state. So once the
+    // button shows it, a message would be there.
+    expect(picker.announced()).toBe("");
+  });
+
+  test("says that every column is shown once the app applies the press late, unchanged", async () => {
+    const control: OwnerControl = { asked: [], apply: () => {} };
+    mount(<OwningApp control={control} />);
+    const picker = await openPicker();
+
+    await clickOn(picker.showAll());
+    await expect.poll(() => control.asked.length).toBe(1);
+    expect(picker.announced()).toBe("");
+
+    control.apply(control.asked[0] as ColumnSettings);
+    await expect.poll(picker.table).toBe("name price stock notes");
+    await expect.poll(picker.announced).toBe("All columns are shown.");
   });
 });
