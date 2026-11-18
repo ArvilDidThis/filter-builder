@@ -561,8 +561,10 @@ library can prevent this, because a closing page cannot make the browser wait.
   Safari's own rate is not known.
 - **Going to another address lost none,** in every browser tested.
 
-Only a change still waiting out `saveDelayMs` is at risk: by default, one made in the last
-300 milliseconds. A change saved earlier is safe. To lower the risk:
+Only a change that the store has not yet kept is at risk. With local storage and cookies,
+that is a change still waiting out `saveDelayMs`: by default, one made in the last 300
+milliseconds. A store that answers later, such as `fetchStore`, keeps a change only when
+its request has been answered, so a change stays at risk until then. To lower the risk:
 
 - **Wait for `flush()` where the app decides when to leave:** before it goes to another page,
   or closes its own window.
@@ -570,7 +572,9 @@ Only a change still waiting out `saveDelayMs` is at risk: by default, one made i
   waiting when the tab closes.
 
 The hook also saves when the page is hidden: when the person switches to another tab or
-app, or locks a phone. That save is made while the page is still alive, so it is not at risk.
+app, or locks a phone. That save starts while the page is still alive. With local storage
+and cookies it is kept at once. With a store that answers later, it is kept only if the page
+lives until the answer comes.
 
 ### Other stores
 
