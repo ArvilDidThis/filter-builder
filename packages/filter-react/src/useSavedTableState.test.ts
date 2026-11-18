@@ -753,10 +753,16 @@ describe("useSavedTableState", () => {
     });
 
     it("should stop listening to the page on unmount", () => {
+      const listen = vi.spyOn(window, "addEventListener");
+      const unlisten = vi.spyOn(window, "removeEventListener");
       const store = memoryStore();
       const { result, unmount } = renderSaved({ store });
+      const added = listen.mock.calls.filter(([type]) => type === "pagehide");
+      expect(added).toHaveLength(1);
       act(() => result.current.set.sort(PRICE_SORT));
       unmount();
+      // The very function that was added: any other would leave the first one listening.
+      expect(unlisten).toHaveBeenCalledWith("pagehide", added[0]?.[1]);
       store.save.mockClear();
       window.dispatchEvent(new Event("pagehide"));
       expect(store.save).not.toHaveBeenCalled();
