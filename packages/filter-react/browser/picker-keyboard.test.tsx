@@ -5,6 +5,11 @@ import { clickOn } from "./support/pointer";
 
 // The picker under a real keyboard: which element holds the focus after a key press is
 // something only a real browser decides.
+//
+// These tests check what a person gets on a plain page: the focus stays on the moved handle.
+// React puts the focus back there itself, so they do not guard the picker's own code for it.
+// The tests that do are in `picker-places.test.tsx`, inside a closed shadow tree, where React
+// does not put the focus back.
 
 /** Whether `row` is wholly inside the visible part of `list`. */
 function isInView(row: Element, list: Element): boolean {
