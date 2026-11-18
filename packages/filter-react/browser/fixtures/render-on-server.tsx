@@ -1,12 +1,14 @@
 import { readCookieState } from "@arvilmena/filter-core";
 import { renderToString } from "react-dom/server";
-import { type InitialSaved, readSetup, TablePage } from "./table-page";
+import {
+  INITIAL_SAVED_ID,
+  type InitialSaved,
+  readSetup,
+  TablePage,
+} from "./table-page";
 
 // Runs in Node, inside the server that serves the fixture pages. It stands in for an app's
 // own server: it reads the saved state from the request's cookies and draws the page with it.
-
-/** The id of the element that holds what the server read, as JSON, for the browser to use. */
-export const INITIAL_SAVED_ID = "initial-saved";
 
 /** The inside of the page's `<body>`, before the script that starts it in the browser. */
 export function renderPage(request: {

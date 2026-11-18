@@ -2,13 +2,14 @@ import { existsSync } from "node:fs";
 import type { CDPSession, Page } from "playwright";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
 import { baselinePath } from "./baselines.ts";
+import { BLANK_PAGE_PATH } from "./fixture-paths.ts";
 
 // Commands the tests call from the page. Each runs here, in Node, and drives the browser
 // through Playwright. This is what makes the input real: the browser gets a mouse move or a
 // finger at a place on the screen, and works out the events itself.
 
 /** A place in the test page, in CSS pixels from its top left corner. */
-interface Point {
+export interface Point {
   x: number;
   y: number;
 }
@@ -23,12 +24,15 @@ async function toWindow(
 ): Promise<Point> {
   const frame = await context.frame();
   const element = await frame.frameElement();
-  const box = await element.boundingBox();
+  // Both are read anew for every input, and at the same time, as neither needs the other.
+  const [box, inner] = await Promise.all([
+    element.boundingBox(),
+    frame.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })),
+  ]);
   if (box === null) throw new Error("The test page's frame is not on screen.");
-  const inner = await frame.evaluate(() => ({
-    width: window.innerWidth,
-    height: window.innerHeight,
-  }));
   // The frame can be drawn smaller than the page it holds.
   return {
     x: box.x + (point.x * box.width) / inner.width,
@@ -167,7 +171,7 @@ const visitAndLeave: BrowserCommand<
       (): Held => ({ local: { ...localStorage }, cookie: document.cookie }),
     );
     if (leave === "navigate") {
-      await tab.goto(`${origin}/__fixtures__/blank`);
+      await tab.goto(origin + BLANK_PAGE_PATH);
     } else {
       // As a person closing the tab: the page is told that it is going away.
       await tab.close({ runBeforeUnload: true });

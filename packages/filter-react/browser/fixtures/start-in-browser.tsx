@@ -1,6 +1,11 @@
 import { createRoot, hydrateRoot } from "react-dom/client";
 import "../../styles.css";
-import { type InitialSaved, readSetup, TablePage } from "./table-page";
+import {
+  INITIAL_SAVED_ID,
+  type InitialSaved,
+  readSetup,
+  TablePage,
+} from "./table-page";
 
 // Starts a fixture page in the browser, and keeps notes for the test that opened it.
 
@@ -102,7 +107,7 @@ if (setup.ssr) {
     attributes: true,
   });
   const initialSaved = JSON.parse(
-    document.getElementById("initial-saved")?.textContent ?? "{}",
+    document.getElementById(INITIAL_SAVED_ID)?.textContent ?? "{}",
   ) as InitialSaved;
   hydrateRoot(root, <TablePage initialSaved={initialSaved} setup={setup} />, {
     onRecoverableError: (error) => {

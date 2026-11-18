@@ -1,11 +1,16 @@
 import { describe, expect, test } from "vitest";
 import { commands, server } from "vitest/browser";
 import type { Held } from "./commands";
-import { openTablePage, tablePagePath } from "./support/fixture-page";
+import { tablePagePath } from "./fixture-paths";
+import { openPicker } from "./support/apps";
+import { openTablePage } from "./support/fixture-page";
 import { clickOn } from "./support/pointer";
 
 // Saved table state in a whole page of its own: loaded again, closed, and drawn by a server.
 // Local storage and cookies are the browser's real ones.
+
+/** What the stores put before a table's id to make its key. It is the library's default. */
+const KEY_PREFIX = "table-state.";
 
 /**
  * What the browser holds for a table, as text: its local storage entry, or its cookie.
@@ -16,10 +21,10 @@ function stored(
   id: string,
   held: Held = { local: { ...localStorage }, cookie: document.cookie },
 ): string {
-  if (store === "local") return held.local[`table-state.${id}`] ?? "";
+  if (store === "local") return held.local[KEY_PREFIX + id] ?? "";
   const cookie = held.cookie
     .split("; ")
-    .find((entry) => entry.startsWith(`table-state.${id}=`));
+    .find((entry) => entry.startsWith(`${KEY_PREFIX}${id}=`));
   return cookie === undefined
     ? ""
     : decodeURIComponent(cookie.slice(cookie.indexOf("=") + 1));
@@ -173,14 +178,8 @@ describe("a page the server drew from saved state (item 12)", () => {
 
     // The page is live: a change is drawn, and saved over what the server read.
     await clickOn(orders.button("stock-first"));
-    await clickOn(orders.pickerTrigger());
-    await expect
-      .poll(() => page.document().querySelector(".fb-columns-popover"))
-      .not.toBeNull();
-    const price = page
-      .document()
-      .querySelectorAll<HTMLInputElement>(".fb-columns-checkbox")[2];
-    await clickOn(price as HTMLInputElement);
+    const picker = await openPicker(orders.element());
+    await clickOn(picker.checkbox("Price"));
     await expect.poll(orders.shown).toBe("stock name price");
     await expect
       .poll(() => stored("cookie", "orders"))

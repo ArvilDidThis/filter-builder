@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { BLANK_PAGE_PATH, tablePagePath } from "../fixture-paths";
 import type { FixtureNotes } from "../fixtures/start-in-browser";
 
 // Opens a fixture page in a frame (a page within the page) of the test page. The frame holds
@@ -24,13 +25,21 @@ export interface FixtureTable {
   shown: () => string;
   status: () => string;
   button: (action: "hide-price" | "stock-first") => HTMLButtonElement;
-  pickerTrigger: () => HTMLButtonElement;
   element: () => HTMLElement;
 }
 
-/** The address of the fixture page with tables, for a query such as "store=cookie". */
-export function tablePagePath(query: string): string {
-  return `/__fixtures__/table?${query}`;
+/**
+ * Waits until the frame has loaded the empty fixture page. A frame starts with a throwaway
+ * empty page of its own, so the address is checked as well.
+ */
+export async function untilBlank(frame: HTMLIFrameElement): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        frame.contentDocument?.readyState === "complete" &&
+        frame.contentWindow?.location.pathname === BLANK_PAGE_PATH,
+    )
+    .toBe(true);
 }
 
 /** Waits until the frame has loaded a page that says it is ready. */
@@ -77,7 +86,6 @@ export async function openTablePage(query: string): Promise<FixturePage> {
         shown: () => find(element(), "[data-shown]").textContent ?? "",
         status: () => find(element(), "[data-status]").textContent ?? "",
         button: (action) => find(element(), `[data-action="${action}"]`),
-        pickerTrigger: () => find(element(), ".fb-columns-trigger"),
       };
     },
     async reload() {
@@ -89,15 +97,10 @@ export async function openTablePage(query: string): Promise<FixturePage> {
     },
     async leave() {
       const before = frame.contentDocument;
-      (frame.contentWindow as Window).location.href = "/__fixtures__/blank";
-      await expect
-        .poll(
-          () =>
-            frame.contentDocument !== before &&
-            frame.contentDocument?.readyState === "complete" &&
-            frame.contentWindow?.location.pathname === "/__fixtures__/blank",
-        )
-        .toBe(true);
+      (frame.contentWindow as Window).location.href = BLANK_PAGE_PATH;
+      // The old page is gone once the frame holds another document.
+      await expect.poll(() => frame.contentDocument !== before).toBe(true);
+      await untilBlank(frame);
     },
   };
 }

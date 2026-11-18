@@ -13,8 +13,11 @@ import { useSavedTableState } from "../../src/useSavedTableState";
 // A whole page with one or more tables that remember their columns. The same code draws it on
 // the server and in the browser, as an app's own page would be drawn.
 
+/** The id of the element that holds what the server read, as JSON, for the browser to use. */
+export const INITIAL_SAVED_ID = "initial-saved";
+
 /** The columns of every table on the page. */
-export const PAGE_COLUMNS: readonly ColumnDefinition[] = [
+const PAGE_COLUMNS: readonly ColumnDefinition[] = [
   { key: "name", label: "Name", hideable: false },
   { key: "price", label: "Price" },
   { key: "stock", label: "Stock" },
@@ -47,7 +50,7 @@ export interface PageSetup {
  * The longest slow draw a page may ask for, in milliseconds. A slow draw keeps the thread
  * busy, on the server too, so an address must not be able to ask for a long one.
  */
-export const MAX_SLOW_DRAW_MS = 200;
+const MAX_SLOW_DRAW_MS = 200;
 
 /** The slow draw an address asks for. Anything but a number within the limit means none. */
 function readSlowDraw(text: string | null): number {
