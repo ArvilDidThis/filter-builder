@@ -1050,6 +1050,37 @@ describe("ColumnPicker", () => {
       expect(announced()).toBe("");
     });
 
+    it("should not announce a Show all that was turned down when a tick shows the last column", async () => {
+      openOwningApp();
+      // The app never applies this press.
+      fireEvent.click(showAll());
+      // The press and the tick are two events. The hook lets go of a change that was turned
+      // down once the event's own code has finished, so the test waits for that.
+      await Promise.resolve();
+      // The person shows the one hidden column with its checkbox instead, and the app
+      // applies that. Every column is shown now, but not by "Show all".
+      fireEvent.click(checkbox("Notes"));
+      apply();
+      expect(checkbox("Notes").checked).toBe(true);
+      expect(isUnavailable(showAll())).toBe(true);
+      expect(announced()).toBe("");
+    });
+
+    it("should not announce a Reset that was turned down when a move restores the order", async () => {
+      openOwningApp();
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      // The app never applies this press.
+      fireEvent.click(reset());
+      await Promise.resolve();
+      // The person moves the column back by hand, and the app applies that.
+      fireEvent.keyDown(handle("Notes"), { key: "End" });
+      apply();
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(isUnavailable(reset())).toBe(true);
+      // Only the move is read out.
+      expect(announced()).toBe("Notes moved to position 4 of 4.");
+    });
+
     it("should keep the focus on Reset while the app applies it late", () => {
       openOwningApp();
       fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));

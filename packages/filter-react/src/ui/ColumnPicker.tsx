@@ -16,10 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type {
-  ColumnSettingsActions,
-  ColumnSettingsState,
-} from "../useColumnSettings";
+import type { ColumnSettingsState } from "../useColumnSettings";
 import { useColumnDrag } from "./useColumnDrag";
 import { useKeepOnScreen } from "./useKeepOnScreen";
 import { useOutsidePointerDown } from "./useOutsidePointerDown";
@@ -294,7 +291,8 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 
   // The "show all" or "reset" press that is still to be read out. Like a move, it waits here
   // until it has really happened, because an app that owns the settings may apply it later, or
-  // turn it down.
+  // turn it down. A tick or a move asked for in the meantime ends the wait: the press cannot
+  // tell its own result from theirs.
   const pendingButton = useRef<{
     button: "showAll" | "reset";
     /** The list when the button was pressed. The hook keeps it until its content changes. */
@@ -341,6 +339,9 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       const after = moveColumn({ order: before, hidden: [] }, key, to).order;
       // The same list back means the move changes nothing.
       if (after === before) return;
+      // A "show all" or "reset" press still waiting gives up. What the list becomes next is
+      // this move's doing, and the press must not be read out for it.
+      pendingButton.current = null;
       pendingMove.current = {
         from: before.indexOf(key),
         to: after.indexOf(key),
@@ -352,6 +353,16 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     [actions],
   );
   const drag = useColumnDrag({ listRef, keys, active: open, onDrop: moveTo });
+
+  // Ticks or unticks a row's checkbox. As with a move, a button press still waiting gives up,
+  // so that it is not read out for what this tick did.
+  const toggle = useCallback(
+    (key: Column["key"]) => {
+      pendingButton.current = null;
+      actions.toggle(key);
+    },
+    [actions],
+  );
 
   const hiddenCount = useMemo(
     () =>
@@ -427,7 +438,6 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           >
             {orderedColumns.map((entry, index) => (
               <Row
-                actions={actions}
                 drop={dropMark(drag.slot, index, orderedColumns.length)}
                 entry={entry}
                 hintId={hintId}
@@ -438,6 +448,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
                 moveLabel={labels.move(entry.column.label)}
                 onDragStart={drag.start}
                 onMove={moveTo}
+                onToggle={toggle}
                 renderRow={renderRow}
               />
             ))}
@@ -544,9 +555,9 @@ interface RowProps<Column extends ColumnDefinition> {
    */
   moveLabel: string;
   hintId: string;
-  actions: ColumnSettingsActions<Column["key"]>;
   onDragStart: (event: PointerEvent<HTMLElement>, key: string) => void;
   onMove: (key: string, to: number) => void;
+  onToggle: (key: Column["key"]) => void;
   renderRow: ColumnPickerProps<Column>["renderRow"];
 }
 
@@ -562,9 +573,9 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
   drop,
   moveLabel,
   hintId,
-  actions,
   onDragStart,
   onMove,
+  onToggle,
   renderRow,
 }: RowProps<Column>) {
   const { column, visible, hideable } = entry;
@@ -581,7 +592,7 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
       id: checkboxId,
       checked: visible,
       disabled: !hideable,
-      onChange: () => actions.toggle(column.key),
+      onChange: () => onToggle(column.key),
     },
     handleProps: {
       type: "button",
