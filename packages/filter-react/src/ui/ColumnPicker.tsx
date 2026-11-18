@@ -21,6 +21,7 @@ import {
 import type { ColumnSettingsState } from "../useColumnSettings";
 import { useEarlyEffect } from "../useEarlyEffect";
 import { isDrawnInside } from "./shadowTrees";
+import type { FilterThemeStyle } from "./theme";
 import { useColumnDrag } from "./useColumnDrag";
 import { useKeepOnScreen } from "./useKeepOnScreen";
 import { useOutsidePointerDown } from "./useOutsidePointerDown";
@@ -216,6 +217,11 @@ export interface ColumnPickerProps<
   search?: boolean | "auto";
   /** Added to the picker's own class, for an app's extra styling. */
   className?: string;
+  /**
+   * An inline style for the picker's outer element. It also takes the `--fb-*` variables, to
+   * change the look of this one picker: `style={{ "--fb-radius": "0" }}`.
+   */
+  style?: FilterThemeStyle;
 }
 
 /**
@@ -246,6 +252,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   renderRow,
   search: searchMode = "auto",
   className,
+  style,
 }: ColumnPickerProps<Column>) {
   const { orderedColumns, allVisible, isDefault, actions } = state;
   const [open, setOpen] = useState(false);
@@ -570,6 +577,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
         }
       }}
       ref={rootRef}
+      style={style}
     >
       {renderTrigger ? (
         renderTrigger(triggerProps, { open, hiddenCount })

@@ -12,6 +12,7 @@ npm install @arvilmena/filter-react @arvilmena/filter-core
 ## The ready-made builder
 
 It uses plain HTML controls, and takes its colours from the `--fb-*` variables in the stylesheet.
+[Theming](#theming) shows how to set them.
 
 ```tsx
 import type { FieldDefinition, FilterDefinition } from "@arvilmena/filter-core";
@@ -306,6 +307,7 @@ reports the difference. Saving table state is planned as a feature of its own.
 | `renderRow`     | Draws the inside of one row from the `checkboxProps` and `handleProps` |
 | `search`        | `true` or `false` forces the search box on or off. See above           |
 | `className`     | Added to the picker's own class                                        |
+| `style`         | An inline style for the picker. It also takes the `--fb-*` variables   |
 
 The list is kept inside the screen sideways. Where lining it up with the button would run it
 past the left or right edge, it moves sideways just far enough to fit. On a page that a person
@@ -319,7 +321,8 @@ finger drag the handle. A row also has `pinned` and `movable`. On a row that is 
 such as a pinned one, `handleProps` turns the handle off, or you can leave the handle out. Keep the same `renderRow` function between renders (see `useCallback`),
 or every row redraws whenever the picker does. `labels` may be written in place.
 
-The picker reads the `--fb-*` variables from its own class, `.fb-columns`.
+The picker reads the same `--fb-*` variables as the builder. Set them on the picker with
+`className` or `style`, or on any element around it. See [Theming](#theming).
 
 ### In a shadow root or a frame
 
@@ -417,6 +420,122 @@ function ProductColumns() {
   );
 }
 ```
+
+## Theming
+
+The ready-made builder and column picker take their look from CSS variables whose names start
+with `--fb-`. With nothing set, the colours are worked out from the page's own text colour, so
+both fit a light page and a dark page.
+
+To change the look, set a variable. Set it on the component, or on any element around it, up
+to `:root`. One class or one inline style is enough. Your value always wins over the default,
+whatever order the style sheets load in, because the library never sets these variables on the
+component itself.
+
+### With plain CSS
+
+```css
+/* Every builder and picker on the page. */
+:root {
+  --fb-radius: 0;
+  --fb-focus: rebeccapurple;
+}
+
+/* Only the ones inside this element. */
+.table-tools {
+  --fb-control-height: 2rem;
+}
+```
+
+```tsx
+<div className="table-tools">
+  <ColumnPicker state={table} />
+</div>;
+```
+
+A class on the component itself works the same way:
+
+```css
+.compact {
+  --fb-control-height: 1.75rem;
+  --fb-gap: 0.25rem;
+}
+```
+
+```tsx
+<FilterBuilder
+  className="compact"
+  value={filter}
+  onChange={setFilter}
+  fields={fields}
+/>;
+```
+
+### With utility classes
+
+A CSS framework that can set a variable from a class needs no CSS file. This is Tailwind's
+syntax for it:
+
+```tsx
+<ColumnPicker
+  state={table}
+  className="[--fb-radius:0] [--fb-focus:var(--color-indigo-500)]"
+/>;
+
+{
+  /* Or on an element around several components. */
+}
+<div className="[--fb-control-height:2rem]">
+  <FilterBuilder value={filter} onChange={setFilter} fields={fields} />
+  <ColumnPicker state={table} />
+</div>;
+```
+
+### With an inline style
+
+`ColumnPicker` and `FilterBuilder` take `style` beside `className`. Its type knows the
+variables, so TypeScript suggests their names and needs no cast.
+
+```tsx
+<ColumnPicker
+  state={table}
+  style={{ "--fb-radius": "0", "--fb-focus": "teal" }}
+/>;
+```
+
+### The variables
+
+| Variable              | Sets                                                | Default                               |
+| --------------------- | --------------------------------------------------- | ------------------------------------- |
+| `--fb-page`           | The colour behind the component                     | `--background`, else the page colour  |
+| `--fb-border`         | Borders                                             | 22% of the text colour                |
+| `--fb-control-bg`     | The background of buttons and boxes                 | 7% of the text colour on `--fb-page`  |
+| `--fb-hover-bg`       | The background under the pointer                    | 15% of the text colour on `--fb-page` |
+| `--fb-popover-bg`     | The background of an open list                      | `--popover`, else `--fb-page`         |
+| `--fb-muted`          | Quieter text, such as counts and handles            | 60% of the text colour                |
+| `--fb-focus`          | The focus ring and the drop line                    | `--ring`, else the system highlight   |
+| `--fb-shadow`         | The shadow under an open list                       | `rgb(0 0 0 / 0.25)`                   |
+| `--fb-and`            | The bar of a group where every condition must pass  | `#3b82f6`                             |
+| `--fb-or`             | The bar of a group where one condition is enough    | `#f59e0b`                             |
+| `--fb-radius`         | Rounded corners                                     | `0.375rem`                            |
+| `--fb-control-height` | The height of buttons and boxes                     | `2.25rem`                             |
+| `--fb-gap`            | The space between controls                          | `0.5rem`                              |
+| `--fb-value-width`    | The widest a value box grows                        | `12rem`                               |
+| `--fb-sticky-top`     | How far below the top a group's "And" or "Or" stays | `0.5rem`                              |
+
+The same names are exported as `FILTER_THEME_VARIABLES` from `@arvilmena/filter-react/ui`.
+
+Three things to know:
+
+- **Colours must be whole colours,** such as `#fff` or `oklch(1 0 0)`. Some themes store only
+  the numbers of a colour (`--background: 0 0% 100%`) and wrap them in `hsl()` where they are
+  used. With such a theme, set `--fb-page: hsl(var(--background))`, and `--fb-popover-bg` and
+  `--fb-focus` the same way from `--popover` and `--ring`.
+- **Some defaults follow `--fb-page`.** The control and hover backgrounds mix the text colour
+  into it. They are worked out on the component, so set `--fb-page` on the component or
+  above it.
+- **For anything a variable does not cover,** restyle the `fb-` classes in your own CSS, or
+  draw your own component from the hooks.
 
 ## Saving a table's state
 

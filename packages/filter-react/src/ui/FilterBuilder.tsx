@@ -21,6 +21,7 @@ import {
   useFilterBuilder,
 } from "../useFilterBuilder";
 import { FieldPicker } from "./FieldPicker";
+import type { FilterThemeStyle } from "./theme";
 import { type RowDrag, useRowDrag } from "./useRowDrag";
 
 // A ready-made filter builder with default styling. It is laid out like DataTables
@@ -53,6 +54,11 @@ export interface FilterBuilderProps {
   showSummary?: boolean;
   /** Added to the builder's own class, for an app's extra styling. */
   className?: string;
+  /**
+   * An inline style for the builder's outer element. It also takes the `--fb-*` variables, to
+   * change the look of this one builder: `style={{ "--fb-radius": "0" }}`.
+   */
+  style?: FilterThemeStyle;
 }
 
 /** The move buttons of a row. */
@@ -94,6 +100,7 @@ export function FilterBuilder({
   headerActions,
   showSummary = true,
   className,
+  style,
 }: FilterBuilderProps) {
   const builder = useFilterBuilder({
     value,
@@ -154,6 +161,7 @@ export function FilterBuilder({
       aria-label={title}
       className={className ? `fb ${className}` : "fb"}
       ref={rootRef}
+      style={style}
     >
       <header className="fb-header">
         <h2 className="fb-title">

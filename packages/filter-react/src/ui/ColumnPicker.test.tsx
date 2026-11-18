@@ -1283,7 +1283,8 @@ describe("ColumnPicker", () => {
         );
         expect(colours.length).toBeGreaterThan(0);
         for (const colour of colours) {
-          expect(colour).toMatch(/^var\(--fb-[a-z-]+\)$/);
+          // The app's value of the variable, or else the variable's own default.
+          expect(colour).toMatch(/^var\(--fb-([a-z-]+), var\(--_fb-\1\)\)$/);
         }
       }
     });
@@ -1302,7 +1303,10 @@ describe("ColumnPicker", () => {
       const ring = popoverRules.find((rule) =>
         selectorsOf(rule).includes(".fb-columns-popover:focus-visible"),
       );
-      expect(ring?.style.outlineColor).toBe("var(--fb-focus)");
+      expect(ring?.style.outlineStyle).toBe("solid");
+      expect(ring?.style.outlineColor).toBe(
+        "var(--fb-focus, var(--_fb-focus))",
+      );
       // And no rule takes the ring away from such a focus.
       const removing = popoverRules.filter(
         (rule) =>
@@ -1398,7 +1402,9 @@ describe("ColumnPicker", () => {
       expect(styled(button, "white-space")).toBeUndefined();
       // It grows taller to hold the lines, and a short label keeps the usual height.
       expect(styled(button, "height")).toBe("auto");
-      expect(styled(button, "min-height")).toBe("var(--fb-control-height)");
+      expect(styled(button, "min-height")).toBe(
+        "var(--fb-control-height, var(--_fb-control-height))",
+      );
     });
 
     it("should let the page scroll on once the list has reached its end", () => {
