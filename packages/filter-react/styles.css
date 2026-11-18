@@ -530,8 +530,6 @@
   font: inherit;
   cursor: grab;
   user-select: none;
-  /* Without this a finger on the grip scrolls the list, and the drag never starts. */
-  touch-action: none;
 }
 
 .fb-columns-handle:active {

@@ -96,9 +96,14 @@ export interface ColumnPickerRow<
     disabled: boolean;
     onChange: () => void;
   };
-  /** For the `<button>` that moves the column, by dragging and by the arrow keys. */
+  /**
+   * For the `<button>` that moves the column, by dragging and by the arrow keys. Its `style`
+   * stops a finger on the handle from scrolling the list. If you set a `style` of your own,
+   * spread this one into it.
+   */
   handleProps: {
     type: "button";
+    style: { touchAction: "none" };
     "aria-label": string;
     "aria-describedby": string;
     "data-fb-column-handle": "";
@@ -394,6 +399,7 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
     },
     handleProps: {
       type: "button",
+      style: HANDLE_STYLE,
       "aria-label": labels.move(column.label),
       "aria-describedby": hintId,
       "data-fb-column-handle": "",
@@ -432,6 +438,12 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
   );
   // `memo` drops the row's type parameter, so it is put back here.
 }) as <Column extends ColumnDefinition>(props: RowProps<Column>) => ReactNode;
+
+/**
+ * Without this a finger on a handle scrolls the list, and the drag never starts. It is set on
+ * the handle itself, not only in the style sheet, so that a row an app draws has it too.
+ */
+const HANDLE_STYLE = { touchAction: "none" } as const;
 
 /**
  * The place a key press on a handle moves its row to, or `undefined` for a key that moves

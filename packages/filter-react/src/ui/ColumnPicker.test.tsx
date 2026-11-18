@@ -523,6 +523,21 @@ describe("ColumnPicker", () => {
       expect(table()).toBe("stock name");
     });
 
+    it("should let a finger drag the handle of the app's own row", () => {
+      renderPicker({
+        renderRow: (row) => (
+          <>
+            <input {...row.checkboxProps} />
+            <button {...row.handleProps}>grip</button>
+            <label htmlFor={row.checkboxProps.id}>{row.column.label}</label>
+          </>
+        ),
+      });
+      // The app's button has none of the picker's classes, so the style sheet cannot reach
+      // it. Without this style the browser scrolls the list and the drag never starts.
+      expect(handle("Price").style.touchAction).toBe("none");
+    });
+
     it("should add the app's class to its own", () => {
       const { container } = renderPicker({ className: "toolbar-item" });
       expect(container.firstElementChild?.className).toBe(
