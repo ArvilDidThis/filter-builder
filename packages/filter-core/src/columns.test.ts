@@ -322,6 +322,21 @@ describe("isDefaultColumnSettings", () => {
     expect(isDefaultColumnSettings(COLUMNS, undone)).toBe(true);
   });
 
+  it("should be true when the same columns are hidden in another sequence", () => {
+    const columns = [
+      { key: "name", label: "Name" },
+      { key: "notes", label: "Notes", defaultHidden: true },
+      { key: "tags", label: "Tags", defaultHidden: true },
+    ];
+    const settings = {
+      order: ["name", "notes", "tags"],
+      hidden: ["tags", "notes"],
+    };
+    expect(isDefaultColumnSettings(columns, settings)).toBe(true);
+    // A reset then has nothing to do, so it hands the same object back.
+    expect(resetColumnSettings(columns, settings)).toBe(settings);
+  });
+
   it("should be false exactly when a reset would change the settings", () => {
     const all: ColumnSettings[] = [
       DEFAULTS,

@@ -185,8 +185,8 @@ export function resetColumnSettings(
  * Whether the settings are the list's own order and starting visibility, so that
  * `resetColumnSettings` would change nothing. A picker uses it to turn its reset button off.
  *
- * Both lists are compared place by place, as `resetColumnSettings` does. Settings that hide the
- * same columns in another order of keys are therefore not the defaults.
+ * The order is compared place by place. The hidden keys count as a set: hiding the same
+ * columns in another sequence shows the same table, so it is still the defaults.
  */
 export function isDefaultColumnSettings(
   columns: readonly ColumnDefinition[],
@@ -284,9 +284,20 @@ function cleanKeys(
   return keys;
 }
 
-/** Whether two settings hold the same order and the same hidden keys, place by place. */
+/** Whether two settings show the same table: the same order, and the same columns hidden. */
 function isSameSettings(a: ColumnSettings, b: ColumnSettings): boolean {
-  return isSameList(a.order, b.order) && isSameList(a.hidden, b.hidden);
+  return isSameList(a.order, b.order) && isSameSet(a.hidden, b.hidden);
+}
+
+/** Whether two lists hold the same keys, in any sequence. A key listed twice counts once. */
+function isSameSet(a: readonly string[], b: readonly string[]): boolean {
+  const keys = new Set(a);
+  const others = new Set(b);
+  if (keys.size !== others.size) return false;
+  for (const key of keys) {
+    if (!others.has(key)) return false;
+  }
+  return true;
 }
 
 /** Whether two lists hold the same items in the same order. */
