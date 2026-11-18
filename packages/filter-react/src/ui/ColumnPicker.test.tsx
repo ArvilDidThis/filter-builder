@@ -7,7 +7,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { memo, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
@@ -69,11 +69,27 @@ function ChangingApp() {
 /**
  * An app that owns the settings and applies a change late: only when "Apply" is pressed. A
  * change that is never applied is one the app turned down. With `atOnce`, it applies each
- * change as it is asked for.
+ * change as it is asked for. With `dropFocus`, drawing a change loses the keyboard focus.
  */
-function OwningApp({ atOnce = false }: { atOnce?: boolean }) {
+function OwningApp({
+  atOnce = false,
+  dropFocus = false,
+}: {
+  atOnce?: boolean;
+  dropFocus?: boolean;
+}) {
   const [value, setValue] = useState<ColumnSettings | null>(null);
   const waiting = useRef<ColumnSettings | null>(null);
+  // With `dropFocus`, the keyboard focus is dropped as each change is drawn. A browser does
+  // that when it moves the row that holds the focus, and React cannot always bring it back,
+  // such as inside a shadow tree. The test page never loses it, so this stands in. It runs
+  // after the rows have moved, and before the picker follows the move up.
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (dropFocus && value !== null && focused instanceof HTMLElement) {
+      focused.blur();
+    }
+  }, [dropFocus, value]);
   const state = useColumnSettings({
     columns: COLUMNS,
     value,
@@ -848,8 +864,8 @@ describe("ColumnPicker", () => {
   });
 
   describe("in an app that owns the settings", () => {
-    const openOwningApp = (atOnce = false) => {
-      render(<OwningApp atOnce={atOnce} />);
+    const openOwningApp = (atOnce = false, dropFocus = false) => {
+      render(<OwningApp atOnce={atOnce} dropFocus={dropFocus} />);
       fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
     };
     const apply = () =>
@@ -866,17 +882,49 @@ describe("ColumnPicker", () => {
       expect(announced()).toBe("");
     });
 
-    it("should announce a move, and keep the focus, once the app applies it", () => {
+    it("should announce a move, and leave the focus, when the handle gave it up before the app applies it", () => {
       openOwningApp();
       handle("Name").focus();
       fireEvent.keyDown(handle("Name"), { key: "End" });
       expect(announced()).toBe("");
-      // The browser drops the focus when the row is moved in the page.
+      // The handle gives the focus up before the app applies the move, as when a person
+      // clicks on a bare part of the page. The move is not what took the focus away.
       handle("Name").blur();
       expect(document.activeElement).toBe(document.body);
       apply();
       expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
       expect(announced()).toBe("Name moved to position 4 of 4.");
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it("should give the focus back to the handle when the move takes it away", () => {
+      openOwningApp(true, true);
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(listed()).toBe("⠿Price ⠿Name ⠿Stock ⠿Notes");
+      expect(document.activeElement).toBe(handle("Name"));
+    });
+
+    it("should give the focus back to the handle when a late move takes it away", () => {
+      openOwningApp(false, true);
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      // The handle still holds the focus when the app applies the move.
+      expect(document.activeElement).toBe(handle("Name"));
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(announced()).toBe("Name moved to position 4 of 4.");
+      expect(document.activeElement).toBe(handle("Name"));
+    });
+
+    it("should give the focus back to a handle that took it after the move was asked for", () => {
+      openOwningApp(false, true);
+      // The focus is on the list's box when the move is asked for, and goes to the handle
+      // before the app applies the move.
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      handle("Name").focus();
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
       expect(document.activeElement).toBe(handle("Name"));
     });
 

@@ -243,15 +243,25 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   // that owns the settings may apply a move later, or turn it down, so the move is followed up
   // only once it has really happened.
   const pendingMove = useRef<{
+    /** The place the column had when the move was asked for. */
+    from: number;
     /** The place the column was asked to go to. */
     to: number;
     /** The order of the keys when the move was asked for. */
     before: readonly string[];
     /** The order of the keys that the move would give. */
     after: readonly string[];
-    /** Whether the column's handle held the keyboard focus when the move was asked for. */
-    hadFocus: boolean;
   } | null>(null);
+  // Whether the column's handle holds the keyboard focus just before the rows change place.
+  // It is asked here, while this draw is worked out and the page still shows the old order.
+  // Once React has moved the rows it is too late to ask, because moving a row can drop the
+  // focus. A waiting move always has its old order on the page: the first draw with any other
+  // order ends the wait.
+  const moveAtDraw = pendingMove.current;
+  const heldFocusBeforeMove =
+    moveAtDraw !== null &&
+    !isSameOrder(keys, moveAtDraw.before) &&
+    holdsFocus(handleAt(listRef.current, moveAtDraw.from));
   useEffect(() => {
     const pending = pendingMove.current;
     if (pending === null) return;
@@ -268,13 +278,12 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     // React may take the row out of the page and put it back to move it, which loses the
     // keyboard focus. So the focus is put back on the column's handle, and pressing the key
     // again moves the same column again. It is put back only when the move took it away: the
-    // handle had it, and now nothing has. A person who has gone on to another control, in
-    // the picker or outside it, keeps their place. The picker's blur handler withdraws
-    // `hadFocus` for that, in case the other control has lost the focus since.
+    // handle had it just before the rows changed place, and now nothing has. A person who
+    // left the handle before the app applied the move keeps their place, wherever that is.
     const focused = root.ownerDocument.activeElement;
     const isFocusLost = focused === null || focused === root.ownerDocument.body;
     const handle = handleAt(listRef.current, pending.to);
-    if (pending.hadFocus && isFocusLost) handle?.focus();
+    if (heldFocusBeforeMove && isFocusLost) handle?.focus();
     // React may instead move the other rows around a handle that kept the focus. Nothing
     // scrolls then, so a long list could leave the moved row out of sight.
     if (holdsFocus(handle)) handle?.scrollIntoView({ block: "nearest" });
@@ -333,10 +342,10 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       // The same list back means the move changes nothing.
       if (after === before) return;
       pendingMove.current = {
+        from: before.indexOf(key),
         to: after.indexOf(key),
         before,
         after,
-        hadFocus: holdsFocus(handleAt(listRef.current, before.indexOf(key))),
       };
       actions.move(key, to);
     },
@@ -371,12 +380,6 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       // A click on something that takes no focus is left to the outside-click check above.
       onBlur={(event) => {
         const next = event.relatedTarget;
-        // The person took the focus to another control. A move that is still waiting must
-        // not pull it back later, even if nothing holds the focus by then. The move itself
-        // stays, so that it is still read out.
-        if (next !== null && pendingMove.current !== null) {
-          pendingMove.current.hadFocus = false;
-        }
         if (open && next !== null && !rootRef.current?.contains(next)) {
           close(false);
         }
