@@ -12,7 +12,7 @@ import {
   type StatePart,
   type StateStore,
 } from "@arvilmena/filter-core";
-import { act, render, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook } from "@testing-library/react";
 import { Activity, createElement, StrictMode, useEffect } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -180,6 +180,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Vitest's `afterEach` is imported here, not a global, so Testing Library does not unmount
+  // by itself. Without this a hook, and its `pagehide` listener, lives on into the next test.
+  cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
