@@ -187,6 +187,8 @@ export function cookieStore(options: CookieStoreOptions = {}): StateStore {
         : readCookieState(page.cookie, key, options);
     },
     save(key, value) {
+      // On a server nothing is written, so no value is too large to "save" there.
+      if (findDocument() === undefined) return;
       const name = cookieName(key, options);
       const text = encodeURIComponent(JSON.stringify(value));
       // Encoded text is plain ASCII, so its length is its size in bytes. The 1 is the "=".

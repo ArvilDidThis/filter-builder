@@ -293,6 +293,13 @@ describe("cookieStore", () => {
     expect(() => store.save("orders", STATE)).not.toThrow();
     expect(() => store.remove("orders")).not.toThrow();
   });
+
+  it("should not refuse a value that is too large where there is no document", () => {
+    const store = cookieStore();
+    expect(() =>
+      store.save("orders", { notes: "x".repeat(4096) }),
+    ).not.toThrow();
+  });
 });
 
 describe("readCookieState", () => {
