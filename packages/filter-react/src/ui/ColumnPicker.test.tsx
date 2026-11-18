@@ -1163,6 +1163,22 @@ describe("ColumnPicker", () => {
       expect(inside.queryByRole("dialog")).toBeNull();
     });
 
+    it("should close when Tab moves the focus out of the frame", () => {
+      vi.useFakeTimers();
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+      const { page, inside } = renderInFrame();
+      // The frame's own page loses the focus. The outer page keeps it.
+      page.hasFocus = () => false;
+      // Tab on the last control of the frame. No element is named as the next one.
+      const resetButton = inside.getByRole("button", { name: "Reset" });
+      fireEvent.keyDown(resetButton, { key: "Tab" });
+      fireEvent.blur(resetButton, { relatedTarget: null });
+      act(() => vi.runAllTimers());
+      expect(inside.queryByRole("dialog")).toBeNull();
+    });
+
     it("should move a column to where its handle is dropped", () => {
       const { page, inside } = renderInFrame();
       placeAt(inside.getByRole("list"), 0, 1000);
@@ -1658,6 +1674,85 @@ describe("ColumnPicker", () => {
         relatedTarget: screen.getByRole("button", { name: "Elsewhere" }),
       });
       expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    describe("when Tab moves the focus off the page", () => {
+      // The focus has then gone to a place this page cannot name, such as the page around a
+      // frame (a page within the page) or the browser's own bar. The blur names no element.
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      });
+      /** Says whether the page holds the keyboard focus, which the test page cannot lose. */
+      const pageHasFocus = (has: boolean) =>
+        vi.spyOn(document, "hasFocus").mockReturnValue(has);
+      /** Lets the browser finish moving the focus, and the picker look where it went. */
+      const settle = () => act(() => vi.runAllTimers());
+      const tabAway = () => {
+        fireEvent.keyDown(reset(), { key: "Tab" });
+        fireEvent.blur(reset(), { relatedTarget: null });
+      };
+
+      it("should close once the page has lost the focus", () => {
+        renderPicker();
+        pageHasFocus(false);
+        tabAway();
+        // Not yet: the browser may still be moving the focus.
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+        settle();
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("should stay open when the page still holds the focus", () => {
+        renderPicker();
+        pageHasFocus(true);
+        tabAway();
+        settle();
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+      });
+
+      it("should stay open when the window loses the focus with no Tab pressed", () => {
+        renderPicker();
+        pageHasFocus(false);
+        fireEvent.blur(reset(), { relatedTarget: null });
+        settle();
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+      });
+
+      it("should stay open when Tab kept the focus inside and the window loses it later", () => {
+        renderPicker();
+        pageHasFocus(false);
+        fireEvent.keyDown(showAll(), { key: "Tab" });
+        fireEvent.blur(showAll(), { relatedTarget: reset() });
+        fireEvent.focus(reset());
+        // A person switches to another window.
+        fireEvent.blur(reset(), { relatedTarget: null });
+        settle();
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+      });
+
+      it("should stay open when a move of a row drops the focus", () => {
+        renderPicker();
+        pageHasFocus(false);
+        fireEvent.keyDown(reset(), { key: "Tab" });
+        fireEvent.keyDown(handle("Price"), { key: "ArrowDown" });
+        fireEvent.blur(handle("Price"), { relatedTarget: null });
+        settle();
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+      });
+
+      it("should not look for the focus once the picker has closed", () => {
+        renderPicker();
+        const asked = pageHasFocus(false);
+        tabAway();
+        fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+        expect(vi.getTimerCount()).toBe(0);
+        settle();
+        expect(asked).not.toHaveBeenCalled();
+      });
     });
 
     it("should stay open when the focus moves within it", () => {

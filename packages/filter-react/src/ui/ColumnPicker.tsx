@@ -226,6 +226,38 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   // may leave it too little room, so it is moved back inside the screen.
   useKeepOnScreen(popoverRef, open);
 
+  // Whether Tab was the last key pressed in the picker, with no focus arriving in it since.
+  // A blur that names no next element is then Tab's doing, and may have left the page.
+  const tabPressed = useRef(false);
+  /** The wait before the picker looks where such a blur took the focus. */
+  const leaveCheck = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A closed picker has nothing left to close, so it stops waiting.
+  useEffect(() => {
+    if (!open) return;
+    return () => {
+      tabPressed.current = false;
+      if (leaveCheck.current !== null) clearTimeout(leaveCheck.current);
+      leaveCheck.current = null;
+    };
+  }, [open]);
+  /**
+   * Closes the picker if a blur that named no next element took the focus off the picker's
+   * page. Tab does that from the last control of a frame (a page within the page), and of a
+   * page: the focus goes to the page around the frame, or to the browser's own bar.
+   */
+  const closeIfFocusLeftPage = () => {
+    // Without a Tab press the cause is something else, and the picker stays open: a row
+    // that moved can drop the focus, and so does a switch to another window.
+    if (!tabPressed.current || leaveCheck.current !== null) return;
+    tabPressed.current = false;
+    const page = rootRef.current?.ownerDocument;
+    // Asked a moment later, once the browser has finished moving the focus.
+    leaveCheck.current = setTimeout(() => {
+      leaveCheck.current = null;
+      if (page?.hasFocus() === false) close(false);
+    }, 0);
+  };
+
   // Opening moves the keyboard focus into the list, so that Tab reaches its first control and
   // a screen reader reads out the list's name.
   useEffect(() => {
@@ -394,20 +426,26 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   };
 
   return (
-    // It only hears the keys and the blur of the controls inside it. A person never acts on
-    // it directly.
+    // It only hears the keys, the focus and the blur of the controls inside it. A person never
+    // acts on it directly.
     // biome-ignore lint/a11y/noStaticElementInteractions: see the lines above
     <div
       className={className ? `fb-columns ${className}` : "fb-columns"}
       // Tab moves the focus on past the list, which would otherwise stay open over the page.
       // A click on something that takes no focus is left to the outside-click check above.
       onBlur={(event) => {
+        if (!open) return;
         const next = event.relatedTarget;
-        if (open && next !== null && !rootRef.current?.contains(next)) {
-          close(false);
-        }
+        // No next element is named when the focus goes nowhere, or to another page.
+        if (next === null) closeIfFocusLeftPage();
+        else if (!rootRef.current?.contains(next)) close(false);
+      }}
+      onFocus={() => {
+        // The focus is in the picker, so the last Tab press did not take it away.
+        tabPressed.current = false;
       }}
       onKeyDown={(event) => {
+        tabPressed.current = open && event.key === "Tab";
         if (open && event.key === "Escape") {
           event.preventDefault();
           close(true);
