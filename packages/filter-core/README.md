@@ -114,13 +114,16 @@ import {
   readSavedState,
 } from "@arvilmena/filter-core";
 
+const PAGE_SIZES = [25, 50, 100];
+
 // Each part has a default, and a `parse` that checks the saved value.
 const parts = {
   filter: filterStatePart(),
   columns: columnStatePart(columns),
   pageSize: {
     defaultValue: 25,
-    parse: (saved: unknown) => (typeof saved === "number" ? saved : undefined),
+    // Only a size the table offers is taken. Any other saved value gives the default.
+    parse: (saved: unknown) => PAGE_SIZES.find((size) => size === saved),
   },
 };
 

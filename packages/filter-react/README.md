@@ -330,6 +330,8 @@ import {
 import { ColumnPicker, FilterBuilder } from "@arvilmena/filter-react/ui";
 import { useMemo } from "react";
 
+const PAGE_SIZES = [25, 50, 100];
+
 // Outside the component, so the parts are made once.
 const parts = {
   filter: filterStatePart(),
@@ -337,7 +339,8 @@ const parts = {
   // A part of your own: a default, and a `parse` that checks the saved value.
   pageSize: {
     defaultValue: 25,
-    parse: (saved: unknown) => (typeof saved === "number" ? saved : undefined),
+    // Only a size the table offers is taken. Any other saved value gives the default.
+    parse: (saved: unknown) => PAGE_SIZES.find((size) => size === saved),
   },
 };
 
