@@ -379,7 +379,10 @@ export function fetchStore(options: FetchStoreOptions): StateStore {
         headers[name.toLowerCase()] = value;
       }
       const request: StateFetchRequest = { ...options.init, method, headers };
-      if (body !== undefined) request.body = body;
+      // A body among the app's request details is never sent: a browser refuses a GET that
+      // has one.
+      if (body === undefined) delete request.body;
+      else request.body = body;
       response = await sendRequest(addressFor(options.url, key), request);
     } catch (cause) {
       throw new FetchStoreError(action, undefined, "the request failed", cause);

@@ -380,6 +380,26 @@ describe("fetchStore", () => {
     expect(requests[0]?.init.body).toBeUndefined();
   });
 
+  it("should send a body only with a save, whatever the request details hold", async () => {
+    const { fetch, requests } = stubFetch(() => ({ status: 204 }));
+    const store = fetchStore({
+      url: "/api/table-state",
+      fetch,
+      init: { body: "from the app", keepalive: true },
+    });
+    await store.load("orders");
+    await store.remove("orders");
+    await store.save("orders", STATE);
+    // A browser refuses a GET that has a body.
+    expect(requests.map(({ init }) => "body" in init)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+    expect(requests[2]?.init.body).toBe(JSON.stringify(STATE));
+    expect(requests[0]?.init).toMatchObject({ keepalive: true });
+  });
+
   it("should add the key to a text address, encoded", async () => {
     const { fetch, requests } = stubFetch(() => ({}));
     await fetchStore({ url: "/api/state?app=shop", fetch }).load("/orders&x=1");
