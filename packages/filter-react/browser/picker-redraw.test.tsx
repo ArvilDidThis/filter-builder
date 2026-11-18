@@ -9,6 +9,9 @@ import { clickOn, moveTo, pointOn, pressOn, release } from "./support/pointer";
 
 const COLUMNS: readonly ColumnDefinition[] = manyColumns(50);
 
+/** Every column key, in the order the list starts in. */
+const ALL_KEYS = COLUMNS.map((column) => column.key);
+
 /** The column keys a table's text names. */
 const keysIn = (table: string | null): string[] => (table ?? "").split(" ");
 
@@ -36,9 +39,10 @@ describe("what a real drag and a real tick redraw (item 9)", () => {
     expect(tableDrawn.count).toBe(drawnBefore);
 
     await release();
+    // The whole order, so a column that went missing elsewhere in the list fails too.
     await expect
-      .poll(() => keysIn(picker.table()).slice(0, 6))
-      .toEqual(["c1", "c2", "c3", "c4", "c0", "c5"]);
+      .poll(() => keysIn(picker.table()))
+      .toEqual(["c1", "c2", "c3", "c4", "c0", ...ALL_KEYS.slice(5)]);
     expect(changed.count).toBe(1);
     expect(tableDrawn.count).toBe(drawnBefore + 1);
   });
@@ -71,13 +75,18 @@ describe("what a real drag and a real tick redraw (item 9)", () => {
     rowsDrawn.length = 0;
     const drawnBefore = tableDrawn.count;
     await clickOn(picker.checkbox("Column 3"));
-    await expect.poll(() => keysIn(picker.table())).not.toContain("c3");
+    // Every other column is still shown, in its place.
+    await expect
+      .poll(() => keysIn(picker.table()))
+      .toEqual(ALL_KEYS.filter((key) => key !== "c3"));
     expect(rowsDrawn).toEqual(["c3"]);
     expect(tableDrawn.count).toBe(drawnBefore + 1);
 
     rowsDrawn.length = 0;
     await clickOn(picker.row("Column 7").querySelector("label") as Element);
-    await expect.poll(() => keysIn(picker.table())).not.toContain("c7");
+    await expect
+      .poll(() => keysIn(picker.table()))
+      .toEqual(ALL_KEYS.filter((key) => key !== "c3" && key !== "c7"));
     expect(rowsDrawn).toEqual(["c7"]);
   });
 });
