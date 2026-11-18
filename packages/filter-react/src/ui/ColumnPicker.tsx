@@ -210,7 +210,12 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   // The move a key press or a drop asked for, with the place the column was in. It waits here
   // until the list shows the column somewhere else. An app that owns the settings may apply a
   // move later, or turn it down, so the move is followed up only once it has really happened.
-  const pendingMove = useRef<{ key: string; from: number } | null>(null);
+  const pendingMove = useRef<{
+    key: string;
+    from: number;
+    /** Whether the column's handle held the keyboard focus when the move was asked for. */
+    hadFocus: boolean;
+  } | null>(null);
   useEffect(() => {
     const pending = pendingMove.current;
     if (pending === null) return;
@@ -226,18 +231,13 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 
     // React may take the row out of the page and put it back to move it, which loses the
     // keyboard focus. So the focus is put back on the column's handle, and pressing the key
-    // again moves the same column again. It is put back only when it is still in the picker,
-    // or nowhere: a person who has gone on to another part of the page keeps their place.
+    // again moves the same column again. It is put back only when the move took it away: the
+    // handle had it, and now nothing has. A person who has gone on to another control, in
+    // the picker or outside it, keeps their place.
     const focused = root.ownerDocument.activeElement;
-    if (
-      focused === null ||
-      focused === root.ownerDocument.body ||
-      root.contains(focused)
-    ) {
-      listRef.current?.children[index]
-        ?.querySelector<HTMLElement>("[data-fb-column-handle]")
-        ?.focus();
-    }
+    const isFocusLost = focused === null || focused === root.ownerDocument.body;
+    if (pending.hadFocus && isFocusLost)
+      handleAt(listRef.current, index)?.focus();
     // The place is read from the list as it is now, so it is right even when the app put the
     // column somewhere other than where it was asked to go.
     announce(
@@ -262,7 +262,17 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       if (entry === undefined || to < 0 || to >= list.length || to === from) {
         return;
       }
-      pendingMove.current = { key: entry.column.key, from };
+      const handle = handleAt(listRef.current, from);
+      // Asked of the handle's own tree, which is a shadow tree (a part of the page that hides
+      // its insides) when the picker is drawn in one. The page would name the tree's host.
+      const focused = (
+        handle?.getRootNode() as Document | ShadowRoot | undefined
+      )?.activeElement;
+      pendingMove.current = {
+        key: entry.column.key,
+        from,
+        hadFocus: handle !== null && focused === handle,
+      };
       actions.move(entry.column.key, to);
     },
     [actions],
@@ -399,6 +409,15 @@ export function ColumnPicker<Column extends ColumnDefinition>({
         <span key={announcement.count}>{announcement.text}</span>
       </span>
     </div>
+  );
+}
+
+/** The handle of the row at `index` of the list, if the list is open and has such a row. */
+function handleAt(list: HTMLElement | null, index: number): HTMLElement | null {
+  return (
+    list?.children[index]?.querySelector<HTMLElement>(
+      "[data-fb-column-handle]",
+    ) ?? null
   );
 }
 

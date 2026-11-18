@@ -726,6 +726,27 @@ describe("ColumnPicker", () => {
       expect(document.activeElement).toBe(handle("Name"));
     });
 
+    it("should leave the focus where the person has put it since the move", () => {
+      openOwningApp();
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      // The person goes on to another control of the picker before the app applies the move.
+      checkbox("Price").focus();
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(document.activeElement).toBe(checkbox("Price"));
+    });
+
+    it("should not give the focus to a handle that did not have it", () => {
+      openOwningApp();
+      // The focus is on the list's box, where opening put it, not on the handle.
+      const before = document.activeElement;
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(document.activeElement).toBe(before);
+    });
+
     it("should announce a late drop the same way", () => {
       openOwningApp();
       layOutList();
