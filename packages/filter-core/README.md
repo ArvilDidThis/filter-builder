@@ -39,9 +39,14 @@ entry that needs `effect`, which is an optional peer dependency.
 ## Column settings
 
 The same entry holds the rules for a table's columns: which are shown, and in what order. The
-settings are plain JSON, so an app can store them. Every function is pure, and returns the same
-object when nothing changed. A function that takes both the column list and the settings takes
-the column list first.
+settings are plain JSON, so an app can store them. Every function is pure. A function that takes
+both the column list and the settings takes the column list first.
+
+A function that takes settings and returns settings hands back the same object when nothing
+changed. Those are `setColumnVisible`, `moveColumn`, `showAllColumns`, `resetColumnSettings` and
+`reconcileColumnSettings`. The others, `visibleColumns`, `orderedColumns` and
+`defaultColumnSettings`, build a new result on each call. The React hook `useColumnSettings`
+memoises them (keeps the result until its inputs change).
 
 ```ts
 import {
