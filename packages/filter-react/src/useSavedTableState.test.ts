@@ -409,6 +409,60 @@ describe("useSavedTableState", () => {
       expect(table.current().values.sort).toEqual(PRICE_SORT);
     });
 
+    /** Mounts another table on "orders" that saves a page size of its own, and leaves. */
+    const saveFromAnotherTable = (store: StateStore) => {
+      const other = renderHook(() =>
+        useSavedTableState({
+          id: "orders",
+          store,
+          parts: { pageSize: { defaultValue: 25, parse: () => undefined } },
+        }),
+      );
+      act(() => other.result.current.set.pageSize(50));
+      other.unmount();
+    };
+
+    it("should read the store again when another table saved under the key meanwhile", () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const table = renderHideable(store);
+      table.hide();
+      saveFromAnotherTable(store);
+      expect(store.load).toHaveBeenCalledTimes(2);
+
+      // What the hidden table knew about the store is out of date, so it reads again.
+      table.show();
+      expect(store.load).toHaveBeenCalledTimes(3);
+      expect(table.current().status).toBe("ready");
+      act(() => table.current().set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      // Its save keeps the part saved meanwhile.
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: PRICE_SORT, pageSize: 50 },
+      });
+    });
+
+    it("should not save from a hidden table over what another table saved meanwhile", () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const table = renderHideable(store);
+      table.hide();
+      saveFromAnotherTable(store);
+
+      // A change made while hidden waits: the hidden table no longer knows the other parts.
+      act(() => table.current().set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: NAME_SORT, pageSize: 50 },
+      });
+
+      // Shown again, it reads the store first and then saves the change with those parts.
+      table.show();
+      expect(table.current().values.sort).toEqual(PRICE_SORT);
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toMatchObject({
+        parts: { sort: PRICE_SORT, pageSize: 50 },
+      });
+    });
+
     it("should load a key again only after the saves on their way to it", async () => {
       const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
       const { result, rerender } = renderSaved({ store });

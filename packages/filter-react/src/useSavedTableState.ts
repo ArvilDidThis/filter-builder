@@ -447,6 +447,25 @@ function createController<Values>(
     }
   };
 
+  /** Forgets the change waiting out the delay. Its parts stay in `unsaved`. */
+  const dropPending = (): void => {
+    clearTimeout(timer);
+    timer = undefined;
+    pending = undefined;
+  };
+
+  /** Turns saving off until the state for `live.key` has been read again. */
+  const awaitLoad = (): void => {
+    canSave = false;
+    if (live.status === "loading") return;
+    publish({
+      ...live,
+      status: "loading",
+      error: undefined,
+      errorAction: undefined,
+    });
+  };
+
   const leave = (): void => {
     if (isJoined && channel) leaveChannel(channel);
     isJoined = false;
@@ -529,6 +548,13 @@ function createController<Values>(
     // the channel is the change's own. A change left over from another key is dropped: one
     // key's state must never be saved under another key.
     if (change === undefined || channel?.key !== change.key) return;
+    // Another table used the key while this one was off screen, so the channel no longer
+    // knows the parts the store holds, and a save could drop some. The change waits in
+    // `unsaved`. When the table is shown again it reads the store first, then saves.
+    if (channel.isSuperseded()) {
+      awaitLoad();
+      return;
+    }
     saveRun += 1;
     const run = saveRun;
     send(channel, {
@@ -629,6 +655,11 @@ function createController<Values>(
         unsaved.clear();
         removeFailed = false;
         holdsDefaults = true;
+      } else if (canSave && channel?.isSuperseded()) {
+        // Another table used the key while this one was off screen. What this hook knows
+        // about the store is out of date, so it reads again. Changes not saved yet are kept.
+        dropPending();
+        awaitLoad();
       } else if (live !== start) {
         // The state moved on while nothing could be drawn. Show it now.
         draw(live);
@@ -690,15 +721,7 @@ function createController<Values>(
       queuePending();
       // When that save fails, the change stays in `unsaved`, and is saved after the load.
       pending = undefined;
-      canSave = false;
-      if (live.status !== "loading") {
-        publish({
-          ...live,
-          status: "loading",
-          error: undefined,
-          errorAction: undefined,
-        });
-      }
+      awaitLoad();
       // The app may have passed another store since the last load. Off screen, the table
       // joins and loads when it is shown again.
       if (!active) return;
@@ -724,9 +747,7 @@ function createController<Values>(
     clear(): void {
       // A load still on its way must not bring the old state back.
       loadRun += 1;
-      clearTimeout(timer);
-      timer = undefined;
-      pending = undefined;
+      dropPending();
       unsaved.clear();
       removeFailed = false;
       holdsDefaults = true;

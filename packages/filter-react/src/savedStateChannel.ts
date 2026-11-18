@@ -66,6 +66,12 @@ export interface StateChannel {
    * since, the read is older than what the channel knows and is left out.
    */
   noteRead(saved: unknown, parts: SavedParts, countAtRead: number): void;
+  /**
+   * Whether a newer channel was made for the store and key after this one was forgotten. What
+   * this one knows about the store may then be out of date, so its holder must read the store
+   * again before it saves.
+   */
+  isSuperseded(): boolean;
 }
 
 /** A channel, with the count that only this file changes. */
@@ -73,18 +79,45 @@ interface ListedChannel extends StateChannel {
   hooks: number;
 }
 
+/** One key in one store. */
+interface Place {
+  /** The channel in use. `undefined` once it was forgotten. */
+  channel: ListedChannel | undefined;
+  /** How many channels were made for the place so far. */
+  made: number;
+}
+
 /**
- * The channels in use, by store and key. A store is held weakly (it does not keep the store
- * alive), so a store the app has dropped takes its channels with it.
+ * The places that had a channel, by store and key. A store is held weakly (it does not keep
+ * the store alive), so a store the app has dropped takes its places with it.
+ *
+ * A place outlives its channel, so that a channel a hook kept can tell whether a newer one was
+ * made since. That costs one small entry per key, for as long as the store lives.
  */
-const channelsByStore = new WeakMap<StateStore, Map<string, ListedChannel>>();
+const placesByStore = new WeakMap<StateStore, Map<string, Place>>();
+
+/** The place of a store and key. It is listed when it is new. */
+function placeOf(store: StateStore, key: string): Place {
+  let byKey = placesByStore.get(store);
+  if (byKey === undefined) {
+    byKey = new Map();
+    placesByStore.set(store, byKey);
+  }
+  let place = byKey.get(key);
+  if (place === undefined) {
+    place = { channel: undefined, made: 0 };
+    byKey.set(key, place);
+  }
+  return place;
+}
 
 /**
  * Joins the channel of a store and key, and makes it when there is none.
  *
  * `kept` is the channel a hook held before it left, if any. When it is for the same store and
- * key and nothing took its place, it is put back, so a table that was hidden and is shown again
- * still knows what the store holds.
+ * key and no newer channel was made since, it is put back, so a table that was hidden and is
+ * shown again still knows what the store holds. Otherwise the hook gets another channel, and
+ * must read the store again: see `isSuperseded`.
  */
 export function joinChannel(
   store: StateStore,
@@ -100,36 +133,32 @@ export function joinChannel(
 export function leaveChannel(channel: StateChannel): void {
   const listed = channel as ListedChannel;
   listed.hooks -= 1;
-  forgetWhenUnused(listed);
+  forgetWhenUnused(listed, placeOf(listed.store, listed.key));
 }
 
-/** The listed channel of a store and key. With none listed, `kept` or a new one is listed. */
+/** The channel in use for a store and key. With none in use, `kept` or a new one is listed. */
 function findOrList(
   store: StateStore,
   key: string,
   kept: ListedChannel | undefined,
 ): ListedChannel {
-  let byKey = channelsByStore.get(store);
-  if (byKey === undefined) {
-    byKey = new Map();
-    channelsByStore.set(store, byKey);
-  }
-  let channel = byKey.get(key);
-  if (channel === undefined) {
+  const place = placeOf(store, key);
+  if (place.channel === undefined) {
     const isSamePlace = kept?.store === store && kept.key === key;
-    channel = isSamePlace && kept ? kept : createChannel(store, key);
-    byKey.set(key, channel);
+    if (isSamePlace && kept && !kept.isSuperseded()) {
+      place.channel = kept;
+    } else {
+      place.made += 1;
+      place.channel = createChannel(store, key, place);
+    }
   }
-  return channel;
+  return place.channel;
 }
 
-/** Drops a channel from the list once no hook uses it and it has nothing left to send. */
-function forgetWhenUnused(channel: ListedChannel): void {
+/** Stops listing a channel once no hook uses it and it has nothing left to send. */
+function forgetWhenUnused(channel: ListedChannel, place: Place): void {
   if (channel.hooks > 0 || !channel.isIdle()) return;
-  const byKey = channelsByStore.get(channel.store);
-  if (byKey?.get(channel.key) !== channel) return;
-  byKey.delete(channel.key);
-  if (byKey.size === 0) channelsByStore.delete(channel.store);
+  if (place.channel === channel) place.channel = undefined;
 }
 
 const ACCEPTED: WriteOutcome = { status: "accepted" };
@@ -143,7 +172,13 @@ interface StateAfterWrite {
   order: number;
 }
 
-function createChannel(store: StateStore, key: string): ListedChannel {
+function createChannel(
+  store: StateStore,
+  key: string,
+  place: Place,
+): ListedChannel {
+  /** This channel's number among the channels made for the place. */
+  const madeAs = place.made;
   /** The writes not yet handed to the store, oldest first. */
   const queue: Write[] = [];
   /** How many writes were handed to the store and have not ended yet. */
@@ -242,7 +277,7 @@ function createChannel(store: StateStore, key: string): ListedChannel {
     }
     if (!isIdle()) return;
     for (const tell of idleWaiters.splice(0)) tell();
-    forgetWhenUnused(channel);
+    forgetWhenUnused(channel, place);
   };
 
   const channel: ListedChannel = {
@@ -253,6 +288,7 @@ function createChannel(store: StateStore, key: string): ListedChannel {
     storedParts: () => stored.parts,
     isIdle,
     writeCount: () => writeCount,
+    isSuperseded: () => place.made !== madeAs,
 
     write(write) {
       // A hook may still write after it left, and the channel may have been forgotten since.

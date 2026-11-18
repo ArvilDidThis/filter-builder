@@ -264,6 +264,25 @@ describe("the channel of a store and key", () => {
       expect(joinChannel(store, "orders", kept)).toBe(taken);
     });
 
+    it("should not come back once another channel has come and gone", () => {
+      const store = quickStore();
+      const kept = joinChannel(store, "orders");
+      save(kept, { sort: "price" });
+      leaveChannel(kept);
+      expect(kept.isSuperseded()).toBe(false);
+
+      // Another table uses the key in the meantime, saves and leaves.
+      const between = joinChannel(store, "orders");
+      save(between, { pageSize: 50 });
+      leaveChannel(between);
+
+      // What `kept` knows about the store is out of date now.
+      expect(kept.isSuperseded()).toBe(true);
+      const next = joinChannel(store, "orders", kept);
+      expect(next).not.toBe(kept);
+      expect(next).not.toBe(between);
+    });
+
     it("should pass a late write on to the channel that took its place", () => {
       const store = quickStore();
       const left = joinChannel(store, "orders");
