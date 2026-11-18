@@ -245,13 +245,9 @@ export function useSavedTableState<Values>(
     const flushWhenHidden = () => {
       if (document.visibilityState === "hidden") void controller.flush();
     };
-    // A closing page has no time to wait for an answer.
-    window.addEventListener("pagehide", controller.flushWithoutWaiting);
     document.addEventListener("visibilitychange", flushWhenHidden);
-    return () => {
-      window.removeEventListener("pagehide", controller.flushWithoutWaiting);
+    return () =>
       document.removeEventListener("visibilitychange", flushWhenHidden);
-    };
   }, [controller]);
 
   // The setters are rebuilt only when the part names change, not when `parts` is a new object.
@@ -450,27 +446,30 @@ function createController<Values>(
     tell(error, action);
   };
 
-  /** Sends what waits in every channel now. For a closing page only. */
-  const sendWithoutWaiting = (): void => {
+  /** A closing page has no time to wait for an answer. */
+  const onPageExit = (): void => {
+    // Off screen, a change that waits stays where it is: only what is queued is sent.
+    if (active) queuePending();
     for (const busy of busyChannels) busy.sendNewestNow();
   };
 
-  /** Ends the watch that `watchForExit` started. `undefined` when there is none. */
-  let unwatchExit: (() => void) | undefined;
+  /** Whether the hook listens for a closing page. */
+  let watchesExit = false;
+
+  const watchExit = (): void => {
+    if (watchesExit) return;
+    window.addEventListener("pagehide", onPageExit);
+    watchesExit = true;
+  };
 
   /**
-   * Watches for a closing page once the table has left the screen, until the store has
-   * answered every write of this hook. The table's own listeners are gone by then, and a save
-   * may still wait behind one on its way.
+   * Stops listening once the table is off screen and the store has answered every write of
+   * this hook. Until then a save may still wait behind one on its way.
    */
-  const watchForExit = (): void => {
-    if (unanswered === 0 || unwatchExit !== undefined) return;
-    window.addEventListener("pagehide", sendWithoutWaiting);
-    unwatchExit = () => {
-      window.removeEventListener("pagehide", sendWithoutWaiting);
-      unwatchExit = undefined;
-    };
-    whenAnswered.push(() => unwatchExit?.());
+  const unwatchExitWhenDone = (): void => {
+    if (active || unanswered > 0 || !watchesExit) return;
+    window.removeEventListener("pagehide", onPageExit);
+    watchesExit = false;
   };
 
   /** Forgets the change waiting out the delay. Its parts stay in `unsaved`. */
@@ -529,6 +528,7 @@ function createController<Values>(
       unanswered -= 1;
       if (target.isIdle()) busyChannels.delete(target);
       if (unanswered > 0) return;
+      unwatchExitWhenDone();
       for (const tell of whenAnswered.splice(0)) tell();
     };
     target.write({ ...write, done });
@@ -684,8 +684,7 @@ function createController<Values>(
      */
     begin(start: Snapshot<Values>): void {
       active = true;
-      // The table listens to the page itself again.
-      unwatchExit?.();
+      watchExit();
       const isNewKey = start.key !== live.key;
       if (isNewKey) {
         live = start;
@@ -718,7 +717,7 @@ function createController<Values>(
       active = false;
       queuePending();
       leave();
-      watchForExit();
+      unwatchExitWhenDone();
     },
 
     /**
@@ -777,15 +776,6 @@ function createController<Values>(
       return new Promise((resolve) => {
         whenAnswered.push(() => resolve(isAllSaved()));
       });
-    },
-
-    /**
-     * Sends what waits now, as one request per key, without waiting for the store to answer
-     * a write already on its way. For a closing page only.
-     */
-    flushWithoutWaiting(): void {
-      queuePending();
-      sendWithoutWaiting();
     },
 
     clear(): void {
