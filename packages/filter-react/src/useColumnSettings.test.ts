@@ -1,6 +1,13 @@
 import type { ColumnDefinition, ColumnSettings } from "@arvilmena/filter-core";
-import { act, renderHook } from "@testing-library/react";
-import { createElement, useState } from "react";
+import { act, render, renderHook } from "@testing-library/react";
+import {
+  createElement,
+  Fragment,
+  Suspense,
+  startTransition,
+  use,
+  useState,
+} from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -31,6 +38,35 @@ const visibleKeys = (state: ColumnSettingsState<Column>): string =>
 function Keys() {
   const state = useColumnSettings({ columns: COLUMNS });
   return createElement("p", null, visibleKeys(state));
+}
+
+/** What the transition test shares with the page it draws. */
+const gate: {
+  isOpen: boolean;
+  opened: Promise<void>;
+  actions?: ColumnSettingsState<Column>["actions"];
+} = { isOpen: true, opened: Promise.resolve() };
+
+/** Cannot be drawn while the price column is hidden, until the gate opens. */
+function Blocker({ hidden }: { hidden: readonly string[] }) {
+  if (!gate.isOpen && hidden.includes("price")) use(gate.opened);
+  return null;
+}
+
+/** A page that draws the picker's list as text, with a part that can hold a drawing back. */
+function GatedPage() {
+  const state = useColumnSettings({ columns: COLUMNS });
+  gate.actions = state.actions;
+  return createElement(
+    Fragment,
+    null,
+    createElement("p", null, shape(state)),
+    createElement(
+      Suspense,
+      { fallback: null },
+      createElement(Blocker, { hidden: state.settings.hidden }),
+    ),
+  );
 }
 
 /** Runs the hook with the hook keeping the settings ("uncontrolled"). */
@@ -130,6 +166,70 @@ describe("useColumnSettings", () => {
     });
     expect(shape(result.current)).toBe("notes name price stock");
     expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("should build a second action in the same event on the first when the app owns the settings", () => {
+    const { result, onChange } = renderControlled(null);
+    act(() => {
+      result.current.actions.move("notes", 0);
+      result.current.actions.toggle("notes");
+    });
+    expect(shape(result.current)).toBe("notes name price stock");
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("should build on the settings the app put on screen, not on an older proposal", () => {
+    const fromApp: ColumnSettings = {
+      order: ["stock", "name", "price", "notes"],
+      hidden: [],
+    };
+    let answerWithOwn = true;
+    const { result } = renderHook(() => {
+      const [value, setValue] = useState<ColumnSettings | null>(null);
+      return useColumnSettings({
+        columns: COLUMNS,
+        value,
+        // The app answers the first change with settings of its own.
+        onChange: (next) => {
+          setValue(answerWithOwn ? fromApp : next);
+          answerWithOwn = false;
+        },
+      });
+    });
+    act(() => result.current.actions.toggle("notes"));
+    expect(result.current.settings).toBe(fromApp);
+    // Straight after, before the first event is over. The app's settings are on screen by
+    // now, so this change starts from them and not from what the first action asked for.
+    act(() => result.current.actions.toggle("price"));
+    expect(shape(result.current)).toBe("stock name (price) notes");
+  });
+
+  it("should build on a change that is still waiting in a transition", async () => {
+    let openGate = () => {};
+    const opened = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    gate.opened = opened;
+    gate.isOpen = false;
+    const { container, unmount } = render(createElement(GatedPage));
+    const actions = gate.actions;
+    const drawn = () => container.querySelector("p")?.textContent;
+
+    // A transition (a change React may put on screen later). This one cannot be drawn yet,
+    // so React keeps it waiting and the screen stays as it was.
+    await act(async () => {
+      startTransition(() => actions?.toggle("price"));
+    });
+    expect(drawn()).toBe("name price stock (notes)");
+    // A change React draws at once. It must not undo the one that is waiting.
+    await act(async () => actions?.move("stock", 0));
+    gate.isOpen = true;
+    openGate();
+    await act(async () => {
+      await opened;
+    });
+    expect(drawn()).toBe("stock name (price) (notes)");
+    unmount();
   });
 
   it("should start from the settings an app read from storage", () => {

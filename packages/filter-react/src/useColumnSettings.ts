@@ -108,15 +108,22 @@ export function useColumnSettings<Column extends ColumnDefinition>(
   // The actions read the newest props through this ref, so they can stay the same functions
   // from one render to the next. It is written after React has put a render on screen, not
   // while rendering: React may throw a render away, and its props must not reach the actions.
-  const latest = useRef({ settings, columns, onChange, isControlled });
+  const latest = useRef({ settings, saved, columns, onChange, isControlled });
   useEarlyEffect(() => {
-    latest.current = { settings, columns, onChange, isControlled };
+    latest.current = { settings, saved, columns, onChange, isControlled };
   });
 
-  // The settings proposed by an action in the event being handled now, if any. A second action
-  // in the same event builds on them, not on the old settings. They are forgotten once the
-  // event is over: an app that owns the settings may have turned the change down.
-  const proposed = useRef<ColumnSettings | null>(null);
+  // The settings an action asked for that are not on screen yet, with the saved settings that
+  // were on screen when it asked (`from`). The next action builds on them, not on the old
+  // settings, in two cases:
+  // - a second action in the same event, as in `useFilterBuilder`;
+  // - when the hook keeps the settings, an action that follows a change React has not drawn
+  //   yet, such as one made in a transition (a change React may put on screen later).
+  //   Building on the old settings there would undo the waiting change.
+  const proposed = useRef<{
+    settings: ColumnSettings;
+    from: ColumnSettings | null | undefined;
+  } | null>(null);
 
   const apply = useCallback(
     (
@@ -125,19 +132,34 @@ export function useColumnSettings<Column extends ColumnDefinition>(
         settings: ColumnSettings,
       ) => ColumnSettings,
     ) => {
-      const before = proposed.current ?? latest.current.settings;
-      const next = change(latest.current.columns, before);
+      const now = latest.current;
+      // Once other saved settings are on screen, what was asked for before them is out of
+      // date. Building on it would drop whatever the newer settings hold.
+      const waiting =
+        proposed.current?.from === now.saved ? proposed.current : null;
+      const before =
+        waiting === null
+          ? now.settings
+          : // The column list may have changed while the settings waited.
+            reconcileColumnSettings(now.columns, waiting.settings);
+      const next = change(now.columns, before);
       // The actions return the same settings when nothing changed.
       if (next === before) return;
-      if (proposed.current === null) {
-        // Runs as soon as the event's own code has finished.
+      const mine = { settings: next, from: now.saved };
+      proposed.current = mine;
+      if (now.isControlled) {
+        // An app that owns the settings may turn the change down, and then nothing new ever
+        // comes on screen. So what was asked for is forgotten as soon as the event's own
+        // code has finished.
         queueMicrotask(() => {
-          proposed.current = null;
+          if (proposed.current === mine) proposed.current = null;
         });
+      } else {
+        // The hook's own change always reaches the screen, so it waits for as long as React
+        // takes to draw it.
+        setOwn(next);
       }
-      proposed.current = next;
-      if (!latest.current.isControlled) setOwn(next);
-      latest.current.onChange?.(next);
+      now.onChange?.(next);
     },
     [],
   );
