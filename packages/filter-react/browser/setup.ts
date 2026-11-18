@@ -2,12 +2,10 @@ import { afterEach } from "vitest";
 import { commands, page } from "vitest/browser";
 import "../styles.css";
 import { unmountAll } from "./support/mount";
+import { VIEWPORT } from "./viewport";
 
 // Runs before every test file. Each test starts from the same page: nothing drawn, the usual
 // window size, a light theme, and the mouse parked away from anything it could hover over.
-
-/** The window size the suite runs at. Keep it the same as `viewport` in the config. */
-export const VIEWPORT = { width: 1024, height: 768 } as const;
 
 afterEach(async () => {
   unmountAll();

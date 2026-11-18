@@ -4,12 +4,10 @@ import { defineConfig } from "vitest/config";
 import { baselinePath } from "./browser/baselines.ts";
 import { browserCommands } from "./browser/commands.ts";
 import { fixturePages } from "./browser/fixture-server.ts";
+import { VIEWPORT } from "./browser/viewport.ts";
 
 // The real-browser suite: `pnpm test:browser`. It is separate from `vitest.config.ts`, which
 // runs the quick tests in a simulated page and needs no browser.
-
-/** One size for every browser, so layouts and screenshots do not depend on the machine. */
-const VIEWPORT = { width: 1024, height: 768 };
 
 const provider = playwright({
   contextOptions: {
