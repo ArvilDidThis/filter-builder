@@ -169,10 +169,9 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const popoverId = useId();
   const hintId = useId();
 
-  const labels = useMemo(
-    () => ({ ...COLUMN_PICKER_LABELS, ...labelOverrides }),
-    [labelOverrides],
-  );
+  // An app often writes `labels={{ … }}` in place, which is a new object on every render. So
+  // nothing below may depend on this object staying the same. A row is given finished text.
+  const labels = { ...COLUMN_PICKER_LABELS, ...labelOverrides };
 
   // One function for the picker's life. A new one on each render would make React detach the
   // button and attach it again every time.
@@ -310,7 +309,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
                 count={orderedColumns.length}
                 isDragging={drag.from === index}
                 key={entry.column.key}
-                labels={labels}
+                moveLabel={labels.move(entry.column.label)}
                 onDragStart={drag.start}
                 onMove={moveTo}
                 renderRow={renderRow}
@@ -356,7 +355,11 @@ interface RowProps<Column extends ColumnDefinition> {
   count: number;
   isDragging: boolean;
   drop: DropMark;
-  labels: ColumnPickerLabels;
+  /**
+   * The name of the row's handle. It is text, not the wording object, because text compares
+   * equal from one render to the next and so does not make the row redraw.
+   */
+  moveLabel: string;
   hintId: string;
   actions: ColumnSettingsActions<Column["key"]>;
   onDragStart: (event: PointerEvent<HTMLElement>, index: number) => void;
@@ -374,7 +377,7 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
   count,
   isDragging,
   drop,
-  labels,
+  moveLabel,
   hintId,
   actions,
   onDragStart,
@@ -400,7 +403,7 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
     handleProps: {
       type: "button",
       style: HANDLE_STYLE,
-      "aria-label": labels.move(column.label),
+      "aria-label": moveLabel,
       "aria-describedby": hintId,
       "data-fb-column-handle": "",
       onPointerDown: (event) => onDragStart(event, index),

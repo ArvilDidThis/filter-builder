@@ -65,10 +65,21 @@ const renderRow: ColumnPickerProps["renderRow"] = (row) => {
     </>
   );
 };
-/** An app with the long column list. */
-function ManyApp() {
+/** An app with the long column list. With `inlineLabels`, it writes its wording in place. */
+function ManyApp({ inlineLabels = false }: { inlineLabels?: boolean }) {
   const state = useColumnSettings({ columns: MANY });
-  return <ColumnPicker renderRow={renderRow} state={state} />;
+  return (
+    <ColumnPicker
+      // A new object, holding a new function, on every render.
+      labels={
+        inlineLabels
+          ? { title: "Table columns", move: (label) => `Move ${label}` }
+          : undefined
+      }
+      renderRow={renderRow}
+      state={state}
+    />
+  );
 }
 
 /** Draws the app. With `open`, it also opens the picker, as most tests need. */
@@ -560,6 +571,19 @@ describe("ColumnPicker", () => {
       drawn.mockClear();
       fireEvent.click(checkbox("Column 7"));
       expect(drawn.mock.calls).toEqual([["c7"]]);
+    });
+
+    it("should redraw only the changed rows when the wording is written in place", () => {
+      render(<ManyApp inlineLabels />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      drawn.mockClear();
+      fireEvent.click(checkbox("Column 7"));
+      expect(drawn.mock.calls).toEqual([["c7"]]);
+      drawn.mockClear();
+      fireEvent.pointerDown(handle("Column 0"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      expect(drawn.mock.calls).toEqual([["c0"], ["c3"]]);
     });
 
     it("should redraw only the rows whose drop line changes during a drag", () => {
