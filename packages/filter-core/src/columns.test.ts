@@ -157,6 +157,23 @@ describe("reconcileColumnSettings", () => {
     expect(reconcileColumnSettings(COLUMNS, saved).hidden).toEqual(["notes"]);
   });
 
+  it("should give a new column its starting visibility even if the saved hidden list names it", () => {
+    // "price" and "notes" are new: the saved order does not name them. "price" starts shown.
+    const saved = { order: ["name", "stock"], hidden: ["price", "stock"] };
+    expect(reconcileColumnSettings(COLUMNS, saved)).toEqual({
+      order: ["name", "price", "stock", "notes"],
+      hidden: ["stock", "notes"],
+    });
+  });
+
+  it("should keep the usable hidden keys when the saved order names no column of the list", () => {
+    const saved = { order: ["gone"], hidden: ["price"] };
+    expect(reconcileColumnSettings(COLUMNS, saved)).toEqual({
+      order: ["name", "price", "stock", "notes"],
+      hidden: ["price", "notes"],
+    });
+  });
+
   it("should keep a column shown that a person chose to show", () => {
     const saved = { order: ["name", "price", "stock", "notes"], hidden: [] };
     expect(reconcileColumnSettings(COLUMNS, saved)).toBe(saved);

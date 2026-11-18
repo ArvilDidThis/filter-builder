@@ -54,8 +54,11 @@ export function defaultColumnSettings(
  * Fits saved settings to the column list an app has now. Call it on anything read from storage.
  *
  * - A saved key that is no longer a column is dropped, and so is a key saved twice.
- * - A column the saved order does not name is new. It goes after the column it follows in the
- *   list, and starts shown or hidden as the list says.
+ * - A column the saved order does not name is new. It goes after the nearest saved column
+ *   before it in the list, or first if there is none. It starts shown or hidden as the list
+ *   says, even if the saved hidden keys name it.
+ * - A saved order that is broken, or names no column of the list, cannot tell which columns
+ *   are new. The list's own order is used, and the saved hidden keys still count.
  * - A column that cannot be hidden is never hidden.
  * - A broken part falls back to the defaults. Nothing here throws.
  *
@@ -102,8 +105,16 @@ export function reconcileColumnSettings(
 
   // With no usable saved list of hidden columns, every column takes its starting visibility.
   const hasSavedHidden = Array.isArray(hidden);
+  // A saved hidden key counts only for a column the saved order names: any other column is new,
+  // and starts as the list says. A saved order that names no column of the list cannot tell
+  // which columns are new, so then every saved hidden key is kept.
+  const orderTellsNew = savedOrder.length > 0;
   const nextHidden = hasSavedHidden
-    ? cleanKeys(hidden, (key) => isHideable(lookup.get(key)))
+    ? cleanKeys(
+        hidden,
+        (key) =>
+          isHideable(lookup.get(key)) && (!orderTellsNew || wasSaved.has(key)),
+      )
     : [];
   const isHidden = new Set(nextHidden);
   for (const [key, column] of lookup) {
