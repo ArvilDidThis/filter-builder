@@ -1,6 +1,6 @@
 import type { FieldDefinition, FilterDefinition } from "@arvilmena/filter-core";
 import { useState } from "react";
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { ColumnPickerProps } from "../src/ui/ColumnPicker";
 import { FilterBuilder } from "../src/ui/FilterBuilder";
@@ -140,6 +140,8 @@ describe("a press in a closed shadow tree that is stopped on its way down", () =
     async ({ above }) => {
       const { host, shadow, container } = shadowStage("closed");
       const letThrough = stopPressesAt(above ? document.body : host);
+      // Also when a check below fails, so that later tests get their presses.
+      onTestFinished(letThrough);
       mount(<PickerApp />, container);
       const picker = await openPicker(shadow);
 
