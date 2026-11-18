@@ -165,8 +165,17 @@ may have written it. `readSavedState` therefore never throws:
 - A value that is not a saved state at all gives every part its default.
 
 `filterStatePart` reads a filter as loosely as matching does, so a saved filter keeps returning
-the same rows. `columnStatePart` fits the saved settings to the column list with
-`reconcileColumnSettings`.
+the same rows. It turns down one filter: a filter nested more than `MAX_SAVED_FILTER_DEPTH`
+(200) groups deep, which no person builds and which could stop the page. `columnStatePart` fits
+the saved settings to the column list with `reconcileColumnSettings`.
+
+`readSavedState` hands out only the parts you name. To save some parts and keep the others,
+read them all with `readSavedParts`, which upgrades them but does not check them:
+
+```ts
+const before = readSavedParts(await store.load("orders")) ?? {};
+await store.save("orders", createSavedState({ ...before, pageSize: 50 }));
+```
 
 When the shape of a part changes, raise `version` and pass `migrate`. It gets the saved parts
 and the version that wrote them, and returns the parts in today's shape. Without `migrate`, a
@@ -205,14 +214,28 @@ const saved = readCookieState(request.headers.get("cookie") ?? "", "orders");
 const state = readSavedState(saved, parts);
 ```
 
+Use a cookie for a small state only, and know its limits:
+
+- **Only about 2 KB of state fits.** The value is encoded to be safe in a cookie, which makes
+  the JSON about twice as long. A filter of about 25 simple conditions fills the cookie.
+- **Every key is a cookie of its own, and the browser sends them all with every request.**
+  Several of them can pass the size a server accepts for a request's headers, often 8 KB to
+  16 KB in total. The server then refuses every request to the site, not only the table's.
+- **The page path as the key adds a cookie per page.** Give each table a `name` or an `id`.
+- **`maxBytes` caps each cookie.** It defaults to 4096, the most a browser keeps. Lower it when
+  several tables save cookies: `cookieStore({ maxBytes: 1024 })`.
+
+For a larger state, use the fetch store or local storage.
+
 **Fetch** keeps the state on the app's own server. It sends a GET to load, a PUT with a JSON
-body to save and a DELETE to remove. A 404 on load means nothing is saved, and any other
-failure rejects with a `FetchStoreError`.
+body to save and a DELETE to remove. On load, a 404, a 204 or an empty body means nothing is
+saved. Any other failure rejects with a `FetchStoreError`.
 
 ```ts
 const store = fetchStore({
   // Text gets the key as a query parameter: "/api/table-state?key=orders".
-  // A function builds the address itself: (key) => `/api/table-state/${key}`.
+  // A function builds the address itself. Encode the key: it may be a page path with "/".
+  //   url: (key) => `/api/table-state/${encodeURIComponent(key)}`,
   url: "/api/table-state",
   // Called for every request, so it can hand out a fresh token.
   headers: () => ({ authorization: `Bearer ${token()}` }),
@@ -223,6 +246,10 @@ const store = fetchStore({
 
 The fetch store sends a request only to the address you give, and adds no credentials of its
 own. What the browser sends by itself, such as same-site cookies, is set with `init`.
+
+A `headers` function may answer with a promise, and the request starts only once that promise
+has settled. A slow promise, such as one that fetches a new token, can therefore lose the save
+a closing page makes, even with `keepalive`. Answer at once from a token the app already holds.
 
 **Your own store** is an object with `load`, `save` and `remove`. Each may answer at once or
 with a promise. `load` answers `undefined` or `null` when nothing is saved.
@@ -237,7 +264,8 @@ const sessionStore: StateStore = {
 };
 ```
 
-For a builder screen, a column picker and a hook that saves the state, see `@arvilmena/filter-react`. The full guide is in the
+For a builder screen, a column picker and a hook that saves the state, see
+`@arvilmena/filter-react`. The full guide is in the
 [repository](https://github.com/ArvilDidThis/filter-builder#readme).
 
 This project is not affiliated with or endorsed by SpryMedia Ltd or DataTables.

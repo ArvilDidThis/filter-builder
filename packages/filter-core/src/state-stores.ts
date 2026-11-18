@@ -141,8 +141,8 @@ export class CookieTooLargeError extends Error {
  * Only a small state fits. The value is encoded to be safe in a cookie, which makes the JSON
  * about twice as long, so about 2 KB of state fills the cookie. Each key is a cookie of its
  * own, and the browser sends them all with every request. Several of them can pass the size a
- * server accepts for a request's headers (often 8 KB in total), and the server then refuses
- * every request. Give each table a `name` or an `id`, so that the page path is not used as the
+ * server accepts for a request's headers (often 8 KB to 16 KB in total), and the server then
+ * refuses every request. Give each table a `name` or an `id`, so that the page path is not used as the
  * key: that adds a cookie per page. Lower `maxBytes` to cap each cookie. For a larger state,
  * use `fetchStore` or `localStorageStore`.
  *
@@ -291,6 +291,10 @@ export interface FetchStoreOptions {
   /**
    * Extra headers, such as a sign-in token. A function is called for every request, so it can
    * hand out a fresh token, and may answer with a promise.
+   *
+   * The request starts only once that promise has settled. A promise that waits for something
+   * slow, such as a request for a new token, can therefore lose the save a closing page makes,
+   * even with `keepalive`. Answer at once from a token the app already holds where you can.
    */
   headers?:
     | StateFetchHeaders
