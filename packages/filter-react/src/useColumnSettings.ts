@@ -139,10 +139,19 @@ export function useColumnSettings<Column extends ColumnDefinition>(
       ) => ColumnSettings,
     ) => {
       const now = latest.current;
-      // Once other saved settings are on screen, what was asked for before them is out of
-      // date. Building on it would drop whatever the newer settings hold.
-      const waiting =
-        proposed.current?.from === now.saved ? proposed.current : null;
+      const asked = proposed.current;
+      // Whether what was asked for is still to come on screen, and so is what to build on.
+      const isWaiting =
+        asked !== null &&
+        (now.isControlled
+          ? // Once other saved settings are on screen, what was asked for before them is
+            // out of date. Building on it would drop whatever the newer settings hold.
+            asked.from === now.saved
+          : // The hook's own change waits until that very change is on screen. React may
+            // draw an earlier change first, and that must not end the wait. Each change is
+            // built on the one before, so the newest one holds them all.
+            asked.settings !== now.saved);
+      const waiting = isWaiting ? asked : null;
       const before =
         waiting === null
           ? now.settings

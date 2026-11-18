@@ -232,6 +232,35 @@ describe("useColumnSettings", () => {
     unmount();
   });
 
+  it("should keep a waiting change when an earlier one is drawn first", async () => {
+    let openGate = () => {};
+    const opened = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    gate.opened = opened;
+    gate.isOpen = false;
+    const { container, unmount } = render(createElement(GatedPage));
+    const actions = gate.actions;
+    const drawn = () => container.querySelector("p")?.textContent;
+
+    // Two changes in one event. React draws the first at once, and keeps the second waiting
+    // in a transition (a change React may put on screen later) that cannot be drawn yet.
+    await act(async () => {
+      actions?.move("stock", 0);
+      startTransition(() => actions?.toggle("price"));
+    });
+    expect(drawn()).toBe("stock name price (notes)");
+    // The first change is on screen now. This one must still build on the waiting one.
+    await act(async () => actions?.toggle("notes"));
+    gate.isOpen = true;
+    openGate();
+    await act(async () => {
+      await opened;
+    });
+    expect(drawn()).toBe("stock name (price) notes");
+    unmount();
+  });
+
   it("should start from the settings an app read from storage", () => {
     const { result } = renderUncontrolled({
       defaultValue: { order: ["stock", "gone", "name"], hidden: ["stock"] },
