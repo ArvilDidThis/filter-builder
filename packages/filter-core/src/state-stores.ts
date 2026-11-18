@@ -311,16 +311,19 @@ export interface FetchStoreOptions {
   fetch?: StateFetch;
 }
 
+/** What a store can be asked to do. */
+type StoreAction = "load" | "save" | "remove";
+
 /** A request to the app's server failed, or the server turned it down. */
 export class FetchStoreError extends Error {
   override name = "FetchStoreError";
   /** What the store was doing. */
-  readonly action: "load" | "save" | "remove";
+  readonly action: StoreAction;
   /** The HTTP status the server answered with, or `undefined` when no answer came. */
   readonly status: number | undefined;
 
   constructor(
-    action: "load" | "save" | "remove",
+    action: StoreAction,
     status: number | undefined,
     reason: string,
     cause?: unknown,
@@ -356,7 +359,7 @@ export class FetchStoreError extends Error {
  */
 export function fetchStore(options: FetchStoreOptions): StateStore {
   const send = async (
-    action: "load" | "save" | "remove",
+    action: StoreAction,
     method: string,
     key: string,
     body?: string,
