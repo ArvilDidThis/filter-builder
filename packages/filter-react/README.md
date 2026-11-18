@@ -228,14 +228,17 @@ function ProductColumns() {
               />
               {column.label}
             </label>
+            {/* Named for a screen reader, which would otherwise hear "Up" once per row. */}
             <button
               type="button"
+              aria-label={`Move ${column.label} up`}
               onClick={() => actions.move(column.key, index - 1)}
             >
               Up
             </button>
             <button
               type="button"
+              aria-label={`Move ${column.label} down`}
               onClick={() => actions.move(column.key, index + 1)}
             >
               Down
