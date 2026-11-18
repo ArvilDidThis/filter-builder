@@ -1873,6 +1873,40 @@ describe("ColumnPicker", () => {
       host.remove();
     });
 
+    // A limit that has no fix. A closed tree hides from the page whether a press inside it
+    // was on the picker or beside it. Only a listener inside the tree can tell, and it never
+    // hears a press that was stopped before it got there. So the picker stays open: closing
+    // on a guess would also close it for a press on its own rows.
+    it.each([
+      { where: "at the tree's host", stopAt: (host: Element) => host },
+      { where: "above the tree's host", stopAt: () => document.body },
+    ])(
+      "should stay open on a press beside it in a closed shadow tree that is stopped on its way down $where",
+      ({ stopAt }) => {
+        const host = document.createElement("div");
+        document.body.append(host);
+        const container = document.createElement("div");
+        const beside = document.createElement("p");
+        host.attachShadow({ mode: "closed" }).append(container, beside);
+        const { unmount } = render(<App extra={{}} />, { container });
+        const inside = within(container);
+        fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+
+        const stop = (press: Event) => press.stopPropagation();
+        const stopper = stopAt(host);
+        stopper.addEventListener("pointerdown", stop, true);
+        fireEvent.pointerDown(beside);
+        expect(inside.queryByRole("dialog")).not.toBeNull();
+
+        // The same press closes the picker once nothing stops it.
+        stopper.removeEventListener("pointerdown", stop, true);
+        fireEvent.pointerDown(beside);
+        expect(inside.queryByRole("dialog")).toBeNull();
+        unmount();
+        host.remove();
+      },
+    );
+
     it("should stay open on a press on a control the app slots into a row in a closed shadow tree", () => {
       // An app's own row can hold a slot: a gap that shows an element the app keeps outside
       // the tree, as a child of the host. The page sees that element, so a press on it is

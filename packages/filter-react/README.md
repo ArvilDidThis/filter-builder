@@ -224,6 +224,10 @@ Load the stylesheet again where the picker is drawn in one of these:
 Without it the list is not drawn as a popover, and the text meant only for screen readers
 shows on the page. The same holds for the ready-made builder.
 
+Inside a closed shadow root, a press beside an open picker does not close it when other code
+stops that press on its way down (in the capture phase) at the root's host or above it,
+because the picker then never hears the press.
+
 ## Your own column picker
 
 `useColumnSettings` holds no markup. It returns every column in order (`orderedColumns`), the
