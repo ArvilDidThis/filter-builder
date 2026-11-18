@@ -476,6 +476,28 @@
   outline: none;
 }
 
+/* The search box above the list, and the line below it that says how many columns match. */
+.fb-columns-search {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* A browser gives a search box a look of its own, such as round ends in Safari. This takes
+   it off, so the box looks like the library's other controls. */
+.fb-columns-search-input {
+  appearance: none;
+}
+
+.fb-columns-search-status {
+  margin: 0;
+  padding: 0 0.375rem;
+  color: var(--fb-muted);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
 .fb-columns-list {
   max-height: 20rem;
   margin: 0;

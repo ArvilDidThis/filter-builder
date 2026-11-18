@@ -2,6 +2,7 @@ import {
   type ColumnDefinition,
   moveColumnAroundPinned,
   type OrderedColumn,
+  searchColumns,
   unpinnedRange,
 } from "@arvilmena/filter-core";
 import {
@@ -26,7 +27,7 @@ import { useOutsidePointerDown } from "./useOutsidePointerDown";
 
 // A ready-made column picker with default styling: a button that opens a list of every column.
 // Each row has a checkbox that shows or hides the column, and a handle that moves it. A pinned
-// column has no handle: it stays at its end of the list.
+// column has no handle: it stays at its end of the list. A long list has a search box above it.
 //
 // It uses plain HTML controls and the class names in `styles.css`, so it needs no UI kit. An app
 // that wants a different design draws its own picker from `useColumnSettings`.
@@ -54,6 +55,15 @@ export interface ColumnPickerLabels {
   moved: (label: string, position: number, total: number) => string;
   /** Read out after the name of a pinned column, to say that it cannot be moved. */
   pinnedHint: string;
+  /** The name of the search box, and the grey text shown in it while it is empty. */
+  search: string;
+  /**
+   * Shown below the search box and read out, to say how many columns match. `count` is how
+   * many are listed and `total` how many the table has.
+   */
+  searchCount: (count: number, total: number) => string;
+  /** Shown after the count, to say why no column can be moved while a search is on. */
+  searchMoveHint: string;
   /** Read out once the "show all" button has shown every column. */
   showAllDone: string;
   /** Read out once the "reset" button has put the starting settings back. */
@@ -73,6 +83,10 @@ export const COLUMN_PICKER_LABELS: ColumnPickerLabels = {
   moved: (label, position, total) =>
     `${label} moved to position ${position} of ${total}.`,
   pinnedHint: "This column is pinned in place and cannot be moved.",
+  search: "Search columns",
+  searchCount: (count, total) =>
+    count === 0 ? "No columns match." : `${count} of ${total} columns match.`,
+  searchMoveHint: "Clear the search to move columns.",
   showAllDone: "All columns are shown.",
   resetDone: "The columns are back in their starting order and visibility.",
 };
@@ -116,8 +130,9 @@ export interface ColumnPickerRow<
   /** Whether this row is the one being dragged. */
   isDragging: boolean;
   /**
-   * Whether a person may move the column now. It is false for a pinned column. Draw a handle
-   * only for a row that is movable, or draw it and let `handleProps` turn it off.
+   * Whether a person may move the column now. It is false for a pinned column, and for every
+   * column while a search narrows the list. Draw a handle only for a row that is movable, or
+   * draw it and let `handleProps` turn it off.
    */
   movable: boolean;
   /**
@@ -153,6 +168,13 @@ export interface ColumnPickerRow<
   };
 }
 
+/**
+ * With `search="auto"`, the picker has a search box when the table has more columns than this.
+ * The list shows about ten rows before it scrolls, so the box appears once a person would
+ * have to scroll to find a column.
+ */
+export const COLUMN_PICKER_SEARCH_THRESHOLD = 10;
+
 /** What the column picker needs from the app. */
 export interface ColumnPickerProps<
   Column extends ColumnDefinition = ColumnDefinition,
@@ -179,6 +201,19 @@ export interface ColumnPickerProps<
    * or every row redraws whenever the picker does.
    */
   renderRow?: (row: ColumnPickerRow<Column>) => ReactNode;
+  /**
+   * Whether the list has a search box that narrows it to the columns whose name matches.
+   *
+   * - `"auto"`, the default: only when the table has more than
+   *   `COLUMN_PICKER_SEARCH_THRESHOLD` columns (10).
+   * - `true`: always.
+   * - `false`: never.
+   *
+   * The search follows `columnMatchesSearch` of `@arvilmena/filter-core`. While a search is
+   * on, no column can be moved, because the rows between the listed ones are out of sight.
+   * "Show all" and "Reset" still act on every column.
+   */
+  search?: boolean | "auto";
   /** Added to the picker's own class, for an app's extra styling. */
   className?: string;
 }
@@ -189,6 +224,8 @@ export interface ColumnPickerProps<
  *
  * A column the app pinned (`pinned: "start"` or `"end"`) is listed at its end with no handle.
  * The other columns move between the pinned ones.
+ *
+ * A long list has a search box that narrows it by column name (see `search`).
  *
  * Load its style sheet once in the app: `import "@arvilmena/filter-react/styles.css"`.
  *
@@ -207,6 +244,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   align = "start",
   renderTrigger,
   renderRow,
+  search: searchMode = "auto",
   className,
 }: ColumnPickerProps<Column>) {
   const { orderedColumns, allVisible, isDefault, actions } = state;
@@ -224,6 +262,25 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const popoverId = useId();
   const hintId = useId();
   const pinnedHintId = useId();
+  const searchHintId = useId();
+
+  // What a person typed in the search box. It starts empty each time the picker opens.
+  const [typed, setTyped] = useState("");
+  // The popover's width when the search began. It is as wide as its longest name, so it
+  // would otherwise jump narrower and wider as the list changes under the typing.
+  const [widthAtSearch, setWidthAtSearch] = useState<number>();
+  const hasSearch =
+    searchMode === true ||
+    (searchMode === "auto" &&
+      orderedColumns.length > COLUMN_PICKER_SEARCH_THRESHOLD);
+  // A box that went away, as when the app's list became short, no longer narrows the list.
+  const query = hasSearch ? typed : "";
+  // The rows drawn. With no search this is the hook's own list, so nothing is copied.
+  const listedColumns = useMemo(
+    () => searchColumns(orderedColumns, query),
+    [orderedColumns, query],
+  );
+  const isSearching = listedColumns !== orderedColumns;
 
   // An app often writes `labels={{ … }}` in place, which is a new object on every render. So
   // nothing below may depend on this object staying the same. A row is given finished text.
@@ -237,6 +294,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 
   const close = (returnFocus: boolean) => {
     setOpen(false);
+    setTyped("");
     pendingMove.current = null;
     pendingButton.current = null;
     if (returnFocus) triggerRef.current?.focus();
@@ -288,6 +346,21 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     () => orderedColumns.map((entry) => entry.column.key),
     [orderedColumns],
   );
+  // Each column's place in the whole list. A listed row is told its real place, which is not
+  // its place among the listed rows while a search is on. It is only worked out then.
+  const placeByKey = useMemo(
+    () =>
+      isSearching ? new Map(keys.map((key, index) => [key, index])) : null,
+    [isSearching, keys],
+  );
+  // How many columns match, as text. It is read out whenever it changes.
+  const searchStatus = isSearching
+    ? labels.searchCount(listedColumns.length, orderedColumns.length)
+    : "";
+  useEffect(() => {
+    if (searchStatus !== "") announce(searchStatus);
+  }, [searchStatus, announce]);
+
   // The rows between the pinned ones. A dragged row may only be dropped among them.
   const free = useMemo(
     () =>
@@ -435,7 +508,8 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const drag = useColumnDrag({
     listRef,
     keys,
-    active: open,
+    // The rows on the page are not the whole list while a search is on, so nothing is dragged.
+    active: open && !isSearching,
     free,
     onDrop: moveTo,
   });
@@ -519,8 +593,45 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           id={popoverId}
           ref={popoverRef}
           role="dialog"
+          style={isSearching ? { minWidth: widthAtSearch } : undefined}
           tabIndex={-1}
         >
+          {hasSearch && (
+            <div className="fb-columns-search">
+              <input
+                aria-describedby={isSearching ? searchHintId : undefined}
+                aria-label={labels.search}
+                autoComplete="off"
+                className="fb-control fb-columns-search-input"
+                enterKeyHint="search"
+                onChange={(event) => {
+                  if (!isSearching) {
+                    setWidthAtSearch(
+                      popoverRef.current?.getBoundingClientRect().width,
+                    );
+                  }
+                  setTyped(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  // Escape first clears a search. Pressed again, it closes the picker.
+                  if (event.key !== "Escape" || typed === "") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setTyped("");
+                }}
+                placeholder={labels.search}
+                spellCheck={false}
+                type="search"
+                value={typed}
+              />
+              {isSearching && (
+                <p className="fb-columns-search-status">
+                  {searchStatus}{" "}
+                  <span id={searchHintId}>{labels.searchMoveHint}</span>
+                </p>
+              )}
+            </div>
+          )}
           {/* Read out after a handle's name. It is hidden, but a handle can still point at it. */}
           <span hidden id={hintId}>
             {labels.moveHint}
@@ -538,23 +649,27 @@ export function ColumnPicker<Column extends ColumnDefinition>({
             // biome-ignore lint/a11y/noRedundantRoles: see the lines above the list
             role="list"
           >
-            {orderedColumns.map((entry, index) => (
-              <Row
-                drop={dropMark(drag.slot, index, orderedColumns.length)}
-                entry={entry}
-                hintId={hintId}
-                index={index}
-                count={orderedColumns.length}
-                isDragging={drag.key === entry.column.key}
-                key={entry.column.key}
-                moveLabel={labels.move(entry.column.label)}
-                onDragStart={drag.start}
-                onMove={moveTo}
-                onToggle={toggle}
-                pinnedHintId={pinnedHintId}
-                renderRow={renderRow}
-              />
-            ))}
+            {listedColumns.map((entry, listedIndex) => {
+              const index = placeByKey?.get(entry.column.key) ?? listedIndex;
+              return (
+                <Row
+                  drop={dropMark(drag.slot, index, orderedColumns.length)}
+                  entry={entry}
+                  hintId={hintId}
+                  index={index}
+                  count={orderedColumns.length}
+                  isDragging={drag.key === entry.column.key}
+                  isSearching={isSearching}
+                  key={entry.column.key}
+                  moveLabel={labels.move(entry.column.label)}
+                  onDragStart={drag.start}
+                  onMove={moveTo}
+                  onToggle={toggle}
+                  pinnedHintId={pinnedHintId}
+                  renderRow={renderRow}
+                />
+              );
+            })}
           </ul>
           <div className="fb-columns-footer">
             <FooterButton
@@ -651,6 +766,8 @@ interface RowProps<Column extends ColumnDefinition> {
   /** How many rows the list has. */
   count: number;
   isDragging: boolean;
+  /** Whether a search narrows the list. No row can be moved then. */
+  isSearching: boolean;
   drop: DropMark;
   /**
    * The name of the row's handle. It is text, not the wording object, because text compares
@@ -675,6 +792,7 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
   index,
   count,
   isDragging,
+  isSearching,
   drop,
   moveLabel,
   hintId,
@@ -686,7 +804,7 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
 }: RowProps<Column>) {
   const { column, visible, hideable, pinned } = entry;
   const checkboxId = useId();
-  const movable = pinned === undefined;
+  const movable = pinned === undefined && !isSearching;
 
   const row: ColumnPickerRow<Column> = {
     column,

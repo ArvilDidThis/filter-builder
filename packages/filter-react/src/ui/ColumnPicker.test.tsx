@@ -20,7 +20,11 @@ import {
   vi,
 } from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
-import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
+import {
+  COLUMN_PICKER_SEARCH_THRESHOLD,
+  ColumnPicker,
+  type ColumnPickerProps,
+} from "./ColumnPicker";
 import { pressInOpenTree, stopPressesAt } from "./shadowPress.testing";
 import {
   placeFromSlot,
@@ -3000,5 +3004,209 @@ describe("ColumnPicker with pinned columns", () => {
     expect(slotWithin(4, free)).toBe(4);
     expect(slotWithin(5, free)).toBe(4);
     expect(slotWithin(5, undefined)).toBe(5);
+  });
+});
+
+/** An app whose table has a column list of any length. */
+function SearchApp({
+  columns,
+  extra = {},
+}: {
+  columns: readonly ColumnDefinition[];
+  extra?: Partial<ColumnPickerProps>;
+}) {
+  const state = useColumnSettings({ columns, onChange: changed });
+  return (
+    <>
+      <ColumnPicker state={state} {...extra} />
+      <Table columns={state.visibleColumns} />
+    </>
+  );
+}
+
+/** Draws the app with the search box always on, unless `extra` says otherwise, and opens it. */
+function renderSearch(
+  extra: Partial<ColumnPickerProps> = { search: true },
+  columns: readonly ColumnDefinition[] = COLUMNS,
+) {
+  changed.mockClear();
+  const rendered = render(<SearchApp columns={columns} extra={extra} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+  return rendered;
+}
+
+const searchBox = () =>
+  screen.getByRole<HTMLInputElement>("searchbox", { name: "Search columns" });
+const querySearchBox = () => screen.queryByRole("searchbox");
+const type = (text: string) =>
+  fireEvent.change(searchBox(), { target: { value: text } });
+/** The names listed, without the handles' marks. */
+const names = (): string[] =>
+  rows().map((row) => row.querySelector("label")?.textContent ?? "");
+
+describe("ColumnPicker search", () => {
+  describe("when the box is shown", () => {
+    const columnsOf = (count: number) => MANY.slice(0, count);
+
+    it("should show it by default only for a list longer than the threshold", () => {
+      const { unmount } = renderSearch(
+        {},
+        columnsOf(COLUMN_PICKER_SEARCH_THRESHOLD),
+      );
+      expect(querySearchBox()).toBeNull();
+      unmount();
+      renderSearch({}, columnsOf(COLUMN_PICKER_SEARCH_THRESHOLD + 1));
+      expect(querySearchBox()).not.toBeNull();
+    });
+
+    it("should always show it with `search`, and never with `search={false}`", () => {
+      const { unmount } = renderSearch({ search: true });
+      expect(querySearchBox()).not.toBeNull();
+      unmount();
+      renderSearch({ search: false }, MANY);
+      expect(querySearchBox()).toBeNull();
+    });
+
+    it("should take its wording from the labels", () => {
+      renderSearch({ search: true, labels: { search: "Find a column" } });
+      const box = screen.getByRole<HTMLInputElement>("searchbox", {
+        name: "Find a column",
+      });
+      expect(box.placeholder).toBe("Find a column");
+    });
+  });
+
+  it("should narrow the list to the columns whose name matches, ignoring case", () => {
+    renderSearch();
+    type("O");
+    expect(names()).toEqual(["Stock", "Notes"]);
+    type("pri");
+    expect(names()).toEqual(["Price"]);
+    type("");
+    expect(names()).toEqual(["Name", "Price", "Stock", "Notes"]);
+  });
+
+  it("should say how many columns match, on screen and to a screen reader", () => {
+    renderSearch();
+    type("o");
+    const status = document.querySelector(".fb-columns-search-status");
+    expect(status?.textContent).toBe(
+      "2 of 4 columns match. Clear the search to move columns.",
+    );
+    expect(announced()).toBe("2 of 4 columns match.");
+    type("zzz");
+    expect(rows.bind(null)).toThrow();
+    expect(announced()).toBe("No columns match.");
+    type("");
+    expect(document.querySelector(".fb-columns-search-status")).toBeNull();
+  });
+
+  it("should switch every move off while a search is on, and say why", () => {
+    renderSearch();
+    expect((handle("Stock") as HTMLButtonElement).disabled).toBe(false);
+    type("o");
+    const grip = handle("Stock") as HTMLButtonElement;
+    expect(grip.disabled).toBe(true);
+    // The search box points at the hint, so a screen reader hears it with the box.
+    const hintId = searchBox().getAttribute("aria-describedby") as string;
+    expect(document.getElementById(hintId)?.textContent).toBe(
+      "Clear the search to move columns.",
+    );
+    // A key or a press that reaches a handle all the same moves nothing.
+    layOutList();
+    fireEvent.keyDown(grip, { key: "Home" });
+    fireEvent.pointerDown(grip, pointer(115));
+    fireEvent.pointerUp(document, pointer(300));
+    expect(changed).not.toHaveBeenCalled();
+    expect(rows().some((row) => row.hasAttribute("data-dragging"))).toBe(false);
+
+    type("");
+    expect(searchBox().hasAttribute("aria-describedby")).toBe(false);
+    fireEvent.keyDown(handle("Stock"), { key: "Home" });
+    expect(names()).toEqual(["Stock", "Name", "Price", "Notes"]);
+  });
+
+  it("should tick and untick a listed column", () => {
+    renderSearch();
+    type("not");
+    fireEvent.click(checkbox("Notes"));
+    expect(table()).toBe("name price stock notes");
+    expect(names()).toEqual(["Notes"]);
+  });
+
+  it("should let Show all and Reset act on every column, not only the listed ones", () => {
+    renderSearch();
+    fireEvent.click(checkbox("Price"));
+    fireEvent.keyDown(handle("Stock"), { key: "Home" });
+    expect(table()).toBe("stock name");
+    // Only "Name" is listed. "Price" and "Notes" are hidden and out of sight.
+    type("nam");
+    expect(names()).toEqual(["Name"]);
+    fireEvent.click(showAll());
+    expect(table()).toBe("stock name price notes");
+    expect(announced()).toBe("All columns are shown.");
+    fireEvent.click(reset());
+    expect(table()).toBe("name price stock");
+    expect(announced()).toBe(
+      "The columns are back in their starting order and visibility.",
+    );
+    // The search stays as typed.
+    expect(names()).toEqual(["Name"]);
+  });
+
+  it("should tell an app's own row its real place and that it cannot move", () => {
+    const seen = new Map<string, { index: number; movable: boolean }>();
+    renderSearch({
+      search: true,
+      renderRow: (row) => {
+        seen.set(row.column.key, { index: row.index, movable: row.movable });
+        return (
+          <>
+            <input {...row.checkboxProps} />
+            <label htmlFor={row.checkboxProps.id}>{row.column.label}</label>
+          </>
+        );
+      },
+    });
+    expect(seen.get("stock")).toEqual({ index: 2, movable: true });
+    type("sto");
+    expect(names()).toEqual(["Stock"]);
+    expect(seen.get("stock")).toEqual({ index: 2, movable: false });
+  });
+
+  it("should clear the search with Escape, and close the picker with the next one", () => {
+    renderSearch();
+    type("o");
+    fireEvent.keyDown(searchBox(), { key: "Escape" });
+    expect(searchBox().value).toBe("");
+    expect(names()).toHaveLength(4);
+    fireEvent.keyDown(searchBox(), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("should start with an empty search each time the picker opens", () => {
+    renderSearch();
+    type("o");
+    const trigger = screen.getByRole("button", { name: /^Columns/ });
+    fireEvent.click(trigger);
+    fireEvent.click(trigger);
+    expect(searchBox().value).toBe("");
+    expect(names()).toHaveLength(4);
+  });
+
+  it("should redraw only the rows that stay listed, in a long list", () => {
+    render(<ManyApp />);
+    fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+    drawn.mockClear();
+    type("column 19");
+    // "Column 19", "Column 119" and "Column 190" to "Column 199". Each is drawn once, to turn
+    // its handle off, and the 188 rows that left the list are not drawn at all.
+    expect(names()).toHaveLength(12);
+    expect(drawn).toHaveBeenCalledTimes(12);
+    drawn.mockClear();
+    type("column 199");
+    // The one row that stays is not drawn again.
+    expect(names()).toEqual(["Column 199"]);
+    expect(drawn).not.toHaveBeenCalled();
   });
 });

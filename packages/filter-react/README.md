@@ -189,6 +189,47 @@ the pin from either, and also compiles for a list written with `as const`. Sever
 pinned to one end stand in the order of your column list, and each needs its own `left` or
 `right` offset in your CSS.
 
+### Searching the list
+
+A table with many columns makes a long list. The picker then has a search box above the list,
+which narrows it to the columns whose name matches what a person types.
+
+```tsx
+<ColumnPicker state={table} />                  {/* a box once the table has over 10 columns */}
+<ColumnPicker state={table} search />           {/* always a box */}
+<ColumnPicker state={table} search={false} />   {/* never a box */}
+```
+
+| `search`           | The search box is there                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `"auto"` (default) | When the table has more than 10 columns, which is when the list scrolls. The number is `COLUMN_PICKER_SEARCH_THRESHOLD`. |
+| `true`             | Always                                                                                                                   |
+| `false`            | Never                                                                                                                    |
+
+How the search works:
+
+- **Matching.** The column's label is searched, ignoring case. Every word typed must be in
+  the label, in any order, so "price close" finds "Close price".
+- **Moving is off while a search is on.** The rows between the listed ones are out of sight,
+  so a move could not show where the column lands. The handles are turned off, and a line
+  below the box says "Clear the search to move columns." Ticking a column still works.
+- **"Show all" and "Reset" act on every column,** not only the listed ones.
+- **A screen reader hears the count,** such as "3 of 40 columns match." The same line is
+  shown below the box.
+- **Escape clears the search.** Pressed again, it closes the picker. The search also starts
+  empty each time the picker opens.
+
+Replace the wording with `labels`: `search`, `searchCount` and `searchMoveHint`.
+
+A picker you draw yourself can use the same matching. `searchColumns` and
+`columnMatchesSearch` are pure functions in `@arvilmena/filter-core`:
+
+```tsx
+import { searchColumns } from "@arvilmena/filter-core";
+
+const listed = searchColumns(table.orderedColumns, typed);
+```
+
 ### Who keeps the settings
 
 The hook works like a form input. The settings are plain JSON, and the hook fits them to the
@@ -263,6 +304,7 @@ reports the difference. Saving table state is planned as a feature of its own.
 | `align`         | `"end"` lines the list up with the button's right edge                 |
 | `renderTrigger` | Draws your own button. Spread the props it is given onto the button    |
 | `renderRow`     | Draws the inside of one row from the `checkboxProps` and `handleProps` |
+| `search`        | `true` or `false` forces the search box on or off. See above           |
 | `className`     | Added to the picker's own class                                        |
 
 The list is kept inside the screen sideways. Where lining it up with the button would run it
