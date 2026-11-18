@@ -384,25 +384,28 @@ const builder = useFilterBuilder({
 The types come from the parts: `saved.values.pageSize` is a `number`, and `saved.set.pageSize`
 takes a number or a function from the old number to the new one.
 
-| Option        | Does                                                                      |
-| ------------- | ------------------------------------------------------------------------- |
-| `name`        | A name for the saved state. Wins over `id`                                |
-| `id`          | The table's id. With neither, the state is saved under the page's path    |
-| `parts`       | The parts to remember, by name                                            |
-| `store`       | Where the state is kept. Defaults to local storage                        |
-| `version`     | The version of your state format. Defaults to 1                           |
-| `migrate`     | Upgrades the parts of a value saved under another version                 |
-| `saveDelayMs` | How long to wait after the last change before saving. Defaults to 300     |
-| `onError`     | Called with the error and `"load"`, `"save"` or `"remove"` when one fails |
+| Option         | Does                                                                      |
+| -------------- | ------------------------------------------------------------------------- |
+| `name`         | A name for the saved state. Wins over `id`                                |
+| `id`           | The table's id. With neither, the state is saved under the page's path    |
+| `parts`        | The parts to remember, by name                                            |
+| `store`        | Where the state is kept. Defaults to local storage                        |
+| `initialSaved` | The saved value a server already read, for the first render               |
+| `version`      | The version of your state format. Defaults to 1                           |
+| `migrate`      | Upgrades the parts of a value saved under another version                 |
+| `saveDelayMs`  | How long to wait after the last change before saving. Defaults to 300     |
+| `onError`      | Called with the error and `"load"`, `"save"` or `"remove"` when one fails |
 
-| Result    | Holds                                                                    |
-| --------- | ------------------------------------------------------------------------ |
-| `values`  | Each part's value. A part stays the same object until that part changes  |
-| `set`     | One setter per part. The setters stay the same functions between renders |
-| `status`  | `"loading"`, `"ready"`, or `"error"` after a failed load, save or remove |
-| `error`   | What went wrong, while `status` is `"error"`                             |
-| `flush()` | Saves a waiting change now                                               |
-| `clear()` | Forgets the saved state and puts every part back to its default          |
+| Result        | Holds                                                                      |
+| ------------- | -------------------------------------------------------------------------- |
+| `values`      | Each part's value. A part stays the same object until that part changes    |
+| `set`         | One setter per part. The setters stay the same functions between renders   |
+| `status`      | `"loading"`, `"ready"`, or `"error"` after a failed load, save or remove   |
+| `error`       | What went wrong, while `status` is `"error"`                               |
+| `errorAction` | What failed, while `status` is `"error"`: `"load"`, `"save"` or `"remove"` |
+| `flush()`     | Saves a waiting change now. Its promise settles on the store's answer      |
+| `reload()`    | Reads the saved state again, for example after a failed load               |
+| `clear()`     | Forgets everything saved under the key, and puts back every default        |
 
 What the hook guarantees:
 
@@ -411,13 +414,120 @@ What the hook guarantees:
   paints, so the defaults do not flash.
 - **Nothing is saved before the load has finished.** A part you change in the meantime keeps
   your change, and is saved once the load is done.
-- **A failed load or save never breaks the table.** The parts keep working in memory. After a
-  failed load nothing is saved, so the stored state is not overwritten. `clear()` starts again.
+- **A failed load or save never breaks the table.** The parts keep working in memory. See
+  [When something fails](#when-something-fails).
 - **State is saved under the key it was loaded for.** When `name`, `id` or the page's path
   changes, a waiting change is saved under the old key, and the new key's state is loaded.
 - **Quick changes are saved together.** A waiting change is also saved when the page is hidden
   or closed, and when the table leaves the screen.
+- **Saves reach the store in order.** Each save or remove waits for the store's answer to the
+  one before it, so a slow answer cannot leave an older state in the store. Only a closing
+  page sends without waiting.
+- **Parts the hook does not own are kept.** A save writes back the other parts found under the
+  key. `clear()` removes them too.
 - **A saved value is checked before use.** A broken part falls back to its default alone.
+- **A part added to `parts` later gets a value at once:** the one saved under its name, or its
+  default.
+
+### One hook call per key
+
+Use one `useSavedTableState` call per key, and give each table an `id` or a `name`. Two tables
+on one page with neither both fall back to the page's path, so they share a key.
+
+Two hooks on one key keep each other's parts when the part names differ. Parts of the same
+name overwrite each other. A development build warns once in the console when two tables on
+screen share a key and a store.
+
+### State the server already read
+
+The first render uses the defaults, so a table whose state the server could have known jumps
+when the browser loads it. To avoid that, keep the state in a cookie, read it on the server
+and pass it as `initialSaved`:
+
+```tsx
+import {
+  cookieStore,
+  type FilterDefinition,
+  filterStatePart,
+  readCookieState,
+} from "@arvilmena/filter-core";
+import { useSavedTableState } from "@arvilmena/filter-react";
+
+const parts = { filter: filterStatePart() };
+const store = cookieStore();
+
+// On the server: read the raw saved value from the request's Cookie header, and hand it to
+// the page as a prop. It is `undefined` when nothing is saved.
+export function readOrdersState(cookieHeader: string): unknown {
+  return readCookieState(cookieHeader, "orders");
+}
+
+// On the server and in the browser.
+export function Orders({ initialSaved }: { initialSaved: unknown }) {
+  const saved = useSavedTableState({
+    id: "orders",
+    parts,
+    store,
+    initialSaved,
+  });
+  const filter: FilterDefinition = saved.values.filter;
+  return <p>{filter.criteria.length} conditions</p>;
+}
+```
+
+With `initialSaved`, the first render uses that state on the server and in the browser, and
+`status` starts as `"ready"`. The store is not read for the first key, and nothing is saved
+back until a part changes. The value is checked like any saved value. Pass `null` when the
+server found nothing, or leave it `undefined` to load from the store. Only the first render
+reads it.
+
+### When something fails
+
+`status` becomes `"error"`, `error` holds what went wrong, and `errorAction` says what failed:
+
+| `errorAction` | Means                                                | What to do                           |
+| ------------- | ---------------------------------------------------- | ------------------------------------ |
+| `"load"`      | The saved state could not be read. **Saving is off** | Call `reload()` to try again         |
+| `"save"`      | One save failed                                      | Nothing: the next change saves again |
+| `"remove"`    | `clear()` could not remove the stored state          | Call `clear()` again                 |
+
+After a failed load nothing is saved, so that the stored state is not overwritten. `reload()`
+reads it again and turns saving back on. A part changed since the load failed keeps the
+change. `clear()` also turns saving back on, but it deletes the stored state.
+
+```tsx
+{
+  saved.errorAction === "load" && (
+    <button type="button" onClick={saved.reload}>
+      Your settings could not be loaded. Try again
+    </button>
+  );
+}
+```
+
+### Waiting for a save
+
+`flush()` saves a waiting change now, and returns a promise that settles once the store has
+answered. Wait for it before you leave the page:
+
+```tsx
+async function leave() {
+  const isSaved = await saved.flush();
+  if (isSaved) window.location.assign("/done");
+}
+```
+
+The promise never rejects. It gives `true` when nothing is left unsaved. It gives `false` when
+a save failed, or when a change cannot be saved because the load has not finished or has
+failed. The failure itself is in `error`, and goes to `onError`.
+
+Two things the hook does not do:
+
+- **It does not cancel a load.** A load still on its way when the table leaves the screen, or
+  when its key changes, runs to its end. Its answer is ignored.
+- **It cannot wait for a slow `headers` function on a closing page.** The fetch store starts a
+  request only once `headers()` has answered. A `headers` function that waits for something
+  slow can lose the save a closing page makes, even with `keepalive`.
 
 ### Other stores
 
@@ -436,6 +546,7 @@ const local = localStorageStore({ prefix: "my-app." });
 
 // A cookie, which your server can read with `readCookieState`. It holds about 4 KB: a larger
 // state is not saved, and `status` becomes "error" with a `CookieTooLargeError`.
+// Only a small state fits, and every cookie is sent with every request: see the note below.
 const cookie = cookieStore({ maxAgeDays: 30 });
 
 // Your own server: GET to load, PUT to save, DELETE to remove.
@@ -447,6 +558,12 @@ const server = fetchStore({
 
 const saved = useSavedTableState({ id: "orders", parts, store: server });
 ```
+
+A cookie suits a small state only. Encoding makes the JSON about twice as long, so about 2 KB
+of state fills it. Each key is a cookie of its own, sent with every request, and several can
+pass the size a server accepts for a request's headers. Give each table an `id` or a `name`,
+cap each cookie with `cookieStore({ maxBytes: 1024 })`, and use the fetch store or local
+storage for a larger state.
 
 A store of your own is an object with `load`, `save` and `remove`. Each may answer at once or
 with a promise:

@@ -144,6 +144,8 @@ export interface SavedTableState<Values> {
  * - A waiting change is also saved when the page is hidden or closed, and on unmount.
  * - Parts saved under the key that this hook does not own are kept, and written back with its
  *   own. `clear()` removes them too.
+ * - A load still on its way when the table leaves the screen, or when its key changes, is not
+ *   cancelled. Its answer is ignored.
  * - Saves and removes reach the store one at a time, in the order they were made, so a slow
  *   answer cannot leave an older state in the store. Only a closing page does not wait for the
  *   answer before it sends the next one.
