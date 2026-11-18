@@ -107,6 +107,10 @@ function Products({ rows }: { rows: readonly Product[] }) {
 A column keeps any extra properties you give it, such as a width or a cell renderer, and
 `visibleColumns` hands the same objects back.
 
+`ColumnPicker` takes the hook's result as `state`, where `FilterBuilder` takes `value` and
+`onChange`. The table needs the same state as the picker, so the hook runs once and its result
+goes to both.
+
 ### Who keeps the settings
 
 The hook works like a form input. The settings are plain JSON, and the hook fits them to the

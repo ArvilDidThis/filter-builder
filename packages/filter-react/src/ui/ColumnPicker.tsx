@@ -123,7 +123,10 @@ export interface ColumnPickerRow<
 export interface ColumnPickerProps<
   Column extends ColumnDefinition = ColumnDefinition,
 > {
-  /** What `useColumnSettings` returned. The same object gives the table its columns. */
+  /**
+   * What `useColumnSettings` returned. The table needs the same state as the picker, so the
+   * hook runs once in the app and its result goes to both.
+   */
   state: ColumnSettingsState<Column>;
   /** Replace some of the wording, e.g. `{ trigger: "Edit columns" }`. */
   labels?: Partial<ColumnPickerLabels>;
