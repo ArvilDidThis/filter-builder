@@ -48,15 +48,13 @@ const gate: {
   actions?: ColumnSettingsState<Column>["actions"];
 } = { isOpen: true, opened: Promise.resolve() };
 
-/**
- * Whether this React has `use`, which `Blocker` needs to make a change wait. React 18 has
- * none, so the tests that need a waiting change run from React 19 on.
- */
-const HAS_USE = typeof use === "function";
-
 /** Cannot be drawn while the price column is hidden, until the gate opens. */
 function Blocker({ hidden }: { hidden: readonly string[] }) {
-  if (!gate.isOpen && hidden.includes("price")) use(gate.opened);
+  if (!gate.isOpen && hidden.includes("price")) {
+    if (typeof use === "function") use(gate.opened);
+    // React 18 has no `use`. There a component waits by throwing the promise it waits for.
+    else throw gate.opened;
+  }
   return null;
 }
 
@@ -293,68 +291,62 @@ describe("useColumnSettings", () => {
     });
   });
 
-  it.runIf(HAS_USE)(
-    "should build on a change that is still waiting in a transition",
-    async () => {
-      let openGate = () => {};
-      const opened = new Promise<void>((resolve) => {
-        openGate = resolve;
-      });
-      gate.opened = opened;
-      gate.isOpen = false;
-      const { container, unmount } = render(createElement(GatedPage));
-      const actions = gate.actions;
-      const drawn = () => container.querySelector("p")?.textContent;
+  it("should build on a change that is still waiting in a transition", async () => {
+    let openGate = () => {};
+    const opened = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    gate.opened = opened;
+    gate.isOpen = false;
+    const { container, unmount } = render(createElement(GatedPage));
+    const actions = gate.actions;
+    const drawn = () => container.querySelector("p")?.textContent;
 
-      // A transition (a change React may put on screen later). This one cannot be drawn yet,
-      // so React keeps it waiting and the screen stays as it was.
-      await act(async () => {
-        startTransition(() => actions?.toggle("price"));
-      });
-      expect(drawn()).toBe("name price stock (notes)");
-      // A change React draws at once. It must not undo the one that is waiting.
-      await act(async () => actions?.move("stock", 0));
-      gate.isOpen = true;
-      openGate();
-      await act(async () => {
-        await opened;
-      });
-      expect(drawn()).toBe("stock name (price) (notes)");
-      unmount();
-    },
-  );
+    // A transition (a change React may put on screen later). This one cannot be drawn yet,
+    // so React keeps it waiting and the screen stays as it was.
+    await act(async () => {
+      startTransition(() => actions?.toggle("price"));
+    });
+    expect(drawn()).toBe("name price stock (notes)");
+    // A change React draws at once. It must not undo the one that is waiting.
+    await act(async () => actions?.move("stock", 0));
+    gate.isOpen = true;
+    openGate();
+    await act(async () => {
+      await opened;
+    });
+    expect(drawn()).toBe("stock name (price) (notes)");
+    unmount();
+  });
 
-  it.runIf(HAS_USE)(
-    "should keep a waiting change when an earlier one is drawn first",
-    async () => {
-      let openGate = () => {};
-      const opened = new Promise<void>((resolve) => {
-        openGate = resolve;
-      });
-      gate.opened = opened;
-      gate.isOpen = false;
-      const { container, unmount } = render(createElement(GatedPage));
-      const actions = gate.actions;
-      const drawn = () => container.querySelector("p")?.textContent;
+  it("should keep a waiting change when an earlier one is drawn first", async () => {
+    let openGate = () => {};
+    const opened = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    gate.opened = opened;
+    gate.isOpen = false;
+    const { container, unmount } = render(createElement(GatedPage));
+    const actions = gate.actions;
+    const drawn = () => container.querySelector("p")?.textContent;
 
-      // Two changes in one event. React draws the first at once, and keeps the second waiting
-      // in a transition (a change React may put on screen later) that cannot be drawn yet.
-      await act(async () => {
-        actions?.move("stock", 0);
-        startTransition(() => actions?.toggle("price"));
-      });
-      expect(drawn()).toBe("stock name price (notes)");
-      // The first change is on screen now. This one must still build on the waiting one.
-      await act(async () => actions?.toggle("notes"));
-      gate.isOpen = true;
-      openGate();
-      await act(async () => {
-        await opened;
-      });
-      expect(drawn()).toBe("stock name (price) notes");
-      unmount();
-    },
-  );
+    // Two changes in one event. React draws the first at once, and keeps the second waiting
+    // in a transition (a change React may put on screen later) that cannot be drawn yet.
+    await act(async () => {
+      actions?.move("stock", 0);
+      startTransition(() => actions?.toggle("price"));
+    });
+    expect(drawn()).toBe("stock name price (notes)");
+    // The first change is on screen now. This one must still build on the waiting one.
+    await act(async () => actions?.toggle("notes"));
+    gate.isOpen = true;
+    openGate();
+    await act(async () => {
+      await opened;
+    });
+    expect(drawn()).toBe("stock name (price) notes");
+    unmount();
+  });
 
   it("should start from the settings an app read from storage", () => {
     const { result } = renderUncontrolled({
