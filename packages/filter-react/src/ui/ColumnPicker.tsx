@@ -68,6 +68,18 @@ export const COLUMN_PICKER_LABELS: ColumnPickerLabels = {
   resetDone: "The columns are back in their starting order and visibility.",
 };
 
+/** The picker's own wording, with each piece the app gave put in its place. */
+function withDefaultLabels(
+  overrides: Partial<ColumnPickerLabels> | undefined,
+): ColumnPickerLabels {
+  // A piece passed as `undefined` keeps the picker's own wording. An app often forwards an
+  // optional value of its own, and an empty piece would break the picker when it is used.
+  const given = Object.fromEntries(
+    Object.entries(overrides ?? {}).filter(([, text]) => text !== undefined),
+  ) as Partial<ColumnPickerLabels>;
+  return { ...COLUMN_PICKER_LABELS, ...given };
+}
+
 /** The attributes of the button that opens the picker. Spread them onto your own button. */
 export interface ColumnPickerTriggerProps {
   ref: RefCallback<HTMLElement>;
@@ -189,7 +201,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 
   // An app often writes `labels={{ … }}` in place, which is a new object on every render. So
   // nothing below may depend on this object staying the same. A row is given finished text.
-  const labels = { ...COLUMN_PICKER_LABELS, ...labelOverrides };
+  const labels = withDefaultLabels(labelOverrides);
 
   // One function for the picker's life. A new one on each render would make React detach the
   // button and attach it again every time.

@@ -1194,6 +1194,22 @@ describe("ColumnPicker", () => {
   });
 
   describe("replacing parts", () => {
+    it("should keep its own wording for a piece the app passes as undefined", () => {
+      renderPicker(
+        {
+          labels: {
+            trigger: "Edit columns",
+            move: undefined,
+            moved: undefined,
+          },
+        },
+        false,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Edit columns/ }));
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(announced()).toBe("Name moved to position 2 of 4.");
+    });
+
     it("should use the app's wording", () => {
       renderPicker(
         {
