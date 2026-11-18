@@ -481,10 +481,15 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           <span hidden id={hintId}>
             {labels.moveHint}
           </span>
+          {/* The style sheet takes the bullets off, and Safari then stops telling a screen
+              reader that this is a list, and how many columns it holds. Naming the role
+              keeps both. */}
           <ul
             className="fb-columns-list"
             data-dragging={drag.key === null ? undefined : ""}
             ref={listRef}
+            // biome-ignore lint/a11y/noRedundantRoles: see the lines above the list
+            role="list"
           >
             {orderedColumns.map((entry, index) => (
               <Row

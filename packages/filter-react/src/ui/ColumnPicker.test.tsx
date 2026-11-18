@@ -318,6 +318,13 @@ describe("ColumnPicker", () => {
     ]);
   });
 
+  it("should name the list as a list, which Safari forgets for a list with no bullets", () => {
+    renderPicker();
+    const list = screen.getByRole("list");
+    expect(list.tagName).toBe("UL");
+    expect(list.getAttribute("role")).toBe("list");
+  });
+
   it("should tick the shown columns and leave the hidden ones unticked", () => {
     renderPicker();
     expect(checkbox("Price").checked).toBe(true);
