@@ -59,6 +59,10 @@ is shown, and "Reset" while the settings are the starting ones. An unavailable b
 and ignores a press, but it keeps the keyboard focus, so a person who presses "Reset" with the
 keyboard stays where they are.
 
+A screen reader hears what a button did once the change is on screen, not at the press. If your
+app keeps the settings and applies the change later, the message comes then. If your app turns
+the change down, or applies a different one, nothing is read out.
+
 The `useColumnSettings` hook keeps the settings. Its result goes to the picker, and gives the
 table its columns.
 
