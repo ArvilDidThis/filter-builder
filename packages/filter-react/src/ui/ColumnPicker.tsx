@@ -182,6 +182,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 
   const close = (returnFocus: boolean) => {
     setOpen(false);
+    pendingMove.current = null;
     if (returnFocus) triggerRef.current?.focus();
   };
   useOutsidePointerDown(rootRef, open, () => close(false));
@@ -192,40 +193,63 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     if (open) popoverRef.current?.focus();
   }, [open]);
 
-  // The column a move button or a drop just moved. React may take the row out of the page and
-  // put it back to move it, which loses the keyboard focus. So the focus is put back on the
-  // column's handle, and pressing the key again moves the same column again.
-  const focusNext = useRef<string | null>(null);
+  // The move a key press or a drop asked for, with the place the column was in. It waits here
+  // until the list shows the column somewhere else. An app that owns the settings may apply a
+  // move later, or turn it down, so the move is followed up only once it has really happened.
+  const pendingMove = useRef<{ key: string; from: number } | null>(null);
   useEffect(() => {
-    const key = focusNext.current;
-    if (key === null) return;
-    focusNext.current = null;
-    const index = orderedColumns.findIndex((entry) => entry.column.key === key);
-    listRef.current?.children[index]
-      ?.querySelector<HTMLElement>("[data-fb-column-handle]")
-      ?.focus();
+    const pending = pendingMove.current;
+    if (pending === null) return;
+    const index = orderedColumns.findIndex(
+      (entry) => entry.column.key === pending.key,
+    );
+    // Still in its old place: the move is not applied yet, or never will be.
+    if (index === pending.from) return;
+    pendingMove.current = null;
+    const entry = orderedColumns[index];
+    const root = rootRef.current;
+    if (entry === undefined || root === null) return;
+
+    // React may take the row out of the page and put it back to move it, which loses the
+    // keyboard focus. So the focus is put back on the column's handle, and pressing the key
+    // again moves the same column again. It is put back only when it is still in the picker,
+    // or nowhere: a person who has gone on to another part of the page keeps their place.
+    const focused = root.ownerDocument.activeElement;
+    if (
+      focused === null ||
+      focused === root.ownerDocument.body ||
+      root.contains(focused)
+    ) {
+      listRef.current?.children[index]
+        ?.querySelector<HTMLElement>("[data-fb-column-handle]")
+        ?.focus();
+    }
+    // The place is read from the list as it is now, so it is right even when the app put the
+    // column somewhere other than where it was asked to go.
+    setAnnouncement(
+      labels.moved(entry.column.label, index + 1, orderedColumns.length),
+    );
   });
 
-  // Reads the newest columns and wording, so the functions below can stay the same between
-  // renders and the rows that did not change are not redrawn.
-  const latest = useRef({ orderedColumns, labels });
+  // Reads the newest columns, so the function below can stay the same between renders and the
+  // rows that did not change are not redrawn.
+  const latestColumns = useRef(orderedColumns);
   useEffect(() => {
-    latest.current = { orderedColumns, labels };
+    latestColumns.current = orderedColumns;
   });
 
   // A column is named by its key, not its place: the list may have changed since the row that
   // asks for the move was drawn or picked up.
   const moveTo = useCallback(
     (key: string, to: number) => {
-      const { orderedColumns: list, labels: wording } = latest.current;
+      const list = latestColumns.current;
       const from = list.findIndex((item) => item.column.key === key);
       const entry = list[from];
       if (entry === undefined || to < 0 || to >= list.length || to === from) {
         return;
       }
+      pendingMove.current = { key: entry.column.key, from };
       actions.move(entry.column.key, to);
-      focusNext.current = entry.column.key;
-      setAnnouncement(wording.moved(entry.column.label, to + 1, list.length));
     },
     [actions],
   );
@@ -327,12 +351,23 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           <div className="fb-columns-footer">
             <button
               className="fb-button"
-              onClick={actions.showAll}
+              onClick={() => {
+                pendingMove.current = null;
+                actions.showAll();
+              }}
               type="button"
             >
               {labels.showAll}
             </button>
-            <button className="fb-button" onClick={actions.reset} type="button">
+            <button
+              className="fb-button"
+              onClick={() => {
+                // Reset moves columns too. A move still waiting must not take the credit.
+                pendingMove.current = null;
+                actions.reset();
+              }}
+              type="button"
+            >
               {labels.reset}
             </button>
           </div>

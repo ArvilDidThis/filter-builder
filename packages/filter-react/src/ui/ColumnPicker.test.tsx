@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { ColumnDefinition } from "@arvilmena/filter-core";
+import type { ColumnDefinition, ColumnSettings } from "@arvilmena/filter-core";
 import {
   cleanup,
   fireEvent,
@@ -7,7 +7,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { memo, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
@@ -58,6 +58,31 @@ function ChangingApp() {
       <button onClick={() => setColumns(COLUMNS.slice(1))} type="button">
         Remove name
       </button>
+    </>
+  );
+}
+
+/**
+ * An app that owns the settings and applies a change late: only when "Apply" is pressed. A
+ * change that is never applied is one the app turned down.
+ */
+function OwningApp() {
+  const [value, setValue] = useState<ColumnSettings | null>(null);
+  const waiting = useRef<ColumnSettings | null>(null);
+  const state = useColumnSettings({
+    columns: COLUMNS,
+    value,
+    onChange: (next) => {
+      waiting.current = next;
+    },
+  });
+  return (
+    <>
+      <ColumnPicker state={state} />
+      <button onClick={() => setValue(waiting.current)} type="button">
+        Apply
+      </button>
+      <button type="button">Elsewhere</button>
     </>
   );
 }
@@ -571,6 +596,63 @@ describe("ColumnPicker", () => {
         lineRules.filter((selector) => !selector.startsWith(".fb-columns-row")),
       ).toEqual([]);
       sheet.remove();
+    });
+  });
+
+  describe("in an app that owns the settings", () => {
+    const openOwningApp = () => {
+      render(<OwningApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+    };
+    const apply = () =>
+      fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    it("should not announce a move that the app turns down", () => {
+      openOwningApp();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(announced()).toBe("");
+      // Something else redraws the picker. The move is still not there, so still no word.
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(announced()).toBe("");
+    });
+
+    it("should announce a move, and keep the focus, once the app applies it", () => {
+      openOwningApp();
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      expect(announced()).toBe("");
+      // The browser drops the focus when the row is moved in the page.
+      handle("Name").blur();
+      expect(document.activeElement).toBe(document.body);
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(announced()).toBe("Name moved to position 4 of 4.");
+      expect(document.activeElement).toBe(handle("Name"));
+    });
+
+    it("should announce a late drop the same way", () => {
+      openOwningApp();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(announced()).toBe("");
+      apply();
+      expect(announced()).toBe("Name moved to position 3 of 4.");
+    });
+
+    it("should forget a waiting move when the picker closes", () => {
+      openOwningApp();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+      fireEvent.pointerDown(elsewhere);
+      elsewhere.focus();
+      apply();
+      // The person has moved on. Their focus stays put, and nothing is read out.
+      expect(announced()).toBe("");
+      expect(document.activeElement).toBe(elsewhere);
     });
   });
 
