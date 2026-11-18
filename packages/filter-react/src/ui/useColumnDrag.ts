@@ -42,7 +42,6 @@ interface DragSession {
   key: string;
   /** The row's place in the list as it is now. */
   from: number;
-  pointerId: number;
   /** The pointer's last known height on the screen. */
   clientY: number;
   /** The middle of each row, measured from the top of the list's whole content. */
@@ -222,7 +221,6 @@ export function useColumnDrag({
       session.current = {
         key,
         from,
-        pointerId,
         clientY: event.clientY,
         // Every row is measured once, here, and not again while the list stays as it is.
         middles: measureMiddles(list),
