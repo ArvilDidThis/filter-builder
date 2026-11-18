@@ -67,6 +67,23 @@ describe("reconcileColumnSettings", () => {
     expect(reconcileColumnSettings(COLUMNS, saved)).toBe(saved);
   });
 
+  it("should not take a saved order with a hole in it as fitting", () => {
+    // A list of four places where the second was never filled in.
+    const order: string[] = [];
+    order[0] = "name";
+    order[2] = "stock";
+    order[3] = "notes";
+    const saved = { order, hidden: ["notes"] };
+    const settings = reconcileColumnSettings(COLUMNS, saved);
+    // "price" is new to these settings, so it lands after "name", which it follows in the list.
+    expect(settings).toEqual({
+      order: ["name", "price", "stock", "notes"],
+      hidden: ["notes"],
+    });
+    expect(settings).not.toBe(saved);
+    expect(1 in settings.order).toBe(true);
+  });
+
   it("should drop a key that is no longer a column", () => {
     const saved = {
       order: ["gone", "stock", "name", "notes", "price"],

@@ -275,5 +275,11 @@ function cleanKeys(
 
 /** Whether two lists hold the same items in the same order. */
 function isSameList(a: readonly unknown[], b: readonly unknown[]): boolean {
-  return a.length === b.length && a.every((item, index) => item === b[index]);
+  if (a.length !== b.length) return false;
+  // Every place is read by its number. `every` skips a hole (a place in a list that was never
+  // given a value), so a stored list with a hole would pass as equal to a full one.
+  for (let index = 0; index < a.length; index++) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
 }
