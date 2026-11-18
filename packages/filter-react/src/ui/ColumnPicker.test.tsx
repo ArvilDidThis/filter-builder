@@ -1702,6 +1702,78 @@ describe("ColumnPicker", () => {
       host.remove();
     });
 
+    it("should stay open on a press on a control the app slots into a row in a closed shadow tree", () => {
+      // An app's own row can hold a slot: a gap that shows an element the app keeps outside
+      // the tree, as a child of the host. The page sees that element, so a press on it is
+      // not told as a press on the host. Only its path inside the tree runs through the row.
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      const besideSlot = document.createElement("slot");
+      besideSlot.name = "beside";
+      const tree = host.attachShadow({ mode: "closed" });
+      tree.append(container, besideSlot);
+      const inRow = host.appendChild(document.createElement("button"));
+      inRow.slot = "price";
+      const beside = host.appendChild(document.createElement("button"));
+      beside.slot = "beside";
+      const { unmount } = render(
+        <App
+          extra={{
+            renderRow: (row) => (
+              <>
+                <input {...row.checkboxProps} />
+                <button {...row.handleProps}>grip</button>
+                <slot name={row.column.key} />
+              </>
+            ),
+          }}
+        />,
+        { container },
+      );
+      const inside = within(container);
+      const trigger = () => inside.getByRole("button", { name: /^Columns/ });
+      fireEvent.click(trigger());
+
+      // The test page does not send a press through the slot that shows the element. So the
+      // press answers by hand, as a browser would. A listener inside the tree is told the
+      // whole path. A listener outside it is told the path without the tree's insides.
+      const press = (slotted: HTMLElement) => {
+        const slot = tree.querySelector(`slot[name="${slotted.slot}"]`);
+        const inTree: EventTarget[] = [];
+        for (
+          let node: Node | null = slot;
+          node !== null;
+          node = node.parentNode
+        ) {
+          inTree.push(node);
+        }
+        const outside = [host, document.body, document];
+        const event = new Event("pointerdown", {
+          bubbles: true,
+          composed: true,
+        });
+        // The test page asks the event for its path to know where to send it, before any
+        // listener is called. That first answer must be the whole path.
+        event.composedPath = () => {
+          const isHeardOutside =
+            event.currentTarget instanceof Node &&
+            !tree.contains(event.currentTarget);
+          return isHeardOutside
+            ? [slotted, ...outside]
+            : [slotted, ...inTree, ...outside];
+        };
+        fireEvent(slotted, event);
+      };
+      press(inRow);
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      // Shown inside the same tree, but outside the picker.
+      press(beside);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      host.remove();
+    });
+
     it.each(["open", "closed"] as const)(
       "should close on a press on the bare host of the %s shadow tree it is drawn in",
       (mode) => {

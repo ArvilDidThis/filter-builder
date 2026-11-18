@@ -70,9 +70,12 @@ export function useOutsidePointerDown(
       if (closedHost !== undefined) {
         // A closed tree hides the root from here. A press that went into that tree is told
         // as one on its host, and may be on either side of the root or on the bare host,
-        // such as on its padding. It is left to the listeners further in, which hear it
+        // such as on its padding. A press on an element the app keeps in the host, and
+        // shows through a slot (a gap in the tree, which may be in a row of the picker), is
+        // told with that element, and the path hides which slot shows it. Both have the
+        // host in their path. They are left to the listeners further in, which hear them
         // next, and to `afterHost` below.
-        if (path[0] === closedHost || event.target === closedHost) return;
+        if (path.includes(closedHost)) return;
         // Any other press did not go into the tree that holds the root.
         settled = event;
         latest.current();
