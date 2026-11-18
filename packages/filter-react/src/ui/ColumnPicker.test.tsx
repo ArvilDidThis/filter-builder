@@ -860,6 +860,57 @@ describe("ColumnPicker", () => {
       host.remove();
     });
 
+    it("should stay open on a click inside it when it is drawn in a closed shadow tree", () => {
+      // A closed shadow tree hides its insides from the page altogether. The page hears a
+      // press inside it as a press on the tree's host, and the event's path stops there too.
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      const beside = document.createElement("button");
+      const tree = host.attachShadow({ mode: "closed" });
+      tree.append(container, beside);
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+
+      // The test page does not hide the pressed element as a browser does. So the press
+      // answers by hand, as a browser would: a listener outside the tree is told of the
+      // host, and a listener inside the tree is told of the pressed element.
+      const press = (pressed: Element) => {
+        const event = new Event("pointerdown", {
+          bubbles: true,
+          composed: true,
+        });
+        const isHeardInside = () =>
+          event.currentTarget instanceof Node &&
+          tree.contains(event.currentTarget);
+        Object.defineProperty(event, "target", {
+          get: () => (isHeardInside() ? pressed : host),
+          set: () => {},
+        });
+        // The test page asks the event for its path to know where to send it, before any
+        // listener is called. That first answer must be the real path.
+        const realPath = event.composedPath.bind(event);
+        event.composedPath = () => {
+          if (event.currentTarget === null) return realPath();
+          return isHeardInside()
+            ? [pressed, tree, host, document.body, document]
+            : [host, document.body, document];
+        };
+        fireEvent(pressed, event);
+      };
+      press(inside.getByText("Stock"));
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      // Inside the same tree, but outside the picker.
+      press(beside);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      fireEvent.pointerDown(document.body);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      host.remove();
+    });
+
     it("should close when Tab moves the focus out of it", () => {
       renderPicker();
       fireEvent.blur(screen.getByRole("button", { name: "Reset" }), {
