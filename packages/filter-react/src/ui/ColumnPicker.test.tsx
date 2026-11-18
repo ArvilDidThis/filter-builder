@@ -21,6 +21,7 @@ import {
 } from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
+import { pressInOpenTree, stopPressesAt } from "./shadowPress.testing";
 import { placeFromSlot, slotAt } from "./useColumnDrag";
 import { shiftToFit } from "./useKeepOnScreen";
 
@@ -1624,6 +1625,27 @@ describe("ColumnPicker", () => {
       fireEvent(host, press);
       expect(inside.queryByRole("dialog")).not.toBeNull();
       fireEvent.pointerDown(document.body);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      host.remove();
+    });
+
+    it("should tell a press in an open shadow tree apart when the host stops the press", () => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      const beside = document.createElement("p");
+      host.attachShadow({ mode: "open" }).append(container, beside);
+      // No listener inside the tree hears a press. Only the page's own listener does, and
+      // it is told that the press was on the host.
+      stopPressesAt(host);
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      pressInOpenTree(host, inside.getByText("Stock"));
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      // Inside the same tree, but outside the picker, on something that takes no focus.
+      pressInOpenTree(host, beside);
       expect(inside.queryByRole("dialog")).toBeNull();
       unmount();
       host.remove();

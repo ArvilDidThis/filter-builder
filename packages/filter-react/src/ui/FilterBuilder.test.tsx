@@ -10,6 +10,7 @@ import {
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { FilterBuilder, type FilterBuilderProps } from "./FilterBuilder";
+import { pressInOpenTree, stopPressesAt } from "./shadowPress.testing";
 
 const FIELDS: FieldDefinition[] = [
   { key: "amount", label: "Amount", type: "num", prefix: "$", suffix: "B" },
@@ -896,6 +897,34 @@ describe("FieldPicker", () => {
       host.remove();
     },
   );
+
+  it("should tell a press in an open shadow tree apart when the host stops the press", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const container = document.createElement("div");
+    const beside = document.createElement("p");
+    host.attachShadow({ mode: "open" }).append(container, beside);
+    // No listener inside the tree hears a press. Only the page's own listener does, and it
+    // is told that the press was on the host.
+    stopPressesAt(host);
+    const { unmount } = render(
+      <App
+        extra={{}}
+        initial={{ criteria: [amount("1")], logic: "AND" }}
+        onFilter={() => {}}
+      />,
+      { container },
+    );
+    const inside = within(container);
+    fireEvent.click(inside.getByRole("button", { name: "Field: Amount" }));
+    pressInOpenTree(host, inside.getByRole("listbox"));
+    expect(inside.queryByRole("listbox")).not.toBeNull();
+    // Inside the same tree, but outside the picker, on something that takes no focus.
+    pressInOpenTree(host, beside);
+    expect(inside.queryByRole("listbox")).toBeNull();
+    unmount();
+    host.remove();
+  });
 
   it("should close when the keyboard focus leaves it, and stay open while focus is inside", () => {
     const search = open();
