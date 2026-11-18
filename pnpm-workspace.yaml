@@ -1,2 +1,4 @@
 packages:
   - "packages/*"
+  # Test-only packages. They are private and never published.
+  - "tests/*"
