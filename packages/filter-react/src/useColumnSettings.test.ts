@@ -8,6 +8,7 @@ import {
   use,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -202,6 +203,38 @@ describe("useColumnSettings", () => {
     // now, so this change starts from them and not from what the first action asked for.
     act(() => result.current.actions.toggle("price"));
     expect(shape(result.current)).toBe("stock name (price) notes");
+  });
+
+  it("should forget a change the app turned down once the app draws other settings, even if it then puts the first ones back", () => {
+    const first: ColumnSettings = {
+      order: ["name", "price", "stock", "notes"],
+      hidden: [],
+    };
+    const other: ColumnSettings = {
+      order: ["notes", "name", "price", "stock"],
+      hidden: [],
+    };
+    const onChange = vi.fn();
+    let setValue: (value: ColumnSettings) => void = () => {};
+    const { result } = renderHook(() => {
+      const [value, set] = useState(first);
+      setValue = set;
+      return useColumnSettings({ columns: COLUMNS, value, onChange });
+    });
+    act(() => {
+      // The app turns this change down.
+      result.current.actions.toggle("price");
+      // Still in the same event, the app draws other settings, and then the first ones
+      // again. `flushSync` makes React draw at once.
+      flushSync(() => setValue(other));
+      flushSync(() => setValue(first));
+      result.current.actions.toggle("stock");
+    });
+    // The first change was out of date as soon as other settings were drawn.
+    expect(onChange).toHaveBeenLastCalledWith({
+      order: first.order,
+      hidden: ["stock"],
+    });
   });
 
   it("should build on a change that is still waiting in a transition", async () => {

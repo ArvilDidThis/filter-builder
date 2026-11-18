@@ -123,14 +123,6 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     [columns, saved],
   );
 
-  // The actions read the newest props through this ref, so they can stay the same functions
-  // from one render to the next. It is written after React has put a render on screen, not
-  // while rendering: React may throw a render away, and its props must not reach the actions.
-  const latest = useRef({ settings, saved, columns, onChange, isControlled });
-  useEarlyEffect(() => {
-    latest.current = { settings, saved, columns, onChange, isControlled };
-  });
-
   // The settings an action asked for that are not on screen yet, with the saved settings that
   // were on screen when it asked (`from`). The next action builds on them, not on the old
   // settings, in two cases:
@@ -142,6 +134,20 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     settings: ColumnSettings;
     from: ColumnSettings | null | undefined;
   } | null>(null);
+
+  // The actions read the newest props through this ref, so they can stay the same functions
+  // from one render to the next. It is written after React has put a render on screen, not
+  // while rendering: React may throw a render away, and its props must not reach the actions.
+  const latest = useRef({ settings, saved, columns, onChange, isControlled });
+  useEarlyEffect(() => {
+    const was = latest.current;
+    // The app put other saved settings on screen. What an action asked for before them is
+    // out of date from this moment, and building on it would drop whatever the newer
+    // settings hold. It stays out of date even if the app later puts the old settings back.
+    const isReplaced = was.isControlled && isControlled && was.saved !== saved;
+    if (isReplaced) proposed.current = null;
+    latest.current = { settings, saved, columns, onChange, isControlled };
+  });
 
   const apply = useCallback(
     (
