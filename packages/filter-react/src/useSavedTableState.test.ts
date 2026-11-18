@@ -357,7 +357,8 @@ describe("useSavedTableState", () => {
 
     /**
      * Whether this React has `Activity`, the part of the page that React can hide and show
-     * again. React 18 has none, so the tests of a hidden table run from React 19 on.
+     * again. The tests of a hidden table need a React version that exports it. React 18
+     * does not, so they are skipped in the React 18 run.
      */
     const HAS_ACTIVITY = Activity !== undefined;
 
