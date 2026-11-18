@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { ColumnDefinition } from "@arvilmena/filter-core";
 import {
   cleanup,
@@ -345,6 +346,63 @@ describe("ColumnPicker", () => {
       expect(rows()[0]?.hasAttribute("data-dragging")).toBe(true);
       fireEvent.pointerUp(document, pointer(115));
       expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+  });
+
+  describe("inside the filter builder", () => {
+    /** Loads the real style sheet and draws the open picker inside a builder's own element. */
+    function renderInBuilder() {
+      const sheet = document.createElement("style");
+      sheet.textContent = readFileSync(
+        `${import.meta.dirname}/../../styles.css`,
+        "utf8",
+      );
+      document.head.append(sheet);
+      const rendered = render(
+        <div className="fb">
+          <App extra={{}} />
+        </div>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      return { ...rendered, sheet };
+    }
+
+    it("should fade only the dragged row, not the whole list", () => {
+      const { sheet } = renderInBuilder();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      // The builder fades its own dragged item. That rule must not also fade the list.
+      expect(getComputedStyle(screen.getByRole("list")).opacity).not.toBe(
+        "0.4",
+      );
+      expect(getComputedStyle(rows()[0] as HTMLElement).opacity).toBe("0.4");
+      sheet.remove();
+    });
+
+    it("should leave the drop line to the picker's own rules", () => {
+      const { sheet } = renderInBuilder();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(400));
+      const last = rows()[3] as HTMLElement;
+      expect(last.getAttribute("data-drop")).toBe("after");
+      // The test page does not draw the line itself (it is a `::before` part). So this reads
+      // the style sheet: every drop-line rule that reaches this row must be the picker's.
+      const lineRules = Array.from(sheet.sheet?.cssRules ?? [])
+        .flatMap(
+          (rule) => (rule as CSSStyleRule).selectorText?.split(",") ?? [],
+        )
+        .map((selector) => selector.trim())
+        .filter(
+          (selector) =>
+            selector.includes("[data-drop") &&
+            selector.endsWith("::before") &&
+            last.matches(selector.slice(0, -"::before".length)),
+        );
+      expect(lineRules.length).toBeGreaterThan(0);
+      expect(
+        lineRules.filter((selector) => !selector.startsWith(".fb-columns-row")),
+      ).toEqual([]);
+      sheet.remove();
     });
   });
 

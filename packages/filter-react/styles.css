@@ -592,8 +592,10 @@
   cursor: grabbing;
 }
 
-/* The row or group being dragged fades, so it is clear which one is moving. */
-.fb [data-dragging] {
+/* The row or group being dragged fades, so it is clear which one is moving.
+   These rules name the builder's own items. A bare `[data-dragging]` or `[data-drop]` would
+   also reach a column picker placed inside the builder, which uses the same marks. */
+.fb [data-fb-item][data-dragging] {
   opacity: 0.4;
 }
 
@@ -603,7 +605,8 @@
 }
 
 /* A line in the gap above the place where the dragged row or group would land. */
-.fb [data-drop]::before {
+.fb [data-fb-item][data-drop]::before,
+.fb-group-footer[data-drop]::before {
   content: "";
   position: absolute;
   top: calc(var(--fb-gap) / -2 - 1px);
