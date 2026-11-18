@@ -416,13 +416,18 @@ What the hook guarantees:
   saved state is read right after. Local storage and cookies are read before the browser
   paints, so the defaults do not flash.
 - **Nothing is saved before the load has finished.** A part you change in the meantime keeps
-  your change, and is saved once the load is done.
+  your change. It is saved once the load is done, and only if the table is still mounted
+  then. A table unmounted while it loads does not save that change.
 - **A failed load or save never breaks the table.** The parts keep working in memory. See
   [When something fails](#when-something-fails).
 - **State is saved under the key it was loaded for.** When `name`, `id` or the page's path
   changes, a waiting change is saved under the old key, and the new key's state is loaded.
 - **Quick changes are saved together.** A waiting change is also saved when the page is hidden
   or closed, and when the table leaves the screen.
+- **A save on unmount is sent, not waited for.** When a loaded table is unmounted, its waiting
+  change goes to the store, and nothing waits for the store's answer. An app that moves to
+  another page itself should wait for `flush()` first: see
+  [Waiting for a save](#waiting-for-a-save).
 - **Saves reach the store in order.** Each save or remove waits for the store's answer to the
   one before it, so a slow answer cannot leave an older state in the store. Only a closing
   page sends without waiting.
