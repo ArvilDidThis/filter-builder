@@ -2158,6 +2158,64 @@ describe("useSavedTableState", () => {
       expect(store.save).not.toHaveBeenCalled();
     });
   });
+
+  describe("a reload that finds nothing saved", () => {
+    it("should put back the defaults and forget the parts it does not own", () => {
+      const store = memoryStore({
+        orders: savedWith({
+          filter: priceFilter("10"),
+          sort: NAME_SORT,
+          legacy: ["x"],
+        }),
+      });
+      const { result } = renderSaved({ store });
+      // Something else removed the key: another tab, or the server.
+      store.items.delete("orders");
+      act(() => result.current.reload());
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values).toEqual({
+        filter: EMPTY_FILTER,
+        columns: COLUMN_DEFAULTS,
+        sort: null,
+      });
+
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          filter: EMPTY_FILTER,
+          columns: COLUMN_DEFAULTS,
+          sort: PRICE_SORT,
+        }),
+      );
+    });
+
+    it("should keep a change the store has not taken yet", () => {
+      const fail = () => {
+        throw new Error("full");
+      };
+      const store = memoryStore({
+        orders: savedWith({ filter: priceFilter("10"), sort: NAME_SORT }),
+      });
+      store.save.mockImplementationOnce(fail).mockImplementationOnce(fail);
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      store.items.delete("orders");
+      act(() => result.current.reload());
+      expect(result.current.values.filter).toEqual(EMPTY_FILTER);
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          filter: EMPTY_FILTER,
+          columns: COLUMN_DEFAULTS,
+          sort: PRICE_SORT,
+        }),
+      );
+    });
+  });
 });
 
 /** A table that hands its saved state to the test, for the tests that hide and show it. */

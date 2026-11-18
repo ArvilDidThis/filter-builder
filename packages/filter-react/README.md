@@ -493,7 +493,7 @@ reads it.
 
 After a failed load nothing is saved, so that the stored state is not overwritten. `reload()`
 reads it again and turns saving back on. A part changed since the load failed keeps the
-change. `clear()` also turns saving back on, but it deletes the stored state.
+change. The other parts take the stored state, or their defaults when nothing is saved. `clear()` also turns saving back on, but it deletes the stored state.
 
 ```tsx
 {

@@ -126,7 +126,7 @@ export interface SavedTableState<Values> {
    * Reads the saved state again. Use it after a failed load, to turn saving back on without
    * deleting the stored state. A part whose change the store has not taken keeps the change:
    * one made while saving was off, or one whose save failed. It is saved after the load. The
-   * other parts take the stored state.
+   * other parts take the stored state, or their defaults when nothing is saved any more.
    */
   reload: () => void;
   /**
@@ -400,6 +400,11 @@ function createController<Values>(
    * is left.
    */
   const unsaved = new Set<keyof Values>();
+  /**
+   * Whether every part outside `unsaved` still holds its default: nothing was loaded or saved
+   * for the key yet. A load that finds nothing saved then has nothing to put back.
+   */
+  let holdsDefaults = first.serverRead === undefined;
   /** Whether `clear()` could not remove the stored state, and no save went through since. */
   let removeFailed = false;
   /** Goes up whenever a load is started or dropped. A load that answers late sees it moved. */
@@ -500,6 +505,7 @@ function createController<Values>(
     if (outcome.status === "replaced" || !isForKeyOnScreen) return;
 
     removeFailed = false;
+    holdsDefaults = false;
     // A part changed again since this save was made is still not in the store.
     for (const part of unsaved) {
       if (Object.is(live.values[part], change.values[part]))
@@ -567,16 +573,19 @@ function createController<Values>(
     let writesAtRead = 0;
     const finish = (saved: unknown): void => {
       if (run !== loadRun) return;
-      // With nothing saved the values on screen are already right. Keeping them, and not a
-      // fresh copy of the defaults, saves the table a redraw.
+      const isNothingSaved = saved === null || saved === undefined;
+      const loaded = readLoadedState(saved, latest.current);
+      // Also when nothing is saved: the parts the channel knew are then gone from the store.
+      source.noteRead(saved, loaded.savedParts, writesAtRead);
+      // On a first load that finds nothing, the values on screen are already right. Keeping
+      // them, and not a fresh copy of the defaults, saves the table a redraw.
       let values = live.values;
-      if (saved !== null && saved !== undefined) {
-        const loaded = readLoadedState(saved, latest.current);
-        source.noteRead(saved, loaded.savedParts, writesAtRead);
+      if (!isNothingSaved || !holdsDefaults) {
         values = loaded.values;
         // A change the store has not taken is kept, and saved below.
         for (const part of unsaved) values[part] = live.values[part];
       }
+      holdsDefaults = isNothingSaved;
       canSave = true;
       publish({ key, values, ...READY });
       if (unsaved.size > 0) scheduleSave(key);
@@ -615,6 +624,7 @@ function createController<Values>(
         canSave = false;
         unsaved.clear();
         removeFailed = false;
+        holdsDefaults = true;
       } else if (live !== start) {
         // The state moved on while nothing could be drawn. Show it now.
         draw(live);
@@ -715,6 +725,7 @@ function createController<Values>(
       pending = undefined;
       unsaved.clear();
       removeFailed = false;
+      holdsDefaults = true;
       const { key } = live;
       const values = readSavedState(undefined, latest.current.parts);
       if (key === undefined || channel === undefined) {
