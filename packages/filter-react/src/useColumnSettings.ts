@@ -220,12 +220,9 @@ export function useColumnSettings<Column extends ColumnDefinition>(
   );
 
   // Both ask the action itself, so each says "nothing to do" exactly when its action would do
-  // nothing. They are worked out again only when the settings change.
-  const allVisible = useMemo(
-    // `showAllColumns` hands back the same settings when no column is hidden.
-    () => showAllColumns(settings) === settings,
-    [settings],
-  );
+  // nothing. `showAllColumns` hands back the same settings when no column is hidden. That
+  // check is one quick read, so only the second one is kept between renders.
+  const allVisible = showAllColumns(settings) === settings;
   const isDefault = useMemo(
     () => isDefaultColumnSettings(columns, settings),
     [columns, settings],
