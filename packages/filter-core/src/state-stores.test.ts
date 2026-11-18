@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readSavedState } from "./saved-state";
 import {
   CookieTooLargeError,
+  carryOverStore,
   cookieStore,
   FetchStoreError,
   fetchStore,
@@ -589,5 +591,282 @@ describe("fetchStore", () => {
     await expect(store.load("orders")).rejects.toThrow(
       "Could not load the saved state: there is no `fetch` here.",
     );
+  });
+});
+
+/** A store that keeps its values in memory and answers at once. */
+function memoryStore(initial: Record<string, unknown> = {}) {
+  const items = new Map(Object.entries(initial));
+  const store = {
+    items,
+    load: vi.fn((key: string): unknown => items.get(key)),
+    save: vi.fn((key: string, value: unknown): void => {
+      items.set(key, value);
+    }),
+    remove: vi.fn((key: string): void => {
+      items.delete(key);
+    }),
+  };
+  return store satisfies StateStore;
+}
+
+/** The same store, answering every call with a promise, as a server does. */
+function laterStore(initial: Record<string, unknown> = {}) {
+  const memory = memoryStore(initial);
+  const store = {
+    items: memory.items,
+    load: vi.fn(async (key: string) => memory.load(key)),
+    save: vi.fn(async (key: string, value: unknown) => memory.save(key, value)),
+    remove: vi.fn(async (key: string) => memory.remove(key)),
+  };
+  return store satisfies StateStore;
+}
+
+describe("carryOverStore", () => {
+  /** What an app kept under a key of its own, before it used this library. */
+  const OLD = { sort: { key: "price" }, pageSize: 50 };
+  const CARRIED = { version: 1, parts: OLD };
+
+  it("should hand back the old state when nothing is saved under the key", () => {
+    const read = vi.fn(() => OLD);
+    const store = carryOverStore(memoryStore(), { read });
+    expect(store.load("orders")).toEqual(CARRIED);
+    expect(read).toHaveBeenCalledExactlyOnceWith("orders");
+  });
+
+  it("should not ask for the old state when the key holds something", () => {
+    const read = vi.fn(() => OLD);
+    const store = carryOverStore(memoryStore({ orders: STATE }), { read });
+    expect(store.load("orders")).toBe(STATE);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("should write nothing and remove nothing while loading", () => {
+    const inner = memoryStore();
+    const remove = vi.fn();
+    const store = carryOverStore(inner, { read: () => OLD, remove });
+    store.load("orders");
+    expect(inner.save).not.toHaveBeenCalled();
+    expect(inner.remove).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("should accept old state typed with an interface", () => {
+    interface OldState {
+      pageSize: number;
+    }
+    const old: OldState = { pageSize: 50 };
+    const store = carryOverStore(memoryStore(), { read: () => old });
+    expect(store.load("orders")).toEqual({ version: 1, parts: old });
+  });
+
+  it("should read the old state loosely, part by part", () => {
+    const store = carryOverStore(memoryStore(), {
+      read: () => ({ pageSize: "many", sort: { key: "price" } }),
+    });
+    const state = readSavedState(store.load("orders"), {
+      pageSize: {
+        defaultValue: 25,
+        parse: (saved: unknown) =>
+          typeof saved === "number" ? saved : undefined,
+      },
+      sort: { defaultValue: null, parse: (saved: unknown) => saved },
+    });
+    expect(state).toEqual({ pageSize: 25, sort: { key: "price" } });
+  });
+
+  it.each([
+    ["nothing", undefined],
+    ["null", null],
+    ["text", "old"],
+    ["a list", [1, 2]],
+  ])("should find nothing saved when the old place gives %s", (_label, old) => {
+    const store = carryOverStore(memoryStore(), { read: () => old });
+    expect(store.load("orders")).toBeUndefined();
+  });
+
+  it("should find nothing saved when reading the old place throws", () => {
+    const store = carryOverStore(memoryStore(), {
+      read: () => JSON.parse("{broken"),
+    });
+    expect(store.load("orders")).toBeUndefined();
+  });
+
+  it("should mark the carried state with the version the app names", () => {
+    const store = carryOverStore(memoryStore(), {
+      read: () => ({ rows: 50 }),
+      version: 1,
+    });
+    const state = readSavedState(
+      store.load("orders"),
+      {
+        pageSize: {
+          defaultValue: 25,
+          parse: (saved: unknown) =>
+            typeof saved === "number" ? saved : undefined,
+        },
+      },
+      { version: 2, migrate: (parts) => ({ pageSize: parts.rows }) },
+    );
+    expect(state.pageSize).toBe(50);
+  });
+
+  describe("the old entry", () => {
+    it("should be left alone when the app passes no `remove`", () => {
+      const inner = memoryStore();
+      const store = carryOverStore(inner, { read: () => OLD });
+      store.load("orders");
+      store.save("orders", STATE);
+      expect(inner.items.get("orders")).toBe(STATE);
+    });
+
+    it("should be removed after the first save that follows a carry-over", () => {
+      const remove = vi.fn();
+      const store = carryOverStore(memoryStore(), { read: () => OLD, remove });
+      store.load("orders");
+      store.save("orders", STATE);
+      expect(remove).toHaveBeenCalledExactlyOnceWith("orders");
+      store.save("orders", STATE);
+      expect(remove).toHaveBeenCalledOnce();
+    });
+
+    it("should not be removed by a save when nothing was carried over", () => {
+      const remove = vi.fn();
+      const store = carryOverStore(memoryStore({ orders: STATE }), {
+        read: () => OLD,
+        remove,
+      });
+      store.load("orders");
+      store.save("orders", STATE);
+      expect(remove).not.toHaveBeenCalled();
+    });
+
+    it("should stay when the save fails", () => {
+      const remove = vi.fn();
+      const inner = memoryStore();
+      inner.save.mockImplementation(() => {
+        throw new Error("full");
+      });
+      const store = carryOverStore(inner, { read: () => OLD, remove });
+      store.load("orders");
+      expect(() => store.save("orders", STATE)).toThrow("full");
+      expect(remove).not.toHaveBeenCalled();
+    });
+
+    it("should not fail a save when its removal fails", async () => {
+      const store = carryOverStore(memoryStore(), {
+        read: () => OLD,
+        remove: () => {
+          throw new Error("no access");
+        },
+      });
+      store.load("orders");
+      expect(() => store.save("orders", STATE)).not.toThrow();
+
+      const later = carryOverStore(laterStore(), {
+        read: () => OLD,
+        remove: () => Promise.reject(new Error("no access")),
+      });
+      await later.load("orders");
+      await expect(later.save("orders", STATE)).resolves.toBeUndefined();
+    });
+  });
+
+  describe("removing the state", () => {
+    it("should remove the entry and the old entry when the app passes `remove`", () => {
+      const inner = memoryStore({ orders: STATE });
+      const remove = vi.fn();
+      const store = carryOverStore(inner, { read: () => OLD, remove });
+      store.remove("orders");
+      expect(inner.remove).toHaveBeenCalledExactlyOnceWith("orders");
+      expect(remove).toHaveBeenCalledExactlyOnceWith("orders");
+    });
+
+    it("should fail when the old entry cannot be removed", () => {
+      const store = carryOverStore(memoryStore(), {
+        read: () => OLD,
+        remove: () => {
+          throw new Error("no access");
+        },
+      });
+      expect(() => store.remove("orders")).toThrow("no access");
+    });
+
+    it("should save an empty state without `remove`, so the old state stays away", () => {
+      const inner = memoryStore({ orders: STATE });
+      const store = carryOverStore(inner, { read: () => OLD });
+      store.remove("orders");
+      expect(inner.remove).not.toHaveBeenCalled();
+      expect(store.load("orders")).toEqual({ version: 1, parts: {} });
+    });
+  });
+
+  describe("with a store or an old place that answers later", () => {
+    it("should carry the old state over once the store has answered", async () => {
+      const read = vi.fn(async () => OLD);
+      const store = carryOverStore(laterStore(), { read });
+      await expect(store.load("orders")).resolves.toEqual(CARRIED);
+    });
+
+    it("should use what the store holds, and not ask for the old state", async () => {
+      const read = vi.fn(async () => OLD);
+      const store = carryOverStore(laterStore({ orders: STATE }), { read });
+      await expect(store.load("orders")).resolves.toBe(STATE);
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it("should pass on a load that the store rejects", async () => {
+      const inner = laterStore();
+      inner.load.mockRejectedValue(new Error("offline"));
+      const read = vi.fn(() => OLD);
+      const store = carryOverStore(inner, { read });
+      await expect(store.load("orders")).rejects.toThrow("offline");
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it("should find nothing saved when the old place rejects", async () => {
+      const store = carryOverStore(memoryStore(), {
+        read: () => Promise.reject(new Error("offline")),
+      });
+      await expect(store.load("orders")).resolves.toBeUndefined();
+    });
+
+    it("should remove the old entry only once the save was answered", async () => {
+      const inner = laterStore();
+      let answerSave = () => {};
+      inner.save.mockImplementation(
+        () => new Promise<void>((resolve) => (answerSave = resolve)),
+      );
+      const remove = vi.fn();
+      const store = carryOverStore(inner, { read: () => OLD, remove });
+      await store.load("orders");
+      const saving = store.save("orders", STATE);
+      expect(remove).not.toHaveBeenCalled();
+      answerSave();
+      await saving;
+      expect(remove).toHaveBeenCalledExactlyOnceWith("orders");
+    });
+
+    it("should keep the old entry when the save is rejected", async () => {
+      const inner = laterStore();
+      inner.save.mockRejectedValue(new Error("offline"));
+      const remove = vi.fn();
+      const store = carryOverStore(inner, { read: () => OLD, remove });
+      await store.load("orders");
+      await expect(store.save("orders", STATE)).rejects.toThrow("offline");
+      expect(remove).not.toHaveBeenCalled();
+    });
+
+    it("should remove the old entry after the store's own, and wait for it", async () => {
+      const inner = laterStore({ orders: STATE });
+      const order: string[] = [];
+      inner.remove.mockImplementation(async () => void order.push("store"));
+      const store = carryOverStore(inner, {
+        read: () => OLD,
+        remove: async () => void order.push("old"),
+      });
+      await store.remove("orders");
+      expect(order).toEqual(["store", "old"]);
+    });
   });
 });
