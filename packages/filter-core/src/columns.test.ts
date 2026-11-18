@@ -3,6 +3,7 @@ import {
   type ColumnDefinition,
   type ColumnSettings,
   defaultColumnSettings,
+  isDefaultColumnSettings,
   moveColumn,
   orderedColumns,
   reconcileColumnSettings,
@@ -292,6 +293,51 @@ describe("resetColumnSettings", () => {
 
   it("should return the same settings when they are the defaults already", () => {
     expect(resetColumnSettings(COLUMNS, DEFAULTS)).toBe(DEFAULTS);
+  });
+});
+
+describe("isDefaultColumnSettings", () => {
+  it("should be true for the list's own order and starting visibility", () => {
+    expect(isDefaultColumnSettings(COLUMNS, DEFAULTS)).toBe(true);
+    expect(
+      isDefaultColumnSettings(COLUMNS, defaultColumnSettings(COLUMNS)),
+    ).toBe(true);
+  });
+
+  it("should be false once a column is moved, shown or hidden", () => {
+    const moved = moveColumn(DEFAULTS, "stock", 0);
+    const shown = setColumnVisible(DEFAULTS, "notes", true);
+    const hidden = setColumnVisible(DEFAULTS, "price", false);
+    expect(isDefaultColumnSettings(COLUMNS, moved)).toBe(false);
+    expect(isDefaultColumnSettings(COLUMNS, shown)).toBe(false);
+    expect(isDefaultColumnSettings(COLUMNS, hidden)).toBe(false);
+  });
+
+  it("should be true again after a change is undone", () => {
+    const undone = setColumnVisible(
+      setColumnVisible(DEFAULTS, "price", false),
+      "price",
+      true,
+    );
+    expect(isDefaultColumnSettings(COLUMNS, undone)).toBe(true);
+  });
+
+  it("should be false exactly when a reset would change the settings", () => {
+    const all: ColumnSettings[] = [
+      DEFAULTS,
+      moveColumn(DEFAULTS, "notes", 0),
+      showAllColumns(DEFAULTS),
+      { order: DEFAULTS.order, hidden: ["notes", "price"] },
+    ];
+    for (const settings of all) {
+      expect(isDefaultColumnSettings(COLUMNS, settings)).toBe(
+        resetColumnSettings(COLUMNS, settings) === settings,
+      );
+    }
+  });
+
+  it("should be true for an empty list with empty settings", () => {
+    expect(isDefaultColumnSettings([], { order: [], hidden: [] })).toBe(true);
   });
 });
 

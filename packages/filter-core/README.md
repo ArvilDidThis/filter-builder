@@ -48,6 +48,9 @@ changed. Those are `setColumnVisible`, `moveColumn`, `showAllColumns`, `resetCol
 `defaultColumnSettings`, build a new result on each call. The React hook `useColumnSettings`
 memoises them (keeps the result until its inputs change).
 
+`isDefaultColumnSettings` answers whether a reset would change anything, so a picker can turn
+its reset button off.
+
 ```ts
 import {
   type ColumnDefinition,
@@ -92,6 +95,7 @@ settings = resetColumnSettings(columns, settings);
 | `moveColumn`              | Moves one column to a place in the order             |
 | `showAllColumns`          | Shows every column, keeping the order                |
 | `resetColumnSettings`     | Puts the defaults back                               |
+| `isDefaultColumnSettings` | Whether the settings are the defaults                |
 | `orderedColumns`          | Every column in order, each with whether it is shown |
 | `visibleColumns`          | The shown columns in order, as the app's own objects |
 
