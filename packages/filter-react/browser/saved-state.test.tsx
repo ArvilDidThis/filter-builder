@@ -55,7 +55,7 @@ describe.each(["local", "cookie"] as const)("state saved in %s", (store) => {
     // to rest with the starting columns on the page, so the browser had no chance to show
     // them.
     expect(page.notes().rested.orders).toEqual(["stock name"]);
-    // And no screen frame showed them.
+    // And the page did not hold them when any screen frame began.
     await expect
       .poll(() => page.notes().painted.orders)
       .toEqual(["stock name"]);

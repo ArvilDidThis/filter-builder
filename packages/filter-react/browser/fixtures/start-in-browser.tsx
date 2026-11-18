@@ -14,14 +14,16 @@ export interface FixtureNotes {
    */
   changes: string[];
   /**
-   * What each table showed on each screen frame, by table id, with repeats left out. A
-   * value appears here only if the browser was about to paint it.
+   * What each table's element held at the start of each screen frame, by table id, with
+   * repeats left out. It is a reading of the page, not of the screen: the browser does not
+   * say which frames it really painted. A value here was on the page when a frame began.
    */
   painted: Record<string, string[]>;
   /**
-   * What each table showed each time the page's scripts came to rest after a change, by
-   * table id, with repeats left out. The browser can paint only while scripts rest. So a
-   * value that is missing here was never on screen, and a value that is here could have been.
+   * What each table's element held each time the page's scripts came to rest after a
+   * change, by table id, with repeats left out. It too is a reading of the page. The browser
+   * can paint only while scripts rest, so a value that is missing here cannot have been on
+   * screen. A value that is here could have been, and nothing says whether it was.
    */
   rested: Record<string, string[]>;
 }
@@ -68,7 +70,7 @@ function noteShown(seen: Record<string, string[]>): void {
   }
 }
 
-/** Notes what each table shows now. Runs once per screen frame, just before the paint. */
+/** Notes what each table holds now. Runs at the start of each screen frame. */
 function notePainted(): void {
   noteShown(notes.painted);
   requestAnimationFrame(notePainted);
