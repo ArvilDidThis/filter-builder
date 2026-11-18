@@ -48,6 +48,22 @@ export interface UseSavedTableStateOptions<Values>
    */
   store?: StateStore;
   /**
+   * The saved value a server already read, as the store holds it: for example what
+   * `readCookieState` returns. The first render uses it on the server and in the browser, so
+   * both draw the same page and the table does not jump. `status` starts as "ready", and the
+   * store is not read for the first key.
+   *
+   * Pass `null` when the server found nothing saved. Leave it out to load from the store.
+   * Only the first render reads it: a later change to it, or to the key, loads from the store.
+   *
+   * @example
+   * // On the server, with the request's `Cookie` header:
+   * const initialSaved = readCookieState(cookieHeader, "orders");
+   * // In the component, on the server and in the browser:
+   * const saved = useSavedTableState({ id: "orders", parts, store, initialSaved });
+   */
+  initialSaved?: unknown;
+  /**
    * How long to wait after the last change before saving, in milliseconds. Changes made within
    * that time are saved together. Defaults to 300.
    */
@@ -119,6 +135,7 @@ export interface SavedTableState<Values> {
  *
  * - The first render uses the defaults, so a server and the browser draw the same page. The
  *   saved state is read right after, before the browser paints when the store answers at once.
+ *   With `initialSaved`, the first render uses the state the server read.
  * - Nothing is saved until the load has finished. A part changed in the meantime keeps the
  *   change. After a failed load nothing is saved, so the stored state is not overwritten.
  *   `errorAction` is then "load", and `reload()` tries again.
@@ -160,9 +177,10 @@ export function useSavedTableState<Values>(
     latest.current = options;
   });
 
-  const [snapshot, setSnapshot] = useState(() => startSnapshot(key, parts));
+  const [first] = useState(() => firstState(key, options));
+  const [snapshot, setSnapshot] = useState(first.snapshot);
   const [controller] = useState(() =>
-    createController(snapshot, setSnapshot, latest),
+    createController(first, setSnapshot, latest),
   );
 
   // The key changed while the table stayed on screen. The old key's state must not be drawn
@@ -253,6 +271,30 @@ function startSnapshot<Values>(
   };
 }
 
+/** The state of the first render, and the saved parts the hook does not own. */
+interface FirstState<Values> {
+  snapshot: Snapshot<Values>;
+  unowned: Record<string, unknown>;
+}
+
+/**
+ * The state of the first render: the defaults, to be loaded over, or the state a server
+ * already read, which is in use at once.
+ */
+function firstState<Values>(
+  key: string | undefined,
+  options: UseSavedTableStateOptions<Values>,
+): FirstState<Values> {
+  if (options.initialSaved === undefined) {
+    return { snapshot: startSnapshot(key, options.parts), unowned: {} };
+  }
+  const loaded = readLoadedState(options.initialSaved, options);
+  return {
+    snapshot: { key, values: loaded.values, ...READY },
+    unowned: loaded.unowned,
+  };
+}
+
 // Made on first use, so an app that passes its own store never makes this one.
 let defaultStore: StateStore | undefined;
 
@@ -294,21 +336,24 @@ function warnAboutSharedKey(key: string): void {
  * values were loaded for.
  */
 function createController<Values>(
-  initial: Snapshot<Values>,
+  first: FirstState<Values>,
   draw: (snapshot: Snapshot<Values>) => void,
   latest: { readonly current: UseSavedTableStateOptions<Values> },
 ) {
   /** The newest state, including a change React has not drawn yet. */
-  let live = initial;
+  let live = first.snapshot;
   /** False after unmount, and between two keys. Nothing is drawn then. */
   let active = false;
-  /** Whether the load for `live.key` finished well. Nothing is saved until it has. */
-  let canSave = false;
+  /**
+   * Whether the state for `live.key` is known: its load finished well, or a server read it.
+   * Nothing is saved until then. Without a key there is nowhere to save.
+   */
+  let canSave = live.status === "ready" && live.key !== undefined;
   /**
    * The parts saved under `live.key` that this hook does not own: another hook's, or ones the
    * app no longer has. They are written back with every save, so that saving drops nothing.
    */
-  let unowned: Record<string, unknown> = {};
+  let unowned = first.unowned;
   /** The store and key this hook is listed under in `sharersByStore`, while on screen. */
   let listed: { store: StateStore; key: string } | undefined;
   /** The parts a person changed while saving was off: during the load, or after it failed. */

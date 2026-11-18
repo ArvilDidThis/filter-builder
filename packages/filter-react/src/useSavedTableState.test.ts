@@ -14,6 +14,7 @@ import {
 } from "@arvilmena/filter-core";
 import { act, render, renderHook } from "@testing-library/react";
 import { Activity, createElement, StrictMode } from "react";
+import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import {
   afterEach,
@@ -1609,6 +1610,113 @@ describe("useSavedTableState", () => {
       await settle();
       expect(result.current.status).toBe("ready");
       expect(result.current.values.sort).toBeNull();
+    });
+  });
+
+  describe("state a server already read", () => {
+    const READ_BY_SERVER = savedWith({
+      filter: priceFilter("10"),
+      sort: NAME_SORT,
+      pageSize: 50,
+    });
+
+    it("should draw it on the server", () => {
+      const store = memoryStore();
+      const page = createElement(ServerTable, {
+        id: "orders",
+        store,
+        initialSaved: READ_BY_SERVER,
+      });
+      // The markup writes each quote of the JSON as "&quot;".
+      expect(renderToString(page).replaceAll("&quot;", '"')).toBe(
+        `<p>ready ${JSON.stringify(NAME_SORT)}</p>`,
+      );
+      expect(store.load).not.toHaveBeenCalled();
+    });
+
+    it("should draw it in the browser's first render, and not load or save it", () => {
+      const store = memoryStore();
+      const seen: SavedTableState<Values>[] = [];
+      renderHook(() => {
+        const saved = useSavedTableState({
+          id: "orders",
+          parts: PARTS,
+          store,
+          initialSaved: READ_BY_SERVER,
+        });
+        seen.push(saved);
+        return saved;
+      });
+      expect(seen[0]?.status).toBe("ready");
+      expect(seen[0]?.values.sort).toEqual(NAME_SORT);
+      expect(seen[0]?.values.filter).toEqual(priceFilter("10"));
+      expect(new Set(seen.map((saved) => saved.values)).size).toBe(1);
+
+      act(() => vi.advanceTimersByTime(1000));
+      expect(store.load).not.toHaveBeenCalled();
+      expect(store.save).not.toHaveBeenCalled();
+    });
+
+    it("should hydrate the server's page without a mismatch", () => {
+      const options = {
+        id: "orders",
+        store: memoryStore(),
+        initialSaved: READ_BY_SERVER,
+      };
+      const container = document.createElement("div");
+      container.innerHTML = renderToString(createElement(ServerTable, options));
+      const onRecoverableError = vi.fn();
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const root = hydrateRoot(container, createElement(ServerTable, options), {
+        onRecoverableError,
+      });
+      act(() => {});
+      expect(onRecoverableError).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+      expect(container.textContent).toBe(`ready ${JSON.stringify(NAME_SORT)}`);
+      act(() => root.unmount());
+    });
+
+    it("should save a change, with the parts it does not own", () => {
+      const store = memoryStore();
+      const { result } = renderSaved({ store, initialSaved: READ_BY_SERVER });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          filter: priceFilter("10"),
+          columns: COLUMN_DEFAULTS,
+          sort: PRICE_SORT,
+          pageSize: 50,
+        }),
+      );
+    });
+
+    it("should check it like any saved value", () => {
+      const { result } = renderSaved({
+        store: memoryStore(),
+        initialSaved: savedWith({ sort: "broken", filter: priceFilter("10") }),
+      });
+      expect(result.current.values.sort).toBeNull();
+      expect(result.current.values.filter).toEqual(priceFilter("10"));
+    });
+
+    it("should start from the defaults when the server found nothing", () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result } = renderSaved({ store, initialSaved: null });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toBeNull();
+      expect(store.load).not.toHaveBeenCalled();
+    });
+
+    it("should load another key from the store", () => {
+      const store = memoryStore({ archive: savedWith({ sort: PRICE_SORT }) });
+      const options = { store, initialSaved: READ_BY_SERVER };
+      const { result, rerender } = renderSaved(options);
+      rerender({ ...options, id: "archive" });
+      expect(store.load).toHaveBeenCalledExactlyOnceWith("archive");
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+      expect(result.current.values.filter).toEqual(EMPTY_FILTER);
     });
   });
 
