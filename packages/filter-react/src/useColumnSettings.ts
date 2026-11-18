@@ -123,17 +123,15 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     [columns, saved],
   );
 
-  // The settings an action asked for that are not on screen yet, with the saved settings that
-  // were on screen when it asked (`from`). The next action builds on them, not on the old
-  // settings, in two cases:
+  // The settings an action asked for that are not on screen yet. The next action builds on
+  // them, not on the old settings, in two cases:
   // - a second action in the same event, as in `useFilterBuilder`;
   // - when the hook keeps the settings, an action that follows a change React has not drawn
   //   yet, such as one made in a transition (a change React may put on screen later).
   //   Building on the old settings there would undo the waiting change.
-  const proposed = useRef<{
-    settings: ColumnSettings;
-    from: ColumnSettings | null | undefined;
-  } | null>(null);
+  // They are held in an object of their own, so that two actions that ask for the same
+  // settings can still be told apart.
+  const proposed = useRef<{ settings: ColumnSettings } | null>(null);
 
   // The actions read the newest props through this ref, so they can stay the same functions
   // from one render to the next. It is written after React has put a render on screen, not
@@ -141,11 +139,17 @@ export function useColumnSettings<Column extends ColumnDefinition>(
   const latest = useRef({ settings, saved, columns, onChange, isControlled });
   useEarlyEffect(() => {
     const was = latest.current;
-    // The app put other saved settings on screen. What an action asked for before them is
-    // out of date from this moment, and building on it would drop whatever the newer
-    // settings hold. It stays out of date even if the app later puts the old settings back.
-    const isReplaced = was.isControlled && isControlled && was.saved !== saved;
-    if (isReplaced) proposed.current = null;
+    // What an action asked for goes out of date the moment either of these is drawn, and
+    // stays out of date even if the app later puts things back as they were:
+    // - The app put other saved settings on screen. Building on what was asked for before
+    //   them would drop whatever the newer settings hold.
+    // - The settings changed owner, between the app and the hook. What was asked of one
+    //   owner must not be carried over to the other.
+    // The hook's own draws are not in this list. React may draw an earlier change of the
+    // hook's first, and that must not end the wait of a later one.
+    const isReplaced = isControlled && was.saved !== saved;
+    const hasNewOwner = was.isControlled !== isControlled;
+    if (isReplaced || hasNewOwner) proposed.current = null;
     latest.current = { settings, saved, columns, onChange, isControlled };
   });
 
@@ -159,16 +163,11 @@ export function useColumnSettings<Column extends ColumnDefinition>(
       const now = latest.current;
       const asked = proposed.current;
       // Whether what was asked for is still to come on screen, and so is what to build on.
+      // For an app that owns the settings, it is until it is forgotten: by the effect above,
+      // or once the event is over. The hook's own change waits until that very change is on
+      // screen. Each change is built on the one before, so the newest one holds them all.
       const isWaiting =
-        asked !== null &&
-        (now.isControlled
-          ? // Once other saved settings are on screen, what was asked for before them is
-            // out of date. Building on it would drop whatever the newer settings hold.
-            asked.from === now.saved
-          : // The hook's own change waits until that very change is on screen. React may
-            // draw an earlier change first, and that must not end the wait. Each change is
-            // built on the one before, so the newest one holds them all.
-            asked.settings !== now.saved);
+        asked !== null && (now.isControlled || asked.settings !== now.saved);
       const waiting = isWaiting ? asked : null;
       const before =
         waiting === null
@@ -178,7 +177,7 @@ export function useColumnSettings<Column extends ColumnDefinition>(
       const next = change(now.columns, before);
       // The actions return the same settings when nothing changed.
       if (next === before) return;
-      const mine = { settings: next, from: now.saved };
+      const mine = { settings: next };
       proposed.current = mine;
       if (now.isControlled) {
         // An app that owns the settings may turn the change down, and then nothing new ever

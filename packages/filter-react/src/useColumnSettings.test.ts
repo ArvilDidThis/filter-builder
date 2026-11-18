@@ -237,6 +237,56 @@ describe("useColumnSettings", () => {
     });
   });
 
+  it("should forget a change the app turned down when the app hands the settings over to the hook", () => {
+    const onChange = vi.fn();
+    let setValue: (value: ColumnSettings | undefined) => void = () => {};
+    const { result } = renderHook(() => {
+      const [value, set] = useState<ColumnSettings | undefined>({
+        order: ["name", "price", "stock", "notes"],
+        hidden: [],
+      });
+      setValue = set;
+      return useColumnSettings({ columns: COLUMNS, value, onChange });
+    });
+    act(() => {
+      // The app turns this change down.
+      result.current.actions.toggle("price");
+      // Still in the same event, the app stops passing settings in, so the hook keeps its
+      // own from here on. `flushSync` makes React draw at once.
+      flushSync(() => setValue(undefined));
+      result.current.actions.toggle("stock");
+    });
+    // The hook's own settings start from the defaults. The change the app turned down
+    // is not among them.
+    expect(shape(result.current)).toBe("name price (stock) (notes)");
+  });
+
+  it("should forget a change still waiting in the hook when the app takes the settings over", () => {
+    const fromApp: ColumnSettings = {
+      order: ["name", "price", "stock", "notes"],
+      hidden: [],
+    };
+    const onChange = vi.fn();
+    let setValue: (value: ColumnSettings | undefined) => void = () => {};
+    const { result } = renderHook(() => {
+      const [value, set] = useState<ColumnSettings | undefined>(undefined);
+      setValue = set;
+      return useColumnSettings({ columns: COLUMNS, value, onChange });
+    });
+    act(() => {
+      // A change the hook has asked React to draw, and React has not drawn yet.
+      result.current.actions.toggle("price");
+      // Still in the same event, the app starts passing settings in.
+      flushSync(() => setValue(fromApp));
+      result.current.actions.toggle("stock");
+    });
+    // The app's settings are what counts now, so the change starts from them.
+    expect(onChange).toHaveBeenLastCalledWith({
+      order: fromApp.order,
+      hidden: ["stock"],
+    });
+  });
+
   it("should build on a change that is still waiting in a transition", async () => {
     let openGate = () => {};
     const opened = new Promise<void>((resolve) => {
