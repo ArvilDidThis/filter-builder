@@ -98,6 +98,13 @@ export async function clickOn(element: Element): Promise<void> {
   await release();
 }
 
+/** Clicks a place on the test page with the real mouse, whatever is drawn there. */
+export async function clickAt(point: Point): Promise<void> {
+  await commands.mouseMove(point);
+  await commands.mouseDown();
+  await release();
+}
+
 /** Drags from the middle of `from` to `to` with the real mouse, and drops there. */
 export async function dragTo(from: Element, to: Point): Promise<void> {
   await pressOn(from);

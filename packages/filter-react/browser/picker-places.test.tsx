@@ -10,7 +10,6 @@ import { commands, page, userEvent } from "vitest/browser";
 import { ColumnPicker } from "../src/ui/ColumnPicker";
 import { FilterBuilder } from "../src/ui/FilterBuilder";
 import { useColumnSettings } from "../src/useColumnSettings";
-import styles from "../styles.css?inline";
 import { BLANK_PAGE_PATH } from "./fixture-paths";
 import {
   COLUMNS,
@@ -30,20 +29,11 @@ import {
   pressOn,
   release,
 } from "./support/pointer";
+import { addStyles, shadowStage } from "./support/shadow";
 import { VIEWPORT } from "./viewport";
 
 // The picker in the places an app may put it: a closed shadow tree, a frame, a phone-sized
 // screen and the filter builder.
-
-/**
- * Adds the picker's style sheet to a shadow tree or to a frame's `<head>`. The page's own
- * copy does not reach into either.
- */
-function addStyles(to: ShadowRoot | HTMLHeadElement): void {
-  const sheet = document.createElement("style");
-  sheet.textContent = styles;
-  to.append(sheet);
-}
 
 /** Checks that a tap still ticks a column of `LONG`, and that a drag still moves one. */
 async function tapAndDragStillWork(picker: PickerParts): Promise<void> {
@@ -198,17 +188,8 @@ describe("the picker inside a closed shadow tree (item 6)", () => {
     shadow: ShadowRoot;
     outside: HTMLButtonElement;
   }> {
-    const outside = document.createElement("button");
-    outside.textContent = "Outside the tree";
-    const host = document.createElement("div");
-    host.style.padding = "16px";
-    document.body.append(outside, host);
-    const shadow = host.attachShadow({ mode: "closed" });
-    addStyles(shadow);
-    mount(
-      app ?? <PickerApp changed={changed} />,
-      shadow.appendChild(document.createElement("div")),
-    );
+    const { host, shadow, container, outside } = shadowStage("closed");
+    mount(app ?? <PickerApp changed={changed} />, container);
     // The page cannot see into the tree.
     expect(host.shadowRoot).toBeNull();
     return { picker: await openPicker(shadow), shadow, outside };
@@ -425,14 +406,8 @@ describe("the picker inside an embedded page (item 6)", () => {
 describe("the picker's popover in a closed shadow tree (item 6)", () => {
   test("stays inside the screen", async () => {
     await resizeTo(PHONE);
-    const host = document.createElement("div");
-    document.body.append(host);
-    const shadow = host.attachShadow({ mode: "closed" });
-    addStyles(shadow);
-    mount(
-      <Toolbar align="start" place="center" />,
-      shadow.appendChild(document.createElement("div")),
-    );
+    const { shadow, container } = shadowStage("closed");
+    mount(<Toolbar align="start" place="center" />, container);
     const picker = await openPicker(shadow);
     expect(isInsideScreen(picker.popover())).toBe(true);
     expect(scrollsSideways()).toBe(false);
