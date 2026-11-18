@@ -108,6 +108,20 @@ function Toolbar({
   );
 }
 
+/** How far the picker's button starts from the left edge of what scrolls, in pixels. */
+const BUTTON_LEFT = 300;
+/** A sideways scroll that takes the popover's place past the screen's left edge. */
+const PAST_THE_EDGE = BUTTON_LEFT + 200;
+
+/** Content far wider than the screen, with the picker's button `BUTTON_LEFT` along it. */
+function WideContent() {
+  return (
+    <div style={{ width: 3000, height: 380, paddingLeft: BUTTON_LEFT }}>
+      <Toolbar align="start" columns={COLUMNS} />
+    </div>
+  );
+}
+
 const FIELDS: FieldDefinition[] = [
   { key: "name", label: "Name", type: "string" },
   { key: "amount", label: "Amount", type: "num" },
@@ -617,6 +631,60 @@ describe("the picker on a phone-sized screen (item 7)", () => {
     const short = list.clientHeight;
     await resizeTo({ width: 480, height: 700 });
     await expect.poll(() => list.clientHeight).toBeGreaterThan(short);
+  });
+});
+
+describe("the picker's popover while something scrolls sideways", () => {
+  /** Whether the popover's left edge is on its button's left edge, where `align` puts it. */
+  const isLinedUp = (picker: PickerParts): boolean =>
+    Math.abs(
+      (picker.popover() as HTMLElement).getBoundingClientRect().left -
+        picker.trigger().getBoundingClientRect().left,
+    ) < 0.5;
+
+  test("stays inside the screen when the page scrolls", async () => {
+    mount(<WideContent />);
+    const picker = await openPicker();
+    expect(scrollsSideways()).toBe(true);
+    expect(isLinedUp(picker)).toBe(true);
+
+    window.scrollTo(PAST_THE_EDGE, 0);
+    await expect.poll(() => window.scrollX).toBe(PAST_THE_EDGE);
+    // The button is now left of the screen. The popover is kept inside it.
+    expect(picker.trigger().getBoundingClientRect().left).toBeLessThan(0);
+    await expect.poll(() => isInsideScreen(picker.popover())).toBe(true);
+
+    // Scrolled back, the popover returns to its button's edge.
+    window.scrollTo(0, 0);
+    await expect.poll(() => window.scrollX).toBe(0);
+    await expect.poll(() => isLinedUp(picker)).toBe(true);
+    expect(isInsideScreen(picker.popover())).toBe(true);
+  });
+
+  test("stays inside the screen when a box around the picker scrolls", async () => {
+    mount(
+      <div
+        data-testid="scroller"
+        style={{ width: 600, height: 420, overflow: "auto" }}
+      >
+        <WideContent />
+      </div>,
+    );
+    const picker = await openPicker();
+    const scroller = page.getByTestId("scroller").element();
+    // The box scrolls, and the page does not.
+    expect(scrollsSideways()).toBe(false);
+    expect(isLinedUp(picker)).toBe(true);
+
+    scroller.scrollLeft = PAST_THE_EDGE;
+    await expect.poll(() => scroller.scrollLeft).toBe(PAST_THE_EDGE);
+    expect(picker.trigger().getBoundingClientRect().left).toBeLessThan(0);
+    await expect.poll(() => isInsideScreen(picker.popover())).toBe(true);
+
+    scroller.scrollLeft = 0;
+    await expect.poll(() => scroller.scrollLeft).toBe(0);
+    await expect.poll(() => isLinedUp(picker)).toBe(true);
+    expect(isInsideScreen(picker.popover())).toBe(true);
   });
 });
 
