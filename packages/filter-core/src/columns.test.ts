@@ -136,6 +136,22 @@ describe("reconcileColumnSettings", () => {
     ]);
   });
 
+  it("should place a very large run of new columns without failing", () => {
+    // Every column after the first is new, so they all follow that one saved column.
+    const columns: ColumnDefinition[] = Array.from(
+      { length: 200_000 },
+      (_, index) => ({ key: `c${index}`, label: `C${index}` }),
+    );
+    const { order } = reconcileColumnSettings(columns, {
+      order: ["c0"],
+      hidden: [],
+    });
+    expect(order).toHaveLength(200_000);
+    expect(order[0]).toBe("c0");
+    expect(order[1]).toBe("c1");
+    expect(order[199_999]).toBe("c199999");
+  });
+
   it("should give a new column its starting visibility", () => {
     const saved = { order: ["name", "price", "stock"], hidden: [] };
     expect(reconcileColumnSettings(COLUMNS, saved).hidden).toEqual(["notes"]);

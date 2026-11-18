@@ -94,7 +94,10 @@ export function reconcileColumnSettings(
   }
   const nextOrder = leading;
   for (const key of savedOrder) {
-    nextOrder.push(key, ...(followers.get(key) ?? []));
+    nextOrder.push(key);
+    // Added one at a time. Passing a whole group to one `push` call fails on a very long group,
+    // because an engine limits how many values one call may take.
+    for (const follower of followers.get(key) ?? []) nextOrder.push(follower);
   }
 
   // With no usable saved list of hidden columns, every column takes its starting visibility.
