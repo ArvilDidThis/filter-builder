@@ -2586,6 +2586,73 @@ describe("useSavedTableState", () => {
     });
   });
 
+  describe("a column part without the column list", () => {
+    /** The column list goes to the column hook only. */
+    function renderTable(store: StateStore) {
+      return renderHook(() => {
+        const saved = useSavedTableState({
+          id: "orders",
+          store,
+          parts: { columns: columnStatePart() },
+        });
+        const table = useColumnSettings({
+          columns: COLUMNS,
+          value: saved.values.columns,
+          onChange: saved.set.columns,
+        });
+        return { saved, table };
+      });
+    }
+    const shownKeys = (table: { visibleColumns: readonly { key: string }[] }) =>
+      table.visibleColumns.map((column) => column.key);
+
+    it("should show the list's defaults, and save nothing, until a column changes", () => {
+      const store = memoryStore();
+      const { result } = renderTable(store);
+      expect(result.current.saved.values.columns).toBeNull();
+      expect(shownKeys(result.current.table)).toEqual(["name", "price"]);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(store.save).not.toHaveBeenCalled();
+
+      act(() => result.current.table.actions.toggle("notes"));
+      act(() => vi.advanceTimersByTime(300));
+      expect(shownKeys(result.current.table)).toEqual([
+        "name",
+        "price",
+        "notes",
+      ]);
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          columns: { order: ["name", "price", "notes"], hidden: [] },
+        }),
+      );
+    });
+
+    it("should let the column hook fit settings saved for an older list", () => {
+      const store = memoryStore({
+        orders: savedWith({
+          columns: { order: ["price", "gone", "name"], hidden: ["price"] },
+        }),
+      });
+      const { result } = renderTable(store);
+      expect(shownKeys(result.current.table)).toEqual(["name"]);
+      expect(store.save).not.toHaveBeenCalled();
+    });
+
+    it("should go back to the list's defaults on clear", () => {
+      const store = memoryStore({
+        orders: savedWith({
+          columns: { order: ["price", "name"], hidden: [] },
+        }),
+      });
+      const { result } = renderTable(store);
+      expect(shownKeys(result.current.table)[0]).toBe("price");
+      act(() => result.current.saved.clear());
+      expect(result.current.saved.values.columns).toBeNull();
+      expect(shownKeys(result.current.table)).toEqual(["name", "price"]);
+    });
+  });
+
   describe("parts and values typed with an interface", () => {
     interface TableValues {
       filter: FilterDefinition;

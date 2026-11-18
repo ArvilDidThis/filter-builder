@@ -604,4 +604,31 @@ describe("columnStatePart", () => {
     };
     expect(columnStatePart(COLUMNS).parse(saved)).toBe(saved);
   });
+
+  describe("without the column list", () => {
+    it("should be empty until something is saved", () => {
+      const part = columnStatePart();
+      expectTypeOf(part).toEqualTypeOf<StatePart<ColumnSettings | null>>();
+      expect(part.defaultValue).toBeNull();
+    });
+
+    it("should hand on saved settings as they are, for a later fit", () => {
+      const saved = { order: ["notes", "gone", "name"], hidden: ["name"] };
+      expect(columnStatePart().parse(saved)).toBe(saved);
+    });
+
+    it.each([
+      ["text", "broken"],
+      ["null", null],
+      ["a list", [["name"], []]],
+      ["no hidden list", { order: ["name"] }],
+      ["no order", { hidden: [] }],
+      ["a key that is not text", { order: ["name", 7], hidden: [] }],
+    ])("should turn down %s", (_label, saved) => {
+      const state = readSavedState(createSavedState({ columns: saved }), {
+        columns: columnStatePart(),
+      });
+      expect(state.columns).toBeNull();
+    });
+  });
 });

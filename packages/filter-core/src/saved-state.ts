@@ -215,12 +215,43 @@ export function filterStatePart(
 }
 
 /**
- * The column part of a table's state: which columns are shown, and in what order. The saved
- * settings are fitted to the column list with `reconcileColumnSettings`.
+ * The column part of a table's state: which columns are shown, and in what order.
+ *
+ * With the column list, the saved settings are fitted to it with `reconcileColumnSettings`,
+ * and the part is never empty.
+ *
+ * Without the column list, the part is `null` until something is saved, and saved settings
+ * are handed on as they are once their shape is right. Use this form when the settings go to
+ * something that fits them to the column list itself, as the column hook of
+ * `@arvilmena/filter-react` does. The column list is then passed in one place only.
+ *
+ * @example
+ * // The settings are ready to use anywhere.
+ * const parts = { columns: columnStatePart(columns) };
+ *
+ * @example
+ * // The column hook fits the settings, so only the hook gets the column list.
+ * const parts = { columns: columnStatePart() };
+ * const saved = useSavedTableState({ id: "orders", parts });
+ * const table = useColumnSettings({
+ *   columns,
+ *   value: saved.values.columns,
+ *   onChange: saved.set.columns,
+ * });
  */
 export function columnStatePart(
   columns: readonly ColumnDefinition[],
-): StatePart<ColumnSettings> {
+): StatePart<ColumnSettings>;
+export function columnStatePart(): StatePart<ColumnSettings | null>;
+export function columnStatePart(
+  columns?: readonly ColumnDefinition[],
+): StatePart<ColumnSettings> | StatePart<ColumnSettings | null> {
+  if (columns === undefined) {
+    return {
+      defaultValue: null,
+      parse: (saved) => (isColumnSettings(saved) ? saved : undefined),
+    };
+  }
   return {
     defaultValue: defaultColumnSettings(columns),
     parse: (saved) => reconcileColumnSettings(columns, saved),
@@ -312,6 +343,15 @@ function checkTogether<Values>(
 /** Whether the value is an object that is not a list. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Whether a saved value has the shape of column settings: two lists of keys. */
+function isColumnSettings(value: unknown): value is ColumnSettings {
+  return isRecord(value) && isKeyList(value.order) && isKeyList(value.hidden);
+}
+
+function isKeyList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((key) => typeof key === "string");
 }
 
 /** Whether a saved value can be the top group of a filter. */
