@@ -748,6 +748,22 @@ describe("ColumnPicker", () => {
       expect(document.activeElement).toBe(checkbox("Price"));
     });
 
+    it("should not take the focus back once the person has moved it on", () => {
+      openOwningApp();
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      // The person goes on to another control, and that control then gives the focus up.
+      // Nothing holds the focus now, but the move is not what took it away.
+      checkbox("Price").focus();
+      checkbox("Price").blur();
+      expect(document.activeElement).toBe(document.body);
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Name ⠿Stock ⠿Notes");
+      expect(document.activeElement).toBe(document.body);
+      // The move itself is still read out.
+      expect(announced()).toBe("Name moved to position 2 of 4.");
+    });
+
     it("should not give the focus to a handle that did not have it", () => {
       openOwningApp();
       // The focus is on the list's box, where opening put it, not on the handle.

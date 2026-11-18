@@ -242,7 +242,8 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     // keyboard focus. So the focus is put back on the column's handle, and pressing the key
     // again moves the same column again. It is put back only when the move took it away: the
     // handle had it, and now nothing has. A person who has gone on to another control, in
-    // the picker or outside it, keeps their place.
+    // the picker or outside it, keeps their place. The picker's blur handler withdraws
+    // `hadFocus` for that, in case the other control has lost the focus since.
     const focused = root.ownerDocument.activeElement;
     const isFocusLost = focused === null || focused === root.ownerDocument.body;
     if (pending.hadFocus && isFocusLost) {
@@ -319,6 +320,12 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       // A click on something that takes no focus is left to the outside-click check above.
       onBlur={(event) => {
         const next = event.relatedTarget;
+        // The person took the focus to another control. A move that is still waiting must
+        // not pull it back later, even if nothing holds the focus by then. The move itself
+        // stays, so that it is still read out.
+        if (next !== null && pendingMove.current !== null) {
+          pendingMove.current.hadFocus = false;
+        }
         if (open && next !== null && !rootRef.current?.contains(next)) {
           close(false);
         }
