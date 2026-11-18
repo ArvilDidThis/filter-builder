@@ -67,9 +67,10 @@ function ChangingApp() {
 
 /**
  * An app that owns the settings and applies a change late: only when "Apply" is pressed. A
- * change that is never applied is one the app turned down.
+ * change that is never applied is one the app turned down. With `atOnce`, it applies each
+ * change as it is asked for.
  */
-function OwningApp() {
+function OwningApp({ atOnce = false }: { atOnce?: boolean }) {
   const [value, setValue] = useState<ColumnSettings | null>(null);
   const waiting = useRef<ColumnSettings | null>(null);
   const state = useColumnSettings({
@@ -77,6 +78,7 @@ function OwningApp() {
     value,
     onChange: (next) => {
       waiting.current = next;
+      if (atOnce) setValue(next);
     },
   });
   return (
@@ -273,6 +275,19 @@ describe("ColumnPicker", () => {
     expect(announced()).toBe(
       "The columns are back in their starting order and visibility.",
     );
+  });
+
+  it("should not announce a press on a button that has nothing to do", () => {
+    renderPicker();
+    // The settings are the starting ones already.
+    fireEvent.click(reset());
+    expect(announced()).toBe("");
+    fireEvent.click(showAll());
+    expect(announced()).toBe("All columns are shown.");
+    const message = document.querySelector("[aria-live]")?.firstChild;
+    // Every column is shown now, so a second press is not a new message.
+    fireEvent.click(showAll());
+    expect(document.querySelector("[aria-live]")?.firstChild).toBe(message);
   });
 
   it("should announce the same message again as a new one", () => {
@@ -813,8 +828,8 @@ describe("ColumnPicker", () => {
   });
 
   describe("in an app that owns the settings", () => {
-    const openOwningApp = () => {
-      render(<OwningApp />);
+    const openOwningApp = (atOnce = false) => {
+      render(<OwningApp atOnce={atOnce} />);
       fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
     };
     const apply = () =>
@@ -901,6 +916,104 @@ describe("ColumnPicker", () => {
       expect(announced()).toBe("");
       apply();
       expect(announced()).toBe("Name moved to position 3 of 4.");
+    });
+
+    it("should announce Show all and Reset when the app applies them at once", () => {
+      openOwningApp(true);
+      fireEvent.click(showAll());
+      expect(announced()).toBe("All columns are shown.");
+      fireEvent.click(reset());
+      expect(announced()).toBe(
+        "The columns are back in their starting order and visibility.",
+      );
+    });
+
+    it("should announce Show all only once the app applies it", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      expect(announced()).toBe("");
+      expect(isUnavailable(showAll())).toBe(false);
+      apply();
+      expect(checkbox("Notes").checked).toBe(true);
+      expect(announced()).toBe("All columns are shown.");
+      expect(isUnavailable(showAll())).toBe(true);
+    });
+
+    it("should announce Reset only once the app applies it", () => {
+      openOwningApp();
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      fireEvent.click(reset());
+      expect(announced()).toBe("");
+      expect(isUnavailable(reset())).toBe(false);
+      apply();
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(announced()).toBe(
+        "The columns are back in their starting order and visibility.",
+      );
+      expect(isUnavailable(reset())).toBe(true);
+    });
+
+    it("should not announce Show all or Reset that the app turns down", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      expect(announced()).toBe("");
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      fireEvent.click(reset());
+      expect(announced()).toBe("");
+      // Something else redraws the picker. Neither press was applied, so still no word.
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(announced()).toBe("");
+      expect(isUnavailable(reset())).toBe(false);
+    });
+
+    it("should not announce Show all when the app applies something else", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      // The app turns the press down, and changes the order itself.
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Price ⠿Stock");
+      expect(announced()).toBe("");
+      // The press was given up then. A person who ticks the last column later did not
+      // press "Show all" for it.
+      fireEvent.click(checkbox("Notes"));
+      apply();
+      expect(checkbox("Notes").checked).toBe(true);
+      expect(announced()).toBe("");
+    });
+
+    it("should keep the focus on Reset while the app applies it late", () => {
+      openOwningApp();
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      reset().focus();
+      fireEvent.click(reset());
+      expect(document.activeElement).toBe(reset());
+      // The app's own button applies the change without taking the focus in this test page.
+      apply();
+      expect(isUnavailable(reset())).toBe(true);
+      expect(document.activeElement).toBe(reset());
+    });
+
+    it("should forget a waiting Show all when the picker closes", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      fireEvent.keyDown(showAll(), { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      apply();
+      expect(announced()).toBe("");
+      // Opened again, the list shows what the app applied, and still nothing is read out.
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(checkbox("Notes").checked).toBe(true);
+      expect(announced()).toBe("");
+    });
+
+    it("should forget a waiting Reset when a click outside closes the picker", () => {
+      openOwningApp();
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      fireEvent.click(reset());
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Elsewhere" }));
+      apply();
+      expect(announced()).toBe("");
     });
 
     it("should forget a waiting move when the picker closes", () => {

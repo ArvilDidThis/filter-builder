@@ -46,9 +46,9 @@ export interface ColumnPickerLabels {
   moveHint: string;
   /** Read out after a move. `position` counts from 1. */
   moved: (label: string, position: number, total: number) => string;
-  /** Read out after the "show all" button is pressed. */
+  /** Read out once the "show all" button has shown every column. */
   showAllDone: string;
-  /** Read out after the "reset" button is pressed. */
+  /** Read out once the "reset" button has put the starting settings back. */
   resetDone: string;
 }
 
@@ -200,6 +200,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const close = (returnFocus: boolean) => {
     setOpen(false);
     pendingMove.current = null;
+    pendingButton.current = null;
     if (returnFocus) triggerRef.current?.focus();
   };
   useOutsidePointerDown(rootRef, open, () => close(false));
@@ -255,6 +256,32 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     announce(
       labels.moved(entry.column.label, pending.to + 1, orderedColumns.length),
     );
+  });
+
+  // The "show all" or "reset" press that is still to be read out. Like a move, it waits here
+  // until it has really happened, because an app that owns the settings may apply it later, or
+  // turn it down.
+  const pendingButton = useRef<{
+    button: "showAll" | "reset";
+    /** The list when the button was pressed. The hook keeps it until its content changes. */
+    list: readonly OrderedColumn<Column>[];
+  } | null>(null);
+  useEffect(() => {
+    const pending = pendingButton.current;
+    if (pending === null) return;
+    // A button can only be pressed while it has something to do. So once it has nothing left
+    // to do, its press has landed.
+    const isShowAll = pending.button === "showAll";
+    if (isShowAll ? allVisible : isDefault) {
+      pendingButton.current = null;
+      // The button stays where it is and the list may barely change, so without this a
+      // screen reader would say nothing.
+      announce(isShowAll ? labels.showAllDone : labels.resetDone);
+    } else if (orderedColumns !== pending.list) {
+      // The list changed to something else: the app turned the press down and applied
+      // another change. That is not this press's to speak for.
+      pendingButton.current = null;
+    }
   });
 
   // Reads the newest columns, so the function below can stay the same between renders and the
@@ -395,10 +422,11 @@ export function ColumnPicker<Column extends ColumnDefinition>({
             <FooterButton
               onPress={() => {
                 pendingMove.current = null;
+                pendingButton.current = {
+                  button: "showAll",
+                  list: orderedColumns,
+                };
                 actions.showAll();
-                // The button stays where it is and the list barely changes, so without
-                // this a screen reader would say nothing.
-                announce(labels.showAllDone);
               }}
               unavailable={allVisible}
             >
@@ -408,8 +436,11 @@ export function ColumnPicker<Column extends ColumnDefinition>({
               onPress={() => {
                 // Reset moves columns too. A move still waiting must not take the credit.
                 pendingMove.current = null;
+                pendingButton.current = {
+                  button: "reset",
+                  list: orderedColumns,
+                };
                 actions.reset();
-                announce(labels.resetDone);
               }}
               unavailable={isDefault}
             >
