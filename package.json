@@ -16,6 +16,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check . --write",
     "verify": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm -r run verify:entry && pnpm test:scripts",
+    "test:browser": "pnpm --filter @arvilmena/filter-react run test:browser",
+    "test:browser:update": "pnpm --filter @arvilmena/filter-react run test:browser:update",
     "test:react18": "pnpm --filter @arvilmena/filter-core run build && pnpm --filter react-18-tests run test:react18",
     "test:scripts": "node --test \".github/scripts/__tests__/*.test.ts\""
   },

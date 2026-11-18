@@ -1,0 +1,88 @@
+import { commands } from "vitest/browser";
+
+// Real pointer input at real places on the screen. The places are read from the page's own
+// layout, so a test never guesses where a row is.
+
+/** A place in the test page, in CSS pixels from its top left corner. */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/**
+ * The top left corner of the page that holds `element`, counted from the test page. It is
+ * not the test page's own corner when the element is inside a frame (a page within the page).
+ */
+function pageCorner(element: Element): Point {
+  const corner = { x: 0, y: 0 };
+  let frame = element.ownerDocument.defaultView?.frameElement ?? null;
+  while (frame !== null) {
+    const box = frame.getBoundingClientRect();
+    // A frame's content starts inside its border.
+    corner.x += box.left + frame.clientLeft;
+    corner.y += box.top + frame.clientTop;
+    frame = frame.ownerDocument.defaultView?.frameElement ?? null;
+  }
+  return corner;
+}
+
+/**
+ * A place on `element`. `across` and `down` say how far along it, from 0 (its left or top
+ * edge) to 1. Without them it is the middle.
+ */
+export function pointOn(element: Element, across = 0.5, down = 0.5): Point {
+  const box = element.getBoundingClientRect();
+  const corner = pageCorner(element);
+  return {
+    x: corner.x + box.left + box.width * across,
+    y: corner.y + box.top + box.height * down,
+  };
+}
+
+/**
+ * Waits until `element` has kept its place for one screen frame. A list may still be scrolling
+ * or being laid out just after it changed, and a press aimed too early would miss.
+ */
+async function untilStill(element: Element): Promise<void> {
+  const place = (): string => {
+    const { x, y } = pointOn(element);
+    return `${x},${y}`;
+  };
+  let before = place();
+  for (;;) {
+    await new Promise((done) => requestAnimationFrame(done));
+    const now = place();
+    if (now === before) return;
+    before = now;
+  }
+}
+
+/** Presses the mouse button on the middle of `element`, and keeps it held. */
+export async function pressOn(element: Element): Promise<void> {
+  await untilStill(element);
+  await commands.mouseMove(pointOn(element));
+  await commands.mouseDown();
+}
+
+/** Moves the mouse to `point` in a few steps, as a hand would. */
+export async function moveTo(point: Point, steps = 5): Promise<void> {
+  await commands.mouseMove(point, steps);
+}
+
+/** Lets go of the mouse button. */
+export async function release(): Promise<void> {
+  await commands.mouseUp();
+}
+
+/** Clicks the middle of `element` with the real mouse. */
+export async function clickOn(element: Element): Promise<void> {
+  await pressOn(element);
+  await release();
+}
+
+/** Drags from the middle of `from` to `to` with the real mouse, and drops there. */
+export async function dragTo(from: Element, to: Point): Promise<void> {
+  await pressOn(from);
+  await moveTo(to);
+  await release();
+}

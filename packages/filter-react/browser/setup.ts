@@ -1,0 +1,26 @@
+import { afterEach } from "vitest";
+import { commands, page } from "vitest/browser";
+import "../styles.css";
+import { unmountAll } from "./support/mount";
+
+// Runs before every test file. Each test starts from the same page: nothing drawn, the usual
+// window size, a light theme, and the mouse parked away from anything it could hover over.
+
+/** The window size the suite runs at. Keep it the same as `viewport` in the config. */
+export const VIEWPORT = { width: 1024, height: 768 } as const;
+
+afterEach(async () => {
+  unmountAll();
+  // A test that failed mid-drag would otherwise leave the button held for the next test.
+  await commands.mouseUp();
+  await commands.mouseMove({ x: 0, y: 0 });
+  await commands.colorScheme("light");
+  await page.viewport(VIEWPORT.width, VIEWPORT.height);
+  localStorage.clear();
+  for (const cookie of document.cookie.split(";")) {
+    const name = cookie.split("=")[0]?.trim();
+    // The cookie store under test writes this way too, and it works in every browser.
+    // biome-ignore lint/suspicious/noDocumentCookie: see the line above
+    if (name) document.cookie = `${name}=; Max-Age=0; Path=/`;
+  }
+});
