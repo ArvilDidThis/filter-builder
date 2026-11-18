@@ -1,6 +1,7 @@
 import axe from "axe-core";
 import { describe, expect, onTestFinished, test } from "vitest";
 import { commands, page, server, userEvent } from "vitest/browser";
+import type { ReaderNode } from "./commands";
 import {
   mountOpenPicker,
   openPicker,
@@ -115,6 +116,62 @@ describe("an accessibility scan of the picker (item 15)", () => {
       await expect.poll(picker.table).toBe("name price stock notes");
       picker.handle("Price").focus();
       expect(await violations()).toEqual([]);
+    },
+  );
+});
+
+describe("the picker's list, as a screen reader is told of it", () => {
+  // The style sheet takes the bullets off the list. Safari then stops telling a screen
+  // reader that it is a list, unless the list names its role. What a browser really tells a
+  // screen reader is its accessibility tree, and Playwright can read only Chromium's.
+  // Firefox's and WebKit's are out of reach, so the Safari fault itself is not checked here:
+  // both tests below pass with or without the role, and fail once the list is no list.
+
+  // In every browser, Playwright's own reading of the page. It follows the rules browsers
+  // are meant to follow, so it shows that the page is marked up as a list of four items.
+  // It cannot show a browser that departs from those rules, as Safari does.
+  test("is marked up as a list of its columns, as Playwright reads the page", async () => {
+    await mountOpenPicker();
+    const lines = (await commands.ariaSnapshot(".fb-columns-popover"))
+      .split("\n")
+      .map((line) => line.trim());
+    expect(lines.filter((line) => line === "- list:")).toHaveLength(1);
+    expect(lines.filter((line) => line === "- listitem:")).toHaveLength(4);
+    // The items hold the columns' controls.
+    expect(lines).toContain('- checkbox "Price" [checked]');
+    expect(lines).toContain('- button "Move Price"');
+  });
+
+  test.runIf(server.browser === "chromium")(
+    "is a list of its columns in Chromium's own accessibility tree",
+    async () => {
+      await mountOpenPicker();
+      const find = (node: ReaderNode, role: string): ReaderNode | undefined =>
+        node.role === role
+          ? node
+          : node.children
+              .map((child) => find(child, role))
+              .find((found) => found !== undefined);
+      const dialog = find(await commands.readerTree(), "dialog");
+      expect(dialog?.name).toBe("Columns");
+      const list = find(dialog as ReaderNode, "list");
+      expect(list?.children.map((item) => item.role)).toEqual([
+        "listitem",
+        "listitem",
+        "listitem",
+        "listitem",
+      ]);
+      // Each item holds its column's checkbox and handle, by name.
+      expect(
+        list?.children.map((item) =>
+          item.children.map((part) => `${part.role} ${part.name}`),
+        ),
+      ).toEqual(
+        ["Name", "Price", "Stock", "Notes"].map((label) => [
+          `checkbox ${label}`,
+          `button Move ${label}`,
+        ]),
+      );
     },
   );
 });
