@@ -1248,16 +1248,21 @@ describe("ColumnPicker", () => {
       loadedSheet = null;
     });
 
-    /** Loads the real style sheet, and hands back its rules that reach `element`. */
-    function rulesFor(element: Element): CSSStyleRule[] {
+    /** Loads the real style sheet, once per test. */
+    function loadSheet(): HTMLStyleElement {
       const sheet = document.createElement("style");
-      loadedSheet = sheet;
       sheet.textContent = readFileSync(
         `${import.meta.dirname}/../../styles.css`,
         "utf8",
       );
       document.head.append(sheet);
-      return Array.from(sheet.sheet?.cssRules ?? [])
+      return sheet;
+    }
+
+    /** The rules of the real style sheet that reach `element`, in the order written. */
+    function rulesFor(element: Element): CSSStyleRule[] {
+      loadedSheet ??= loadSheet();
+      return Array.from(loadedSheet.sheet?.cssRules ?? [])
         .map((rule) => rule as CSSStyleRule)
         .filter(
           (rule) =>
@@ -1265,6 +1270,34 @@ describe("ColumnPicker", () => {
             element.matches(rule.selectorText),
         );
     }
+
+    it("should let a long label on a button below the list wrap inside the popover", () => {
+      renderPicker({
+        labels: {
+          showAll: "Alle Tabellenspalten einblenden",
+          reset: "Spaltensichtbarkeitseinstellungen wiederherstellen",
+        },
+      });
+      const button = screen.getByRole("button", {
+        name: "Spaltensichtbarkeitseinstellungen wiederherstellen",
+      });
+      const footer = button.parentElement as HTMLElement;
+      /** What the rules give `element` for a property. A later rule wins, as these do. */
+      const styled = (element: Element, property: string) =>
+        rulesFor(element)
+          .map((rule) => rule.style.getPropertyValue(property))
+          .filter((value) => value !== "")
+          .at(-1);
+      // A button that does not fit beside the other takes a line of its own.
+      expect(styled(footer, "flex-wrap")).toBe("wrap");
+      // It is never wider than the popover, and its label breaks, even inside a long word.
+      expect(styled(button, "max-width")).toBe("100%");
+      expect(styled(button, "overflow-wrap")).toBe("anywhere");
+      expect(styled(button, "white-space")).toBeUndefined();
+      // It grows taller to hold the lines, and a short label keeps the usual height.
+      expect(styled(button, "height")).toBe("auto");
+      expect(styled(button, "min-height")).toBe("var(--fb-control-height)");
+    });
 
     it("should let the page scroll on once the list has reached its end", () => {
       renderPicker();

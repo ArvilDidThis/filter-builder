@@ -578,10 +578,23 @@
 
 .fb-columns-footer {
   display: flex;
+  /* A button whose label is too long to stand beside the other takes a line of its own. */
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--fb-gap);
   padding-top: 0.25rem;
   border-top: 1px solid var(--fb-border);
+}
+
+/* An app may give these buttons long labels, such as translated ones. A button is never
+   wider than the popover: its label breaks into lines, inside a long word if it must, and
+   the button grows taller to hold them. A short label keeps the usual height. */
+.fb-columns-footer > .fb-button {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--fb-control-height);
+  padding-block: 0.25rem;
+  overflow-wrap: anywhere;
 }
 
 /* On the page for screen readers only: it takes no room and shows nothing. */
