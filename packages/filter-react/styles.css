@@ -481,8 +481,9 @@
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  /* Reaching the end of the list does not start scrolling the page behind it. */
-  overscroll-behavior: contain;
+  /* Scrolling past the end of the list scrolls the page on, as the browser does by default.
+     Below a button near the bottom of the screen, the buttons under the list are out of
+     view, and a wheel or a finger over the list must be able to bring them in. */
   list-style: none;
 }
 

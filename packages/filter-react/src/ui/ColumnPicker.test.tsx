@@ -1233,6 +1233,44 @@ describe("ColumnPicker", () => {
     });
   });
 
+  describe("its style sheet", () => {
+    // The test page lays nothing out and scrolls nothing, so these tests read the rules.
+    let loadedSheet: HTMLStyleElement | null = null;
+    afterEach(() => {
+      loadedSheet?.remove();
+      loadedSheet = null;
+    });
+
+    /** Loads the real style sheet, and hands back its rules that reach `element`. */
+    function rulesFor(element: Element): CSSStyleRule[] {
+      const sheet = document.createElement("style");
+      loadedSheet = sheet;
+      sheet.textContent = readFileSync(
+        `${import.meta.dirname}/../../styles.css`,
+        "utf8",
+      );
+      document.head.append(sheet);
+      return Array.from(sheet.sheet?.cssRules ?? [])
+        .map((rule) => rule as CSSStyleRule)
+        .filter(
+          (rule) =>
+            rule.selectorText !== undefined &&
+            element.matches(rule.selectorText),
+        );
+    }
+
+    it("should let the page scroll on once the list has reached its end", () => {
+      renderPicker();
+      // Below a button near the bottom of the screen, the buttons under the list are out
+      // of view. A wheel or a finger over the list must then be able to scroll the page.
+      const rules = rulesFor(screen.getByRole("list"));
+      expect(rules.length).toBeGreaterThan(0);
+      for (const rule of rules) {
+        expect(rule.style.getPropertyValue("overscroll-behavior")).toBe("");
+      }
+    });
+  });
+
   describe("inside a frame", () => {
     /**
      * Draws the app with the open picker in a document of its own, as a frame (a page within
