@@ -832,9 +832,21 @@ function readLoadedState<Values>(
 /** The keys already warned about, so each is named once. */
 const warnedKeys = new Set<string>();
 
-// Bundlers put the build mode in place of `process.env.NODE_ENV`. Where there is no bundler
-// and no `process`, as in a plain browser page, nothing is warned about.
-declare const process: { env: { NODE_ENV?: string } } | undefined;
+// Not there in a plain browser page. `isProductionBuild` deals with that.
+declare const process: { env: { NODE_ENV?: string } };
+
+/** Whether this is a production build. Also true where the build mode cannot be told. */
+function isProductionBuild(): boolean {
+  try {
+    // Bundlers put the build mode in place of this expression as it is written here. It must
+    // not hide behind a check that `process` exists: a browser has no `process`, so the
+    // check would fail in a development build too.
+    return process.env.NODE_ENV === "production";
+  } catch {
+    // No bundler and no `process`, as in a plain browser page.
+    return true;
+  }
+}
 
 /**
  * Tells a developer, once per key, that two tables on screen save under the same key. One
@@ -842,8 +854,7 @@ declare const process: { env: { NODE_ENV?: string } } | undefined;
  * hook's parts, but parts of the same name overwrite each other.
  */
 function warnAboutSharedKey(key: string): void {
-  if (typeof process === "undefined") return;
-  if (process.env.NODE_ENV === "production" || warnedKeys.has(key)) return;
+  if (isProductionBuild() || warnedKeys.has(key)) return;
   warnedKeys.add(key);
   console.warn(
     `useSavedTableState: two tables on screen save their state under the key "${key}". ` +

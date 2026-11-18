@@ -989,6 +989,17 @@ describe("useSavedTableState", () => {
       }
     });
 
+    it("should not warn, and not fail, where there is no `process`", () => {
+      // A plain browser page with no bundler.
+      vi.stubGlobal("process", undefined);
+      try {
+        const { warn } = renderTwoOnOneKey("shared-plain-page", memoryStore());
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it("should not warn about another key, another store or a hook that left", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const store = memoryStore();
