@@ -804,9 +804,16 @@ function createController<Values>(
       send(channel, {
         kind: "remove",
         done: (outcome) => {
-          if (outcome.status !== "failed") return;
-          removeFailed = live.key === key;
-          report(outcome.error, "remove", key);
+          if (outcome.status === "failed") {
+            removeFailed = live.key === key;
+            report(outcome.error, "remove", key);
+            return;
+          }
+          if (outcome.status !== "accepted" || live.key !== key) return;
+          // The key is gone from the store. So a remove that failed just before this one,
+          // when `clear()` was called twice, no longer counts. Any other failure stays.
+          removeFailed = false;
+          if (live.errorAction === "remove") publish({ ...live, ...READY });
         },
       });
     },

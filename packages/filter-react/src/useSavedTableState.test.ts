@@ -1882,6 +1882,27 @@ describe("useSavedTableState", () => {
       expect(result.current.errorAction).toBe("save");
     });
 
+    it("should end ready when it is called twice and only the first remove fails", async () => {
+      const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result } = renderSaved({ store });
+      act(() => result.current.clear());
+      act(() => result.current.clear());
+
+      act(() => store.requests[0]?.fail(new Error("offline")));
+      await settle();
+      expect(result.current.errorAction).toBe("remove");
+      act(() => store.requests[1]?.answer());
+      await settle();
+      expect(store.requests.map((request) => request.kind)).toEqual([
+        "remove",
+        "remove",
+      ]);
+      // The key is gone from the store, so nothing is left to report.
+      expect(store.items.has("orders")).toBe(false);
+      expect(result.current.status).toBe("ready");
+      await expect(result.current.flush()).resolves.toBe(true);
+    });
+
     it("should report a failed remove", async () => {
       const failure = new Error("offline");
       const store = {
