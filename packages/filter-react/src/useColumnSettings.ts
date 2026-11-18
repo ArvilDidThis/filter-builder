@@ -108,12 +108,12 @@ export function useColumnSettings<Column extends ColumnDefinition>(
   const apply = useCallback(
     (
       change: (
-        settings: ColumnSettings,
         columns: readonly ColumnDefinition[],
+        settings: ColumnSettings,
       ) => ColumnSettings,
     ) => {
       const before = proposed.current ?? latest.current.settings;
-      const next = change(before, latest.current.columns);
+      const next = change(latest.current.columns, before);
       // The actions return the same settings when nothing changed.
       if (next === before) return;
       if (proposed.current === null) {
@@ -131,7 +131,7 @@ export function useColumnSettings<Column extends ColumnDefinition>(
 
   const actions = useMemo<ColumnSettingsActions<Column["key"]>>(() => {
     const setVisible = (key: string, wanted: boolean | "toggle") =>
-      apply((before, list) => {
+      apply((list, before) => {
         const visible =
           wanted === "toggle" ? before.hidden.includes(key) : wanted;
         return visible || canHide(list, key)
@@ -142,8 +142,8 @@ export function useColumnSettings<Column extends ColumnDefinition>(
       setVisible,
       toggle: (key) => setVisible(key, "toggle"),
       move: (key, toIndex) =>
-        apply((before) => moveColumn(before, key, toIndex)),
-      showAll: () => apply(showAllColumns),
+        apply((_list, before) => moveColumn(before, key, toIndex)),
+      showAll: () => apply((_list, before) => showAllColumns(before)),
       reset: () => apply(resetColumnSettings),
     };
   }, [apply]);

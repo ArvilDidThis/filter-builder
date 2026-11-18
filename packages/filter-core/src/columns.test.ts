@@ -270,11 +270,11 @@ describe("resetColumnSettings", () => {
       "notes",
       true,
     );
-    expect(resetColumnSettings(changed, COLUMNS)).toEqual(DEFAULTS);
+    expect(resetColumnSettings(COLUMNS, changed)).toEqual(DEFAULTS);
   });
 
   it("should return the same settings when they are the defaults already", () => {
-    expect(resetColumnSettings(DEFAULTS, COLUMNS)).toBe(DEFAULTS);
+    expect(resetColumnSettings(COLUMNS, DEFAULTS)).toBe(DEFAULTS);
   });
 });
 

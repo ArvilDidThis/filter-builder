@@ -40,7 +40,8 @@ entry that needs `effect`, which is an optional peer dependency.
 
 The same entry holds the rules for a table's columns: which are shown, and in what order. The
 settings are plain JSON, so an app can store them. Every function is pure, and returns the same
-object when nothing changed.
+object when nothing changed. A function that takes both the column list and the settings takes
+the column list first.
 
 ```ts
 import {

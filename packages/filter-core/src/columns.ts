@@ -168,10 +168,14 @@ export function showAllColumns(settings: ColumnSettings): ColumnSettings {
     : { order: settings.order, hidden: [] };
 }
 
-/** Puts back the list's own order and starting visibility. */
+/**
+ * Puts back the list's own order and starting visibility.
+ *
+ * The column list comes first, as in every function here that takes both it and the settings.
+ */
 export function resetColumnSettings(
-  settings: ColumnSettings,
   columns: readonly ColumnDefinition[],
+  settings: ColumnSettings,
 ): ColumnSettings {
   const defaults = defaultColumnSettings(columns);
   const isDefault =
