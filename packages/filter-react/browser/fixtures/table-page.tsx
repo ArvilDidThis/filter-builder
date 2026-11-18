@@ -43,6 +43,21 @@ export interface PageSetup {
   slowDrawMs: number;
 }
 
+/**
+ * The longest slow draw a page may ask for, in milliseconds. A slow draw keeps the thread
+ * busy, on the server too, so an address must not be able to ask for a long one.
+ */
+export const MAX_SLOW_DRAW_MS = 200;
+
+/** The slow draw an address asks for. Anything but a number within the limit means none. */
+function readSlowDraw(text: string | null): number {
+  // Blank text would read as the number 0, which is the answer for it anyway.
+  const asked = Number(text ?? 0);
+  return Number.isFinite(asked) && asked >= 0 && asked <= MAX_SLOW_DRAW_MS
+    ? asked
+    : 0;
+}
+
 /** Reads the setup from an address's query string, such as "?store=cookie&tables=orders". */
 export function readSetup(search: URLSearchParams): PageSetup {
   const delay = search.get("delay");
@@ -51,7 +66,7 @@ export function readSetup(search: URLSearchParams): PageSetup {
     tables: (search.get("tables") ?? "orders").split(","),
     ssr: search.get("ssr") === "1",
     saveDelayMs: delay === null ? undefined : Number(delay),
-    slowDrawMs: Number(search.get("slow") ?? 0),
+    slowDrawMs: readSlowDraw(search.get("slow")),
   };
 }
 
