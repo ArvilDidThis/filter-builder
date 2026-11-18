@@ -16,10 +16,10 @@ The rules for working here are in [AGENTS.md](AGENTS.md).
 
 | Package                   | Holds                                                                  |
 | ------------------------- | ---------------------------------------------------------------------- |
-| `@arvilmena/filter-core`  | Filter types, matching rules, transforms, the plain-English summary    |
+| `@arvilmena/filter-core`  | Filter types, matching rules, transforms, the summary, column settings |
 | `…/filter-core/schema`    | Validation with Effect Schema. The only entry point that loads Effect. |
-| `@arvilmena/filter-react` | Builder state and actions as a React hook, with no markup or styling   |
-| `…/filter-react/ui`       | Ready-made builder components, with their own default style sheet      |
+| `@arvilmena/filter-react` | Builder and column state as React hooks, with no markup or styling     |
+| `…/filter-react/ui`       | Ready-made builder and column picker, with their default style sheet   |
 
 ## Commands
 
@@ -132,6 +132,40 @@ const builder = useFilterBuilder({
 // builder.root.rows: the conditions and groups, in order.
 // builder.actions: addCondition, remove, move and the rest.
 ```
+
+## The column picker
+
+A table with many columns needs a way to hide columns and change their order. The
+`useColumnSettings` hook keeps those settings, and `ColumnPicker` is a ready-made button that
+opens the list of columns.
+
+```tsx
+import type { ColumnDefinition } from "@arvilmena/filter-core";
+import { useColumnSettings } from "@arvilmena/filter-react";
+import { ColumnPicker } from "@arvilmena/filter-react/ui";
+import "@arvilmena/filter-react/styles.css";
+
+const columns = [
+  { key: "name", label: "Name", hideable: false },
+  { key: "price", label: "Price" },
+  { key: "notes", label: "Notes", defaultHidden: true },
+] as const satisfies readonly ColumnDefinition[];
+
+function Products({ rows }) {
+  const table = useColumnSettings({ columns });
+  return (
+    <>
+      <ColumnPicker state={table} />
+      <MyTable columns={table.visibleColumns} rows={rows} />
+    </>
+  );
+}
+```
+
+The picker works with a mouse, with touch and with a keyboard. To draw your own picker, use the
+hook alone: it returns every column in order, the visible columns and the actions. The
+[filter-react README](packages/filter-react/README.md) shows both, and the
+[filter-core README](packages/filter-core/README.md) lists the pure functions underneath.
 
 ## Licence
 

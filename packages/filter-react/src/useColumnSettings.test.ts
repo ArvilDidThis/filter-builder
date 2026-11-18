@@ -281,6 +281,14 @@ describe("useColumnSettings", () => {
     expect(second).toHaveBeenCalledTimes(1);
   });
 
+  it("should only accept the keys of the app's own columns", () => {
+    const { result } = renderUncontrolled();
+    // The check is made by the type checker: a misspelt key must not compile.
+    // @ts-expect-error "pric" is not a column key
+    act(() => result.current.actions.toggle("pric"));
+    expect(shape(result.current)).toBe("name price stock (notes)");
+  });
+
   it("should render on a server", () => {
     expect(renderToString(createElement(Keys))).toBe("<p>name price stock</p>");
   });
