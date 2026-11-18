@@ -82,6 +82,17 @@ function OwningApp() {
       <button onClick={() => setValue(waiting.current)} type="button">
         Apply
       </button>
+      <button
+        onClick={() =>
+          setValue({
+            order: ["notes", "name", "price", "stock"],
+            hidden: ["notes"],
+          })
+        }
+        type="button"
+      >
+        Put notes first
+      </button>
       <button type="button">Elsewhere</button>
     </>
   );
@@ -745,6 +756,16 @@ describe("ColumnPicker", () => {
       apply();
       expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
       expect(document.activeElement).toBe(before);
+    });
+
+    it("should not announce a move when the app changes the list some other way", () => {
+      openOwningApp();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      // The app turns the move down, and then changes the order itself. That happens to put
+      // the name second, where the move had asked for it. It is still not that move.
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Price ⠿Stock");
+      expect(announced()).toBe("");
     });
 
     it("should announce a late drop the same way", () => {

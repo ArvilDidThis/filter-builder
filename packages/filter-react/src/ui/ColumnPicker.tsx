@@ -207,26 +207,35 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     if (open) popoverRef.current?.focus();
   }, [open]);
 
-  // The move a key press or a drop asked for, with the place the column was in. It waits here
-  // until the list shows the column somewhere else. An app that owns the settings may apply a
-  // move later, or turn it down, so the move is followed up only once it has really happened.
+  const keys = useMemo(
+    () => orderedColumns.map((entry) => entry.column.key),
+    [orderedColumns],
+  );
+
+  // The move a key press or a drop asked for. It waits here until the list shows it. An app
+  // that owns the settings may apply a move later, or turn it down, so the move is followed up
+  // only once it has really happened.
   const pendingMove = useRef<{
-    key: string;
-    from: number;
+    /** The place the column was asked to go to. */
+    to: number;
+    /** The order of the keys when the move was asked for. */
+    before: readonly string[];
+    /** The order of the keys that the move would give. */
+    after: readonly string[];
     /** Whether the column's handle held the keyboard focus when the move was asked for. */
     hadFocus: boolean;
   } | null>(null);
   useEffect(() => {
     const pending = pendingMove.current;
     if (pending === null) return;
-    const index = orderedColumns.findIndex(
-      (entry) => entry.column.key === pending.key,
-    );
-    // Still in its old place: the move is not applied yet, or never will be.
-    if (index === pending.from) return;
+    // Still the old order: the move is not applied yet, or never will be.
+    if (isSameOrder(keys, pending.before)) return;
     pendingMove.current = null;
-    const entry = orderedColumns[index];
+    const entry = orderedColumns[pending.to];
     const root = rootRef.current;
+    // The order changed, but not to the one this move asked for. Something else changed the
+    // list, such as the app adding a column, and that is not this move's to speak for.
+    if (!isSameOrder(keys, pending.after)) return;
     if (entry === undefined || root === null) return;
 
     // React may take the row out of the page and put it back to move it, which loses the
@@ -236,12 +245,11 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     // the picker or outside it, keeps their place.
     const focused = root.ownerDocument.activeElement;
     const isFocusLost = focused === null || focused === root.ownerDocument.body;
-    if (pending.hadFocus && isFocusLost)
-      handleAt(listRef.current, index)?.focus();
-    // The place is read from the list as it is now, so it is right even when the app put the
-    // column somewhere other than where it was asked to go.
+    if (pending.hadFocus && isFocusLost) {
+      handleAt(listRef.current, pending.to)?.focus();
+    }
     announce(
-      labels.moved(entry.column.label, index + 1, orderedColumns.length),
+      labels.moved(entry.column.label, pending.to + 1, orderedColumns.length),
     );
   });
 
@@ -268,18 +276,19 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       const focused = (
         handle?.getRootNode() as Document | ShadowRoot | undefined
       )?.activeElement;
+      const before = list.map((item) => item.column.key);
+      const after = [...before];
+      after.splice(from, 1);
+      after.splice(to, 0, entry.column.key);
       pendingMove.current = {
-        key: entry.column.key,
-        from,
+        to,
+        before,
+        after,
         hadFocus: handle !== null && focused === handle,
       };
       actions.move(entry.column.key, to);
     },
     [actions],
-  );
-  const keys = useMemo(
-    () => orderedColumns.map((entry) => entry.column.key),
-    [orderedColumns],
   );
   const drag = useColumnDrag({ listRef, keys, active: open, onDrop: moveTo });
 
@@ -419,6 +428,11 @@ function handleAt(list: HTMLElement | null, index: number): HTMLElement | null {
       "[data-fb-column-handle]",
     ) ?? null
   );
+}
+
+/** Whether two lists of column keys hold the same keys in the same order. */
+function isSameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((key, index) => key === b[index]);
 }
 
 /** Where the line that marks a drop is drawn on a row: above it, below it, or not at all. */
