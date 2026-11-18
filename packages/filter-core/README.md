@@ -170,7 +170,10 @@ may have written it. `readSavedState` therefore never throws:
 `filterStatePart` reads a filter as loosely as matching does, so a saved filter keeps returning
 the same rows. It turns down one filter: a filter nested more than `MAX_SAVED_FILTER_DEPTH`
 (200) groups deep, which no person builds and which could stop the page. `columnStatePart` fits
-the saved settings to the column list with `reconcileColumnSettings`.
+the saved settings to the column list with `reconcileColumnSettings`. Called with no column
+list, `columnStatePart()` is `null` until something is saved and hands saved settings on as
+they are, for code that fits them to the column list itself, such as the column hook of
+`@arvilmena/filter-react`.
 
 `readSavedState` hands out only the parts you name. To save some parts and keep the others,
 read them all with `readSavedParts`, which upgrades them but does not check them:
@@ -192,6 +195,36 @@ const state = readSavedState(saved, parts, {
     fromVersion === 1 ? { ...saved, pageSize: saved.rows } : saved,
 });
 ```
+
+### A rule that spans parts
+
+Each part is parsed by itself. For a rule that needs two parts, pass `check`. It runs after
+every part was read. It gets all the values, and the names of the parts that got their default
+because nothing usable was saved for them. It returns the parts to correct, or nothing.
+
+```ts
+const parts = {
+  filter: filterStatePart(),
+  // The name a person gave the saved filter.
+  filterName: {
+    defaultValue: "",
+    parse: (saved: unknown) => (typeof saved === "string" ? saved : undefined),
+  },
+};
+
+const state = readSavedState(saved, parts, {
+  // A name without its filter means nothing, so it goes when the filter was not usable.
+  check: (values, defaulted) =>
+    defaulted.includes("filter") ? { filterName: "" } : undefined,
+});
+```
+
+`check` is as loose as `parse`:
+
+- When it throws, the values read before it are used.
+- A returned part the app does not have is ignored, and so is one that is `undefined`.
+- A returned part is used as it is. It is not parsed again.
+- It is not called when nothing usable is saved, because every part then has its default.
 
 ### The stores
 
@@ -266,6 +299,46 @@ const sessionStore: StateStore = {
   remove: (key) => sessionStorage.removeItem(key),
 };
 ```
+
+### State from an older place
+
+An app may already keep a table's state somewhere of its own, such as a local storage key it
+chose before it used this library. `carryOverStore` wraps a store so that this state is taken
+over once:
+
+```ts
+import { carryOverStore, localStorageStore } from "@arvilmena/filter-core";
+
+const store = carryOverStore(localStorageStore(), {
+  // Each part's old value by the part's name: `{ filter, columns }`. `null` for nothing.
+  read: () => JSON.parse(localStorage.getItem("orders-table") ?? "null"),
+  // Optional. Leave it out to keep the old entry.
+  remove: () => localStorage.removeItem("orders-table"),
+});
+```
+
+- **`load` asks the store first.** Only when nothing is saved under the key does it call
+  `read`, with the key. What `read` returns is handed back in the saved format.
+- **The old value is read like any saved value.** Each part goes through its `parse`, so a
+  broken part gets its default and the others are still used. A `read` that throws or rejects
+  counts as nothing to carry over.
+- **Loading writes nothing.** The state reaches the store with the first save, which the hook
+  makes after the first change a person makes. Until then, each visit carries it over again.
+- **The old entry is left alone unless you pass `remove`.** It is called after the first save
+  that follows a carry-over, once the store has taken that save, and when the state is
+  removed. A failure after a save is ignored, because the state is safe in the store by then.
+- **Removed state stays removed.** With `remove`, the store's entry and the old entry both
+  go. Without it, the wrapper saves an empty state and does not delete the entry, because
+  otherwise the next load would carry the old state over again.
+- **Any store works,** and `read` and `remove` may answer with a promise. Where the store and
+  your functions answer at once, the wrapper does too.
+
+The carried parts are marked with version 1. If you pass a `version` to `readSavedState` or
+the hook, pass the same one here: `carryOverStore(store, { read, version: 2 })`. To have your
+`migrate` upgrade the old value, pass the older version it was written in.
+
+A page whose server already read the state (`initialSaved` in the hook) does not load from
+the store for its first key, so the server must read the older place itself.
 
 For a builder screen, a column picker and a hook that saves the state, see
 `@arvilmena/filter-react`. The full guide is in the

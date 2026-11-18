@@ -332,7 +332,7 @@ import { useMemo } from "react";
 
 const PAGE_SIZES = [25, 50, 100];
 
-// Outside the component, so the parts are made once.
+// Outside the component here. Inside it works too: see "Where to build the parts".
 const parts = {
   filter: filterStatePart(),
   columns: columnStatePart(columns),
@@ -396,6 +396,7 @@ takes a number or a function from the old number to the new one.
 | `initialSaved` | The saved value a server already read, for the first render               |
 | `version`      | The version of your state format. Defaults to 1                           |
 | `migrate`      | Upgrades the parts of a value saved under another version                 |
+| `check`        | Corrects parts that depend on each other, after each was parsed           |
 | `saveDelayMs`  | How long to wait after the last change before saving. Defaults to 300     |
 | `onError`      | Called with the error and `"load"`, `"save"` or `"remove"` when one fails |
 
@@ -442,6 +443,57 @@ What the hook guarantees:
 - **A saved value is checked before use.** A broken part falls back to its default alone.
 - **A part added to `parts` later gets a value at once:** the one saved under its name, or its
   default.
+
+### Where to build the parts
+
+Build the parts outside the component when they need nothing from it. When they do, such as
+a column list that comes from props, build them inside it:
+
+```tsx
+function Orders({ columns, rows }) {
+  const saved = useSavedTableState({
+    id: "orders",
+    parts: { filter: filterStatePart(), columns: columnStatePart(columns) },
+  });
+  // …
+}
+```
+
+That is safe, and needs no `useMemo`:
+
+- A new `parts` object on every render starts no load and no save, and the setters in
+  `saved.set` stay the same functions for as long as the part names do.
+- The hook uses the newest parts each time it reads a saved value: on a load, on `reload()`
+  and for a part added later.
+- A value the hook has read already is not parsed again when the parts change. So a column
+  list that changes while the table is on screen does not re-fit `saved.values.columns`. The
+  column hook does that fitting on every render, so the table is still right.
+
+A parts object typed with an `interface` works like one typed with a `type`.
+
+### Passing the column list once
+
+`columnStatePart(columns)` and `useColumnSettings({ columns })` both take the column list. To
+pass it once, call `columnStatePart()` with no list. The part is then `null` until something
+is saved, and the column hook fits the saved settings to the list:
+
+```tsx
+const parts = { filter: filterStatePart(), columns: columnStatePart() };
+
+function Orders({ columns, rows }) {
+  const saved = useSavedTableState({ id: "orders", parts });
+  const table = useColumnSettings({
+    columns,
+    value: saved.values.columns,
+    onChange: saved.set.columns,
+  });
+  // …
+}
+```
+
+Draw the table from `table.visibleColumns`. `saved.values.columns` is then the settings as
+they were saved, or `null`, and may name columns the list no longer has. Keep
+`columnStatePart(columns)` when your code reads `saved.values.columns` itself.
 
 ### One hook call per key
 
@@ -642,8 +694,63 @@ const saved = useSavedTableState({
 });
 ```
 
+### A rule that spans parts
+
+Each part is parsed by itself. For a rule that needs two parts, pass `check`. It gets every
+part's value, and the names of the parts that got their default because nothing usable was
+saved for them. It returns the parts to correct, or nothing:
+
+```tsx
+// The name a person gave the saved filter.
+const filterNamePart = {
+  defaultValue: "",
+  parse: (saved: unknown) => (typeof saved === "string" ? saved : undefined),
+};
+
+const saved = useSavedTableState({
+  id: "orders",
+  parts: { filter: filterStatePart(), filterName: filterNamePart },
+  // A name without its filter means nothing, so it goes when the filter was not usable.
+  check: (values, defaulted) =>
+    defaulted.includes("filter") ? { filterName: "" } : undefined,
+});
+```
+
+`check` runs each time a saved value is read: on a load, on `reload()` and on `initialSaved`.
+It does not run on the changes a person makes. It is as loose as `parse`: when it throws, the
+parsed values are used, and nothing is reported.
+
+### State the app kept elsewhere before
+
+If your app already keeps a table's state under a key of its own, wrap the store in
+`carryOverStore`. The old state is then shown when nothing is saved under the new key:
+
+```tsx
+import { carryOverStore, localStorageStore } from "@arvilmena/filter-core";
+
+const store = carryOverStore(localStorageStore(), {
+  // Each part's old value by the part's name: `{ filter, columns }`. `null` for nothing.
+  read: () => JSON.parse(localStorage.getItem("orders-table") ?? "null"),
+  // Optional. Leave it out to keep the old entry.
+  remove: () => localStorage.removeItem("orders-table"),
+});
+
+const saved = useSavedTableState({ id: "orders", parts, store });
+```
+
+- The old value is checked like any saved value, part by part. If it has another shape than
+  your parts, turn it into `{ filter, columns }` inside `read`.
+- Nothing is written until the person changes something. That first save holds every carried
+  part, and the old entry is removed after the store has taken it, if you passed `remove`.
+- `clear()` removes the old entry too. Without `remove`, it saves an empty state under the
+  new key and does not delete it, so that the old state does not come back.
+- It works with every store, and `read` and `remove` may answer with a promise. `status`
+  stays `"loading"` until both the store and `read` have answered.
+- With `initialSaved`, the store is not read for the first key, so the server must read the
+  older place itself.
+
 The [filter-core README](https://github.com/ArvilDidThis/filter-builder/tree/main/packages/filter-core#saved-table-state)
-describes the key, the saved format and each store in full.
+describes the key, the saved format, each store and `carryOverStore` in full.
 
 To filter rows, use `createRowPredicate` from `@arvilmena/filter-core`. The full guide is in the
 [repository](https://github.com/ArvilDidThis/filter-builder#readme).
