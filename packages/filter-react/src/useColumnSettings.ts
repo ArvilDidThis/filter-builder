@@ -248,8 +248,10 @@ function canHide(columns: readonly ColumnDefinition[], key: string): boolean {
   return columns.find((column) => column.key === key)?.hideable !== false;
 }
 
+// Every part is compared. `hideable` is read from the column object, and an app may have
+// changed that object in place, so the same object does not prove the same answer.
 const isSameOrderedColumn = (a: OrderedColumn, b: OrderedColumn): boolean =>
-  a.column === b.column && a.visible === b.visible;
+  a.column === b.column && a.visible === b.visible && a.hideable === b.hideable;
 
 /**
  * Hands back the list from the render before when the new list holds the same items, and

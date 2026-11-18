@@ -468,6 +468,25 @@ describe("useColumnSettings", () => {
     expect(result.current.orderedColumns[2]).toBe(before[2]);
   });
 
+  it("should not reuse an entry whose column object now says it cannot be hidden", () => {
+    const price: ColumnDefinition = { key: "price", label: "Price" };
+    const name: ColumnDefinition = { key: "name", label: "Name" };
+    const { result, rerender } = renderHook(
+      (props: { columns: readonly ColumnDefinition[] }) =>
+        useColumnSettings({ columns: props.columns }),
+      { initialProps: { columns: [name, price] } },
+    );
+    const before = result.current.orderedColumns;
+    expect(before[1]?.hideable).toBe(true);
+    // The app changes the column object itself, and passes it in a new list. The column
+    // stays shown, so only whether it can be hidden differs.
+    price.hideable = false;
+    rerender({ columns: [name, price] });
+    expect(result.current.orderedColumns[1]?.hideable).toBe(false);
+    // The entry that did not change is still reused.
+    expect(result.current.orderedColumns[0]).toBe(before[0]);
+  });
+
   it("should keep the visible list when the app passes equal settings again", () => {
     const { result, rerender } = renderHook(
       (props: { value: ColumnSettings }) =>
