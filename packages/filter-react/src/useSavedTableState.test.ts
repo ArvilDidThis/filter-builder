@@ -1585,6 +1585,25 @@ describe("useSavedTableState", () => {
       });
     });
 
+    it("should keep the same object for a part the store still holds unchanged", () => {
+      const store = memoryStore({
+        orders: savedWith({ filter: priceFilter("10"), sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store });
+      const before = result.current.values;
+      // Changed from outside: only the sort differs now.
+      store.items.set(
+        "orders",
+        savedWith({ filter: priceFilter("10"), sort: PRICE_SORT }),
+      );
+
+      act(() => result.current.reload());
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+      // A table memoised on its filter or its columns must not redraw for this.
+      expect(result.current.values.filter).toBe(before.filter);
+      expect(result.current.values.columns).toBe(before.columns);
+    });
+
     it("should keep and save a change made after the load failed", () => {
       const store = storeFailingOnce({
         orders: savedWith({ filter: priceFilter("10"), sort: NAME_SORT }),

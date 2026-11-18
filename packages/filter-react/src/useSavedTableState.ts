@@ -623,8 +623,13 @@ function createController<Values>(
       let values = live.values;
       if (!isNothingSaved || !holdsDefaults) {
         values = loaded.values;
-        // A change the store has not taken is kept, and saved below.
-        for (const part of unsaved) values[part] = live.values[part];
+        for (const part of Object.keys(values as object) as (keyof Values)[]) {
+          const shown = live.values[part];
+          // A change the store has not taken is kept, and saved below. A part the load
+          // found unchanged keeps its object, so a table memoised on it does not redraw.
+          if (unsaved.has(part) || isSameContent(values[part], shown))
+            values[part] = shown;
+        }
       }
       holdsDefaults = isNothingSaved;
       canSave = true;
@@ -839,6 +844,21 @@ function readLoadedState<Values>(
     { version },
   );
   return { values, savedParts: savedParts ?? {} };
+}
+
+/**
+ * Whether two values of a part hold the same content. Parts are plain JSON, so their text
+ * tells. The same content with its keys in another order counts as different, which costs
+ * one redraw and nothing else.
+ */
+function isSameContent(one: unknown, other: unknown): boolean {
+  if (Object.is(one, other)) return true;
+  try {
+    return JSON.stringify(one) === JSON.stringify(other);
+  } catch {
+    // Not plain JSON, so its content cannot be compared.
+    return false;
+  }
 }
 
 /** The keys already warned about, so each is named once. */
