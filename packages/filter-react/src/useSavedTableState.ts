@@ -162,6 +162,7 @@ export interface SavedTableState<Values> {
  * - When `name`, `id` or the page's path changes, a waiting change is saved under the old key
  *   and the state for the new key is loaded.
  * - A waiting change is also saved when the page is hidden or closed, and on unmount.
+ * - A change whose save failed is kept, and saved again with the next save.
  * - Parts saved under the key that this hook does not own are kept, and written back with its
  *   own. `clear()` removes them too.
  * - A load still on its way when the table leaves the screen, or when its key changes, is not
@@ -523,10 +524,11 @@ function createController<Values>(
     clearTimeout(timer);
     timer = undefined;
     const change = pending;
-    // `channel` still belongs to the change's key: a change of key queues the waiting change
-    // before it joins the new key's channel.
-    if (change === undefined || channel === undefined) return;
     pending = undefined;
+    // A change of key queues the waiting change before it joins the new key's channel, so
+    // the channel is the change's own. A change left over from another key is dropped: one
+    // key's state must never be saved under another key.
+    if (change === undefined || channel?.key !== change.key) return;
     saveRun += 1;
     const run = saveRun;
     send(channel, {
@@ -622,6 +624,8 @@ function createController<Values>(
       if (isNewKey) {
         live = start;
         canSave = false;
+        // A save that failed on the way out of the old key is not tried under the new one.
+        pending = undefined;
         unsaved.clear();
         removeFailed = false;
         holdsDefaults = true;

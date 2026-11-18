@@ -2216,6 +2216,32 @@ describe("useSavedTableState", () => {
       );
     });
   });
+
+  describe("a save that fails as the key changes", () => {
+    it("should not be tried again under the new key", async () => {
+      const store = memoryStore();
+      store.save.mockImplementationOnce(() => {
+        throw new Error("full");
+      });
+      const { result, rerender } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      // Leaving the key saves the change, and that save fails.
+      rerender({ id: "archive", store });
+      expect(store.save).toHaveBeenCalledExactlyOnceWith(
+        "orders",
+        expect.anything(),
+      );
+
+      let flushed: Promise<boolean> | undefined;
+      act(() => {
+        flushed = result.current.flush();
+      });
+      await expect(flushed).resolves.toBe(true);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(store.save).toHaveBeenCalledOnce();
+      expect(store.items.has("archive")).toBe(false);
+    });
+  });
 });
 
 /** A table that hands its saved state to the test, for the tests that hide and show it. */
