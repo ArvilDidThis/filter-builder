@@ -48,6 +48,8 @@ interface DragSession {
   middles: readonly number[];
   /** The screen frame waiting to scroll the list, if any. */
   frame: number | null;
+  /** Watches the rows the list has now for a change of size, in place of the rows before. */
+  watchRows: () => void;
   /** Stops listening for this drag. */
   stop: () => void;
 }
@@ -107,7 +109,7 @@ export function useColumnDrag({
     const list = listRef.current;
     if (drag === null || list === null) return;
     // One read of the list's place per pointer move. The rows were measured already, so no
-    // row is measured here.
+    // row is measured here. They are measured again only when one of them changes size.
     const box = list.getBoundingClientRect();
     const slot = slotAt(drag.middles, drag.clientY - box.top + list.scrollTop);
     const shown = placeFromSlot(drag.from, slot) === drag.from ? null : slot;
@@ -143,6 +145,7 @@ export function useColumnDrag({
     }
     drag.from = from;
     drag.middles = measureMiddles(list);
+    drag.watchRows();
     follow();
   }, [keys, listRef, follow, end]);
 
@@ -218,6 +221,27 @@ export function useColumnDrag({
       page.addEventListener("keydown", onKeyDown, true);
       // A mouse wheel can scroll the list under a pointer that stays still.
       list.addEventListener("scroll", follow);
+
+      // A row can change height while another is held, such as a row an app draws that opens
+      // up. The measured middles are then out of date, and the drop line would show a place
+      // the drop does not land in. So the browser is asked to say when a row changes size,
+      // and the rows are measured again only then. It reports once per screen frame, however
+      // many rows changed, and once for the rows as they are first watched.
+      // An older browser has no such watcher. The drop itself still measures afresh there.
+      const SizeWatcher = page.defaultView?.ResizeObserver;
+      const sizeWatcher = SizeWatcher
+        ? new SizeWatcher(() => {
+            const drag = session.current;
+            if (drag === null) return;
+            drag.middles = measureMiddles(list);
+            follow();
+          })
+        : null;
+      const watchRows = () => {
+        if (sizeWatcher === null) return;
+        sizeWatcher.disconnect();
+        for (const row of Array.from(list.children)) sizeWatcher.observe(row);
+      };
       session.current = {
         key,
         from,
@@ -225,6 +249,7 @@ export function useColumnDrag({
         // Every row is measured once, here, and not again while the list stays as it is.
         middles: measureMiddles(list),
         frame: null,
+        watchRows,
         stop: () => {
           page.removeEventListener("pointermove", onMove);
           page.removeEventListener("pointerup", onUp);
@@ -237,10 +262,12 @@ export function useColumnDrag({
           }
           page.removeEventListener("keydown", onKeyDown, true);
           list.removeEventListener("scroll", follow);
+          sizeWatcher?.disconnect();
           const frame = session.current?.frame;
           if (frame != null) cancelAnimationFrame(frame);
         },
       };
+      watchRows();
       setHeld({ key, slot: null });
     },
     [listRef, follow, end],

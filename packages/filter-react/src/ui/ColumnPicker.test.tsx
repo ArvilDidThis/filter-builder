@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ColumnDefinition, ColumnSettings } from "@arvilmena/filter-core";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -8,7 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { memo, useLayoutEffect, useRef, useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
 import { placeFromSlot, slotAt } from "./useColumnDrag";
@@ -543,6 +544,101 @@ describe("ColumnPicker", () => {
       fireEvent.pointerUp(document, pointer(140));
       expect(name?.hasAttribute("data-dragging")).toBe(false);
       expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    describe("when a row changes height while another is held", () => {
+      /** The size watchers the picker has made, each with the rows it watches. */
+      const watchers: { rows: Set<Element>; changed: () => void }[] = [];
+      /** A stand-in for the browser's size watcher. The test page never reports a size. */
+      class SizeWatcher {
+        private readonly entry: (typeof watchers)[number];
+        constructor(onChange: () => void) {
+          this.entry = { rows: new Set(), changed: onChange };
+          watchers.push(this.entry);
+        }
+        observe(row: Element) {
+          this.entry.rows.add(row);
+        }
+        disconnect() {
+          this.entry.rows.clear();
+        }
+      }
+      /** Tells every watcher of a row that the row's size changed, as a browser would. */
+      const resized = (row: Element) => {
+        for (const watcher of watchers) {
+          if (watcher.rows.has(row)) act(() => watcher.changed());
+        }
+      };
+      const view = document.defaultView as Window & typeof globalThis;
+      const real = view.ResizeObserver;
+      const setSizeWatcher = (watcher: unknown) =>
+        Object.defineProperty(view, "ResizeObserver", {
+          configurable: true,
+          value: watcher,
+        });
+      beforeEach(() => {
+        watchers.length = 0;
+        setSizeWatcher(SizeWatcher);
+      });
+      afterEach(() => {
+        setSizeWatcher(real);
+      });
+
+      it("should move the drop line to where a drop would land now", () => {
+        renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        const [, price, stock, notes] = rows() as [
+          HTMLElement,
+          HTMLElement,
+          HTMLElement,
+          HTMLElement,
+        ];
+        fireEvent.pointerMove(document, pointer(200));
+        expect(notes.getAttribute("data-drop")).toBe("before");
+        // "Stock" grows from 30 pixels to 90, which pushes "Notes" down. The still pointer
+        // is now over the top half of "Stock".
+        placeAt(stock, 160, 90);
+        placeAt(notes, 250, 30);
+        resized(stock);
+        expect(stock.getAttribute("data-drop")).toBe("before");
+        expect(notes.hasAttribute("data-drop")).toBe(false);
+        // The drop lands where the line says.
+        fireEvent.pointerUp(document, pointer(200));
+        expect(listed()).toBe("⠿Price ⠿Name ⠿Stock ⠿Notes");
+        expect(price.hasAttribute("data-drop")).toBe(false);
+      });
+
+      it("should watch the rows the list has after it changes during the drag", () => {
+        render(<ChangingApp />);
+        fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+        layOutList();
+        fireEvent.pointerDown(handle("Stock"), pointer(175));
+        fireEvent.click(screen.getByRole("button", { name: "Remove name" }));
+        const watched = watchers.flatMap((watcher) => [...watcher.rows]);
+        expect(watched).toEqual(rows());
+      });
+
+      it("should stop watching the rows when the drag ends", () => {
+        renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        expect(watchers.flatMap((watcher) => [...watcher.rows])).toEqual(
+          rows(),
+        );
+        fireEvent.pointerUp(document, pointer(115));
+        expect(watchers.flatMap((watcher) => [...watcher.rows])).toEqual([]);
+      });
+
+      it("should still drag in a browser that has no size watcher", () => {
+        setSizeWatcher(undefined);
+        renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(180));
+        fireEvent.pointerUp(document, pointer(180));
+        expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+      });
     });
 
     it("should move the held column when the list changes during the drag", () => {
