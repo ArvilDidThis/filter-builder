@@ -36,7 +36,71 @@ const visibleRows = rows.filter(createRowPredicate(filter, valueOf));
 The `@arvilmena/filter-core/schema` entry validates a filter with Effect Schema. It is the only
 entry that needs `effect`, which is an optional peer dependency.
 
-For a builder screen, see `@arvilmena/filter-react`. The full guide is in the
+## Column settings
+
+The same entry holds the rules for a table's columns: which are shown, and in what order. The
+settings are plain JSON, so an app can store them. Every function is pure. A function that takes
+both the column list and the settings takes the column list first.
+
+A function that takes settings and returns settings hands back the same object when nothing
+changed. Those are `setColumnVisible`, `moveColumn`, `showAllColumns`, `resetColumnSettings` and
+`reconcileColumnSettings`. The others, `visibleColumns`, `orderedColumns` and
+`defaultColumnSettings`, build a new result on each call. The React hook `useColumnSettings`
+memoises them (keeps the result until its inputs change).
+
+`isDefaultColumnSettings` answers whether a reset would change anything, so a picker can turn
+its reset button off.
+
+```ts
+import {
+  type ColumnDefinition,
+  defaultColumnSettings,
+  moveColumn,
+  reconcileColumnSettings,
+  resetColumnSettings,
+  setColumnVisible,
+  visibleColumns,
+} from "@arvilmena/filter-core";
+
+const columns = [
+  { key: "name", label: "Name", hideable: false },
+  { key: "price", label: "Price" },
+  { key: "notes", label: "Notes", defaultHidden: true },
+] satisfies ColumnDefinition[];
+
+let settings = defaultColumnSettings(columns);
+// { order: ["name", "price", "notes"], hidden: ["notes"] }
+
+settings = setColumnVisible(settings, "notes", true);
+settings = moveColumn(settings, "notes", 0);
+
+visibleColumns(columns, settings).map((column) => column.key);
+// ["notes", "name", "price"]
+
+// Settings read from storage may be old or broken. This fits them to the columns the app has
+// now, and nothing throws. Unknown keys go. A new column goes right after the nearest saved
+// column before it in the app's list, or first if no saved column comes before it.
+const stored: unknown = { order: ["price", "gone"], hidden: ["price"] };
+settings = reconcileColumnSettings(columns, stored);
+// { order: ["name", "price", "notes"], hidden: ["price", "notes"] }
+
+settings = resetColumnSettings(columns, settings);
+// { order: ["name", "price", "notes"], hidden: ["notes"] }
+```
+
+| Function                  | Does                                                 |
+| ------------------------- | ---------------------------------------------------- |
+| `defaultColumnSettings`   | The list's own order and starting visibility         |
+| `reconcileColumnSettings` | Fits saved settings to the column list               |
+| `setColumnVisible`        | Shows or hides one column                            |
+| `moveColumn`              | Moves one column to a place in the order             |
+| `showAllColumns`          | Shows every column, keeping the order                |
+| `resetColumnSettings`     | Puts the defaults back                               |
+| `isDefaultColumnSettings` | Whether the settings are the defaults                |
+| `orderedColumns`          | Every column in order, each with whether it is shown |
+| `visibleColumns`          | The shown columns in order, as the app's own objects |
+
+For a builder screen and a column picker, see `@arvilmena/filter-react`. The full guide is in the
 [repository](https://github.com/ArvilDidThis/filter-builder#readme).
 
 This project is not affiliated with or endorsed by SpryMedia Ltd or DataTables.

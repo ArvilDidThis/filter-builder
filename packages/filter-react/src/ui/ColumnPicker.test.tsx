@@ -1,0 +1,2780 @@
+import { readFileSync } from "node:fs";
+import type { ColumnDefinition, ColumnSettings } from "@arvilmena/filter-core";
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
+import { useColumnSettings } from "../useColumnSettings";
+import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
+import { pressInOpenTree, stopPressesAt } from "./shadowPress.testing";
+import { placeFromSlot, slotAt } from "./useColumnDrag";
+import { shiftToFit } from "./useKeepOnScreen";
+
+const COLUMNS: readonly ColumnDefinition[] = [
+  { key: "name", label: "Name", hideable: false },
+  { key: "price", label: "Price" },
+  { key: "stock", label: "Stock" },
+  { key: "notes", label: "Notes", defaultHidden: true },
+];
+
+/** Counts how often the table is drawn, to prove a drag does not redraw it. */
+const tableDrawn = vi.fn();
+
+/** A stand-in for an app's table. It is memoised, as a large table would be. */
+const Table = memo(function Table({
+  columns,
+}: {
+  columns: readonly ColumnDefinition[];
+}) {
+  tableDrawn();
+  return (
+    <p data-testid="table">{columns.map((column) => column.key).join(" ")}</p>
+  );
+});
+
+/** Counts the changes the picker asks for, to prove that a press did nothing. */
+const changed = vi.fn();
+
+/** An app around the picker: a table that follows it, and something else to click on. */
+function App({ extra }: { extra: Partial<ColumnPickerProps> }) {
+  const state = useColumnSettings({ columns: COLUMNS, onChange: changed });
+  return (
+    <>
+      <ColumnPicker state={state} {...extra} />
+      <Table columns={state.visibleColumns} />
+      <button type="button">Elsewhere</button>
+    </>
+  );
+}
+
+/** An app whose column list changes while the picker is open. */
+function ChangingApp() {
+  const [columns, setColumns] = useState(COLUMNS);
+  const state = useColumnSettings({ columns });
+  return (
+    <>
+      <ColumnPicker state={state} />
+      <Table columns={state.visibleColumns} />
+      <button onClick={() => setColumns(COLUMNS.slice(1))} type="button">
+        Remove name
+      </button>
+    </>
+  );
+}
+
+/**
+ * An app that owns the settings and applies a change late: only when "Apply" is pressed. A
+ * change that is never applied is one the app turned down. With `atOnce`, it applies each
+ * change as it is asked for. With `dropFocus`, drawing a change loses the keyboard focus.
+ */
+function OwningApp({
+  atOnce = false,
+  dropFocus = false,
+}: {
+  atOnce?: boolean;
+  dropFocus?: boolean;
+}) {
+  const [value, setValue] = useState<ColumnSettings | null>(null);
+  const waiting = useRef<ColumnSettings | null>(null);
+  // With `dropFocus`, the keyboard focus is dropped as each change is drawn. A browser does
+  // that when it moves the row that holds the focus, and React cannot always bring it back,
+  // such as inside a shadow tree. The test page never loses it, so this stands in. It runs
+  // after the rows have moved, and before the picker follows the move up.
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (dropFocus && value !== null && focused instanceof HTMLElement) {
+      focused.blur();
+    }
+  }, [dropFocus, value]);
+  const state = useColumnSettings({
+    columns: COLUMNS,
+    value,
+    onChange: (next) => {
+      waiting.current = next;
+      if (atOnce) setValue(next);
+    },
+  });
+  return (
+    <>
+      <ColumnPicker state={state} />
+      <button onClick={() => setValue(waiting.current)} type="button">
+        Apply
+      </button>
+      <button
+        onClick={() =>
+          setValue({
+            order: ["notes", "name", "price", "stock"],
+            hidden: ["notes"],
+          })
+        }
+        type="button"
+      >
+        Put notes first
+      </button>
+      <button
+        onClick={() =>
+          setValue({ order: ["notes", "name", "price", "stock"], hidden: [] })
+        }
+        type="button"
+      >
+        Show notes first
+      </button>
+      <button type="button">Elsewhere</button>
+    </>
+  );
+}
+
+/**
+ * An app that owns the settings, changes the order, and lets the pointer go above the first
+ * row as that change is drawn.
+ */
+function ReleasingApp() {
+  const [value, setValue] = useState<ColumnSettings | null>(null);
+  const state = useColumnSettings({
+    columns: COLUMNS,
+    value,
+    onChange: changed,
+  });
+  // A layout effect runs as the change is drawn, before the picker's plain effects. It
+  // stands after the hook, whose actions read the settings from a layout effect of its own.
+  useLayoutEffect(() => {
+    if (value === null) return;
+    document.dispatchEvent(createEvent.pointerUp(document, pointer(50)));
+  }, [value]);
+  return (
+    <>
+      <ColumnPicker state={state} />
+      <button
+        onClick={() =>
+          setValue({
+            order: ["price", "name", "stock", "notes"],
+            hidden: ["notes"],
+          })
+        }
+        type="button"
+      >
+        Put price first
+      </button>
+    </>
+  );
+}
+
+/** A column list as long as a wide table's. */
+const MANY: readonly ColumnDefinition[] = Array.from(
+  { length: 200 },
+  (_, index) => ({ key: `c${index}`, label: `Column ${index}` }),
+);
+/** Counts which rows the picker draws, to prove the others are left alone. */
+const drawn = vi.fn();
+// One function for every render, as the picker asks for.
+const renderRow: ColumnPickerProps["renderRow"] = (row) => {
+  drawn(row.column.key);
+  return (
+    <>
+      <input {...row.checkboxProps} />
+      <button {...row.handleProps}>grip</button>
+      <label htmlFor={row.checkboxProps.id}>{row.column.label}</label>
+    </>
+  );
+};
+/** An app with the long column list. With `inlineLabels`, it writes its wording in place. */
+function ManyApp({ inlineLabels = false }: { inlineLabels?: boolean }) {
+  const state = useColumnSettings({ columns: MANY });
+  return (
+    <ColumnPicker
+      // A new object, holding a new function, on every render.
+      labels={
+        inlineLabels
+          ? { title: "Table columns", move: (label) => `Move ${label}` }
+          : undefined
+      }
+      renderRow={renderRow}
+      state={state}
+    />
+  );
+}
+
+/** Draws the app. With `open`, it also opens the picker, as most tests need. */
+function renderPicker(extra: Partial<ColumnPickerProps> = {}, open = true) {
+  tableDrawn.mockClear();
+  changed.mockClear();
+  const rendered = render(<App extra={extra} />);
+  if (open) fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+  return rendered;
+}
+
+/**
+ * Makes a box that can scroll, inside a shadow tree (a part of the page that hides its
+ * insides), and an empty element in the box to draw an app into. With `slotted`, that element
+ * stays outside the tree, and the box shows it through a slot (a gap in the tree).
+ */
+function shadowBox(mode: ShadowRootMode, slotted = false) {
+  const host = document.createElement("div");
+  document.body.append(host);
+  onTestFinished(() => host.remove());
+  const tree = host.attachShadow({ mode });
+  const box = tree.appendChild(document.createElement("div"));
+  const container = document.createElement("div");
+  if (slotted) {
+    const slot = box.appendChild(document.createElement("slot"));
+    host.append(container);
+    // The test page does not say which slot shows an element, as a browser does.
+    Object.defineProperty(container, "assignedSlot", { value: slot });
+  } else {
+    box.append(container);
+  }
+  return { tree, box, container };
+}
+
+/** Draws the app in the box that `shadowBox` makes, and opens the picker. */
+function renderInShadowBox(mode: ShadowRootMode, slotted = false) {
+  const { tree, box, container } = shadowBox(mode, slotted);
+  render(<App extra={{}} />, { container });
+  const inside = within(container);
+  fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+  return { tree, box, inside };
+}
+
+/** Sends the scroll of a box, which does not spread upwards as the page's own does. */
+const scrollBox = (box: Element) =>
+  fireEvent(box, new Event("scroll", { bubbles: false }));
+
+const table = (): string => screen.getByTestId("table").textContent ?? "";
+const rows = (): HTMLElement[] => screen.getAllByRole("listitem");
+/** The names in the picker's list, in order. */
+const listed = (): string =>
+  rows()
+    .map((row) => row.textContent)
+    .join(" ");
+const checkbox = (label: string) =>
+  screen.getByRole<HTMLInputElement>("checkbox", { name: label });
+const handle = (label: string) =>
+  screen.getByRole("button", { name: `Move ${label}` });
+const showAll = () => screen.getByRole("button", { name: "Show all" });
+const reset = () => screen.getByRole("button", { name: "Reset" });
+/** Whether a button is marked as having nothing to do. */
+const isUnavailable = (button: HTMLElement): boolean =>
+  button.getAttribute("aria-disabled") === "true";
+const announced = (): string =>
+  document.querySelector("[aria-live]")?.textContent ?? "";
+
+/** Gives a row of the list a place on the screen: 30 pixels tall, from `top` down. */
+function placeAt(element: Element, top: number, height: number) {
+  element.getBoundingClientRect = () =>
+    ({ top, height, bottom: top + height }) as DOMRect;
+}
+
+/**
+ * Lays the open list out as a browser would, which the test page does not do itself. The first
+ * row starts 100 pixels down, and each row is 30 pixels tall.
+ */
+function layOutList() {
+  placeAt(screen.getByRole("list"), 0, 1000);
+  rows().forEach((row, index) => {
+    placeAt(row, 100 + index * 30, 30);
+  });
+}
+
+const pointer = (clientY: number) => ({ button: 0, pointerId: 1, clientY });
+
+/**
+ * Puts the screen frames in the test's hands, for every test of the `describe` this is called
+ * in. The test page draws no frames itself.
+ */
+function holdFrames() {
+  /** The work waiting for the next screen frame. */
+  let waiting: FrameRequestCallback[] = [];
+  beforeEach(() => {
+    waiting = [];
+    const ask = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((work) => {
+        waiting.push(work);
+        return waiting.length;
+      });
+    const cancel = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => {
+        waiting = [];
+      });
+    onTestFinished(() => {
+      ask.mockRestore();
+      cancel.mockRestore();
+    });
+  });
+  return {
+    /** How many pieces of work wait for the next screen frame. */
+    waiting: (): number => waiting.length,
+    /** Draws one screen frame: runs the work that was waiting for it. */
+    drawFrame: () => {
+      const due = waiting;
+      waiting = [];
+      for (const work of due) work(0);
+    },
+  };
+}
+
+afterEach(cleanup);
+
+describe("ColumnPicker", () => {
+  it("should show only the button until it is opened", () => {
+    renderPicker({}, false);
+    const trigger = screen.getByRole("button", { name: /^Columns/ });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("dialog", { name: "Columns" })).toBeTruthy();
+  });
+
+  it("should list every column as a checkbox, a handle and a name, in that order", () => {
+    renderPicker();
+    expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    const [first] = rows();
+    const parts = Array.from((first as HTMLElement).children);
+    expect(parts.map((part) => part.tagName)).toEqual([
+      "INPUT",
+      "BUTTON",
+      "LABEL",
+    ]);
+  });
+
+  it("should name the list as a list, which Safari forgets for a list with no bullets", () => {
+    renderPicker();
+    const list = screen.getByRole("list");
+    expect(list.tagName).toBe("UL");
+    expect(list.getAttribute("role")).toBe("list");
+  });
+
+  it("should tick the shown columns and leave the hidden ones unticked", () => {
+    renderPicker();
+    expect(checkbox("Price").checked).toBe(true);
+    expect(checkbox("Notes").checked).toBe(false);
+  });
+
+  it("should hide and show a column in the table at once", () => {
+    renderPicker();
+    expect(table()).toBe("name price stock");
+    fireEvent.click(checkbox("Price"));
+    expect(table()).toBe("name stock");
+    expect(checkbox("Price").checked).toBe(false);
+    fireEvent.click(checkbox("Notes"));
+    expect(table()).toBe("name stock notes");
+  });
+
+  it("should toggle a column by a click on its name", () => {
+    renderPicker();
+    fireEvent.click(screen.getByText("Stock"));
+    expect(table()).toBe("name price");
+  });
+
+  it("should turn off the checkbox of a column that must stay shown", () => {
+    renderPicker();
+    expect(checkbox("Name").disabled).toBe(true);
+    expect(checkbox("Name").checked).toBe(true);
+    expect(checkbox("Price").disabled).toBe(false);
+  });
+
+  it("should say on the button how many columns are hidden", () => {
+    renderPicker();
+    const trigger = screen.getByRole("button", { name: /^Columns/ });
+    expect(trigger.textContent).toBe("Columns (1 hidden)");
+    fireEvent.click(checkbox("Notes"));
+    expect(trigger.textContent).toBe("Columns");
+  });
+
+  it("should show every column with Show all, keeping the order", () => {
+    renderPicker();
+    fireEvent.click(checkbox("Price"));
+    fireEvent.keyDown(handle("Stock"), { key: "Home" });
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(table()).toBe("stock name price notes");
+  });
+
+  it("should put back the starting order and visibility with Reset", () => {
+    renderPicker();
+    fireEvent.click(checkbox("Price"));
+    fireEvent.click(checkbox("Notes"));
+    fireEvent.keyDown(handle("Stock"), { key: "Home" });
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(table()).toBe("name price stock");
+    expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    expect(checkbox("Notes").checked).toBe(false);
+  });
+
+  it("should tell a screen reader what Show all and Reset did", () => {
+    renderPicker();
+    fireEvent.click(checkbox("Price"));
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(announced()).toBe("All columns are shown.");
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(announced()).toBe(
+      "The columns are back in their starting order and visibility.",
+    );
+  });
+
+  it("should not announce a press on a button that has nothing to do", () => {
+    renderPicker();
+    // The settings are the starting ones already.
+    fireEvent.click(reset());
+    expect(announced()).toBe("");
+    fireEvent.click(showAll());
+    expect(announced()).toBe("All columns are shown.");
+    const message = document.querySelector("[aria-live]")?.firstChild;
+    // Every column is shown now, so a second press is not a new message.
+    fireEvent.click(showAll());
+    expect(document.querySelector("[aria-live]")?.firstChild).toBe(message);
+  });
+
+  it("should announce the same message again as a new one", () => {
+    renderPicker();
+    const message = () => document.querySelector("[aria-live]")?.firstChild;
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    const first = message();
+    fireEvent.click(checkbox("Price"));
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(announced()).toBe("All columns are shown.");
+    // A screen reader reads out what is added to the page, so the text is put in afresh.
+    expect(message()).not.toBe(first);
+  });
+
+  it("should use the app's wording for what Show all and Reset did", () => {
+    renderPicker({
+      labels: { showAllDone: "Alle sichtbar.", resetDone: "Zurückgesetzt." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(announced()).toBe("Alle sichtbar.");
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(announced()).toBe("Zurückgesetzt.");
+  });
+
+  describe("a button with nothing to do", () => {
+    it("should mark Show all as unavailable only while every column is shown", () => {
+      renderPicker();
+      expect(isUnavailable(showAll())).toBe(false);
+      fireEvent.click(checkbox("Notes"));
+      expect(isUnavailable(showAll())).toBe(true);
+      fireEvent.click(checkbox("Price"));
+      expect(isUnavailable(showAll())).toBe(false);
+      expect(showAll().hasAttribute("aria-disabled")).toBe(false);
+    });
+
+    it("should mark Reset as unavailable only while the settings are the starting ones", () => {
+      renderPicker();
+      expect(isUnavailable(reset())).toBe(true);
+      fireEvent.keyDown(handle("Stock"), { key: "Home" });
+      expect(isUnavailable(reset())).toBe(false);
+      expect(reset().hasAttribute("aria-disabled")).toBe(false);
+      fireEvent.keyDown(handle("Stock"), { key: "End" });
+      fireEvent.keyDown(handle("Stock"), { key: "ArrowUp" });
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(isUnavailable(reset())).toBe(true);
+    });
+
+    it("should make each button unavailable once it has done its work", () => {
+      renderPicker();
+      fireEvent.click(showAll());
+      expect(isUnavailable(showAll())).toBe(true);
+      expect(isUnavailable(reset())).toBe(false);
+      fireEvent.click(reset());
+      expect(isUnavailable(reset())).toBe(true);
+      expect(isUnavailable(showAll())).toBe(false);
+    });
+
+    it("should never turn the buttons off, so that they stay in the Tab order", () => {
+      renderPicker();
+      fireEvent.click(showAll());
+      expect(showAll().hasAttribute("disabled")).toBe(false);
+      fireEvent.click(reset());
+      expect(reset().hasAttribute("disabled")).toBe(false);
+      expect(reset().tabIndex).toBe(0);
+    });
+
+    it("should do nothing when an unavailable button is pressed", () => {
+      renderPicker();
+      // The settings are the starting ones, so Reset has nothing to do.
+      fireEvent.click(reset());
+      expect(changed).not.toHaveBeenCalled();
+      fireEvent.click(checkbox("Notes"));
+      changed.mockClear();
+      fireEvent.click(showAll());
+      expect(changed).not.toHaveBeenCalled();
+      expect(announced()).toBe("");
+      expect(table()).toBe("name price stock notes");
+    });
+
+    it("should keep the focus on Reset after it is pressed with the keyboard", () => {
+      renderPicker();
+      fireEvent.click(checkbox("Price"));
+      reset().focus();
+      // Enter or Space on a button reaches it as a click.
+      fireEvent.click(reset());
+      expect(table()).toBe("name price stock");
+      expect(isUnavailable(reset())).toBe(true);
+      expect(document.activeElement).toBe(reset());
+    });
+
+    it("should keep the focus on Show all after it is pressed with the keyboard", () => {
+      renderPicker();
+      showAll().focus();
+      fireEvent.click(showAll());
+      expect(isUnavailable(showAll())).toBe(true);
+      expect(document.activeElement).toBe(showAll());
+    });
+  });
+
+  describe("moving with the keyboard", () => {
+    it("should move a column down and up with the arrow keys", () => {
+      renderPicker();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(listed()).toBe("⠿Price ⠿Name ⠿Stock ⠿Notes");
+      expect(table()).toBe("price name stock");
+      fireEvent.keyDown(handle("Stock"), { key: "ArrowUp" });
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+    });
+
+    it("should move a column to either end with Home and End", () => {
+      renderPicker();
+      fireEvent.keyDown(handle("Price"), { key: "End" });
+      expect(listed()).toBe("⠿Name ⠿Stock ⠿Notes ⠿Price");
+      fireEvent.keyDown(handle("Notes"), { key: "Home" });
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Stock ⠿Price");
+    });
+
+    it("should announce each move with the column's new position", () => {
+      renderPicker();
+      expect(announced()).toBe("");
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(announced()).toBe("Name moved to position 2 of 4.");
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(announced()).toBe("Name moved to position 3 of 4.");
+    });
+
+    it("should keep the focus on the moved column's handle", () => {
+      renderPicker();
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(document.activeElement).toBe(handle("Name"));
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      expect(document.activeElement).toBe(handle("Name"));
+    });
+
+    it("should bring a moved column's handle into view when it kept the focus", () => {
+      renderPicker();
+      const moved = handle("Notes");
+      const scrolled = vi.spyOn(moved, "scrollIntoView");
+      moved.focus();
+      fireEvent.keyDown(moved, { key: "Home" });
+      expect(document.activeElement).toBe(handle("Notes"));
+      expect(scrolled).toHaveBeenCalledWith({ block: "nearest" });
+    });
+
+    it("should not scroll to a moved column once the focus has gone elsewhere", () => {
+      renderPicker();
+      const moved = handle("Notes");
+      const scrolled = vi.spyOn(moved, "scrollIntoView");
+      fireEvent.keyDown(moved, { key: "Home" });
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Price ⠿Stock");
+      expect(scrolled).not.toHaveBeenCalled();
+    });
+
+    it("should do nothing at either end of the list, or for another key", () => {
+      renderPicker();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowUp" });
+      fireEvent.keyDown(handle("Notes"), { key: "ArrowDown" });
+      fireEvent.keyDown(handle("Price"), { key: "a" });
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(announced()).toBe("");
+    });
+
+    it("should tell a screen reader which keys move a column", () => {
+      renderPicker();
+      const hintId = handle("Price").getAttribute("aria-describedby") as string;
+      expect(document.getElementById(hintId)?.textContent).toContain(
+        "arrow key",
+      );
+    });
+  });
+
+  describe("dragging with a pointer", () => {
+    it("should move a column to where its handle is dropped", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      // Over the lower half of "Stock", the third row.
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+      expect(table()).toBe("price stock name");
+      expect(announced()).toBe("Name moved to position 3 of 4.");
+    });
+
+    it("should drop where the pointer is let go when no move was heard first", () => {
+      renderPicker();
+      layOutList();
+      // A pointer can travel and let go with no move reported in between.
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+    });
+
+    it("should finish a drag whose events the app stops from spreading", () => {
+      renderPicker();
+      layOutList();
+      // Something around the picker, such as a toolbar, keeps every pointer event to itself.
+      const keep = (event: Event) => event.stopPropagation();
+      const around = screen.getByRole("dialog").parentElement as HTMLElement;
+      const stopped = ["pointermove", "pointerup"] as const;
+      for (const type of stopped) around.addEventListener(type, keep);
+      // A captured pointer sends its events to the handle.
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(handle("Name"), pointer(180));
+      expect(rows()[3]?.getAttribute("data-drop")).toBe("before");
+      fireEvent.pointerUp(handle("Name"), pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+      expect(rows().some((row) => row.hasAttribute("data-dragging"))).toBe(
+        false,
+      );
+      for (const type of stopped) around.removeEventListener(type, keep);
+    });
+
+    it("should give up a drag whose cancel the app stops from spreading", () => {
+      renderPicker();
+      layOutList();
+      const keep = (event: Event) => event.stopPropagation();
+      const around = screen.getByRole("dialog").parentElement as HTMLElement;
+      const stopped = ["pointercancel", "lostpointercapture"] as const;
+      for (const type of stopped) around.addEventListener(type, keep);
+      for (const type of stopped) {
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        expect(rows()[0]?.hasAttribute("data-dragging")).toBe(true);
+        fireEvent(
+          handle("Name"),
+          new PointerEvent(type, { bubbles: true, pointerId: 1 }),
+        );
+        expect(rows()[0]?.hasAttribute("data-dragging")).toBe(false);
+      }
+      for (const type of stopped) around.removeEventListener(type, keep);
+    });
+
+    it("should leave a column in place when its handle is only pressed", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Price"), pointer(145));
+      fireEvent.pointerUp(document, pointer(145));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    it("should move a column up, and below the last row", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Stock"), pointer(175));
+      // Over the upper half of "Name", the first row.
+      fireEvent.pointerMove(document, pointer(105));
+      fireEvent.pointerUp(document, pointer(105));
+      expect(listed()).toBe("⠿Stock ⠿Name ⠿Price ⠿Notes");
+
+      layOutList();
+      fireEvent.pointerDown(handle("Stock"), pointer(115));
+      fireEvent.pointerMove(document, pointer(400));
+      fireEvent.pointerUp(document, pointer(400));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Notes ⠿Stock");
+    });
+
+    it("should mark the dragged row and the place it would land", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      const [name, price, stock, notes] = rows();
+      expect(name?.hasAttribute("data-dragging")).toBe(true);
+      fireEvent.pointerMove(document, pointer(180));
+      expect(notes?.getAttribute("data-drop")).toBe("before");
+      fireEvent.pointerMove(document, pointer(400));
+      expect(notes?.getAttribute("data-drop")).toBe("after");
+      // Its own place, and the gap just below it, would change nothing.
+      fireEvent.pointerMove(document, pointer(140));
+      expect(
+        [name, price, stock, notes].some((row) =>
+          row?.hasAttribute("data-drop"),
+        ),
+      ).toBe(false);
+      fireEvent.pointerUp(document, pointer(140));
+      expect(name?.hasAttribute("data-dragging")).toBe(false);
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    describe("at an edge of the list", () => {
+      const { drawFrame } = holdFrames();
+
+      it("should scroll the way the pointer is at when the frame is drawn", () => {
+        renderPicker();
+        layOutList();
+        const list = screen.getByRole("list");
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        // At the list's top edge, which asks for a frame to scroll up in.
+        fireEvent.pointerMove(document, pointer(10));
+        // The pointer reaches the bottom edge before that frame is drawn.
+        fireEvent.pointerMove(document, pointer(990));
+        drawFrame();
+        expect(list.scrollTop).toBe(10);
+        // The pointer rests, and the list goes on scrolling.
+        drawFrame();
+        expect(list.scrollTop).toBe(20);
+      });
+
+      it("should not scroll once the pointer has left the edge before the frame is drawn", () => {
+        renderPicker();
+        layOutList();
+        const list = screen.getByRole("list");
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(10));
+        fireEvent.pointerMove(document, pointer(500));
+        drawFrame();
+        expect(list.scrollTop).toBe(0);
+      });
+    });
+
+    describe("when a box around the picker scrolls while a row is held", () => {
+      const { waiting, drawFrame } = holdFrames();
+      /** Moves the whole list up the screen, as a scroll of a box around the picker does. */
+      const scrollAround = (container: Element, by: number) => {
+        placeAt(screen.getByRole("list"), -by, 1000);
+        rows().forEach((row, index) => {
+          placeAt(row, 100 + index * 30 - by, 30);
+        });
+        // Unlike the page's own, the scroll of a box inside the page does not spread upwards.
+        fireEvent(container, new Event("scroll", { bubbles: false }));
+      };
+
+      /**
+       * Counts how often the list is measured from now on. The popover asks for a frame of
+       * its own on the same scroll, so the frames waiting do not tell the two apart.
+       */
+      const countMeasures = () => {
+        const list = screen.getByRole("list");
+        const measure = vi.fn(list.getBoundingClientRect);
+        list.getBoundingClientRect = measure;
+        return () => measure.mock.calls.length;
+      };
+
+      it("should move the drop line to where a drop would land now", () => {
+        const { container } = renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(180));
+        const notes = rows()[3] as HTMLElement;
+        expect(notes.getAttribute("data-drop")).toBe("before");
+        // The list moves up by one row under the still pointer, which is now below the
+        // middle of "Notes".
+        scrollAround(container, 30);
+        act(drawFrame);
+        expect(notes.getAttribute("data-drop")).toBe("after");
+        // The drop lands where the line says.
+        fireEvent.pointerUp(document, pointer(180));
+        expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      });
+
+      describe.each([
+        { mode: "open", slotted: false, where: "inside an open shadow tree" },
+        {
+          mode: "closed",
+          slotted: false,
+          where: "inside a closed shadow tree",
+        },
+        {
+          mode: "open",
+          slotted: true,
+          where: "shown through an open tree's slot",
+        },
+      ] as const)("with the picker $where", ({ mode, slotted }) => {
+        // The page never hears the scroll of a box inside a shadow tree, not even on the
+        // scroll's way down. Only a listener inside that tree does.
+        it("should move the drop line when a box of that tree scrolls", () => {
+          const { box, inside } = renderInShadowBox(mode, slotted);
+          const list = inside.getByRole("list");
+          const listRows = inside.getAllByRole("listitem");
+          const layOut = (scrolledBy: number) => {
+            placeAt(list, -scrolledBy, 1000);
+            listRows.forEach((row, index) => {
+              placeAt(row, 100 + index * 30 - scrolledBy, 30);
+            });
+          };
+          layOut(0);
+          fireEvent.pointerDown(
+            inside.getByRole("button", { name: "Move Name" }),
+            pointer(115),
+          );
+          fireEvent.pointerMove(document, pointer(180));
+          const notes = listRows[3] as HTMLElement;
+          expect(notes.getAttribute("data-drop")).toBe("before");
+          layOut(30);
+          scrollBox(box);
+          act(drawFrame);
+          expect(notes.getAttribute("data-drop")).toBe("after");
+        });
+
+        it("should stop listening in that tree when the drag ends", () => {
+          const { tree, inside } = renderInShadowBox(mode, slotted);
+          const added = vi.spyOn(tree, "addEventListener");
+          const removed = vi.spyOn(tree, "removeEventListener");
+          const scrollCalls = (calls: unknown[][]) =>
+            calls.filter(([type]) => type === "scroll");
+          fireEvent.pointerDown(
+            inside.getByRole("button", { name: "Move Name" }),
+            pointer(115),
+          );
+          expect(scrollCalls(added.mock.calls)).toHaveLength(1);
+          fireEvent.pointerUp(document, pointer(115));
+          expect(scrollCalls(removed.mock.calls)).toEqual(
+            scrollCalls(added.mock.calls),
+          );
+        });
+      });
+
+      it("should measure once for many scrolls within one screen frame", () => {
+        const { container } = renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(180));
+        scrollAround(container, 10);
+        scrollAround(container, 20);
+        scrollAround(container, 30);
+        const measured = countMeasures();
+        expect(rows()[3]?.getAttribute("data-drop")).toBe("before");
+        act(drawFrame);
+        expect(measured()).toBe(1);
+        expect(rows()[3]?.getAttribute("data-drop")).toBe("after");
+      });
+
+      it("should not start the list scrolling when the pointer is at its edge", () => {
+        const { container } = renderPicker();
+        layOutList();
+        const list = screen.getByRole("list");
+        // Only pressed, at the list's top edge.
+        fireEvent.pointerDown(handle("Name"), pointer(10));
+        scrollAround(container, 0);
+        // The popover's frame and the drop line's. Neither asks for another.
+        act(drawFrame);
+        expect(waiting()).toBe(0);
+        expect(list.scrollTop).toBe(0);
+      });
+
+      it("should ask for no frame when the list itself scrolls", () => {
+        renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(180));
+        // The drag follows the list's own scroll at once, as before.
+        fireEvent(screen.getByRole("list"), new Event("scroll"));
+        expect(waiting()).toBe(0);
+      });
+
+      it("should stop measuring when the drag ends, even with a frame waiting", () => {
+        const { container } = renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        scrollAround(container, 30);
+        fireEvent.pointerUp(document, pointer(115));
+        const measured = countMeasures();
+        act(drawFrame);
+        scrollAround(container, 60);
+        act(drawFrame);
+        expect(measured()).toBe(0);
+      });
+    });
+
+    describe("when a row changes height while another is held", () => {
+      /** The size watchers the picker has made, each with the rows it watches. */
+      const watchers: { rows: Set<Element>; changed: () => void }[] = [];
+      /** A stand-in for the browser's size watcher. The test page never reports a size. */
+      class SizeWatcher {
+        private readonly entry: (typeof watchers)[number];
+        constructor(onChange: () => void) {
+          this.entry = { rows: new Set(), changed: onChange };
+          watchers.push(this.entry);
+        }
+        observe(row: Element) {
+          this.entry.rows.add(row);
+        }
+        disconnect() {
+          this.entry.rows.clear();
+        }
+      }
+      /** Tells every watcher of a row that the row's size changed, as a browser would. */
+      const resized = (row: Element) => {
+        for (const watcher of watchers) {
+          if (watcher.rows.has(row)) act(() => watcher.changed());
+        }
+      };
+      const view = document.defaultView as Window & typeof globalThis;
+      const real = view.ResizeObserver;
+      const setSizeWatcher = (watcher: unknown) =>
+        Object.defineProperty(view, "ResizeObserver", {
+          configurable: true,
+          value: watcher,
+        });
+      beforeEach(() => {
+        watchers.length = 0;
+        setSizeWatcher(SizeWatcher);
+      });
+      afterEach(() => {
+        setSizeWatcher(real);
+      });
+
+      it("should move the drop line to where a drop would land now", () => {
+        renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        const [, price, stock, notes] = rows() as [
+          HTMLElement,
+          HTMLElement,
+          HTMLElement,
+          HTMLElement,
+        ];
+        fireEvent.pointerMove(document, pointer(200));
+        expect(notes.getAttribute("data-drop")).toBe("before");
+        // "Stock" grows from 30 pixels to 90, which pushes "Notes" down. The still pointer
+        // is now over the top half of "Stock".
+        placeAt(stock, 160, 90);
+        placeAt(notes, 250, 30);
+        resized(stock);
+        expect(stock.getAttribute("data-drop")).toBe("before");
+        expect(notes.hasAttribute("data-drop")).toBe(false);
+        // The drop lands where the line says.
+        fireEvent.pointerUp(document, pointer(200));
+        expect(listed()).toBe("⠿Price ⠿Name ⠿Stock ⠿Notes");
+        expect(price.hasAttribute("data-drop")).toBe(false);
+      });
+
+      describe("at an edge of the list", () => {
+        const { waiting } = holdFrames();
+
+        it("should leave the list still when a row there is only pressed", () => {
+          renderPicker();
+          layOutList();
+          // A press at the list's top edge. The watcher's first report comes with it.
+          fireEvent.pointerDown(handle("Name"), pointer(10));
+          resized(rows()[0] as HTMLElement);
+          expect(waiting()).toBe(0);
+          // The first move of the pointer is what starts the scrolling.
+          fireEvent.pointerMove(document, pointer(10));
+          expect(waiting()).toBe(1);
+        });
+      });
+
+      it("should watch the rows the list has after it changes during the drag", () => {
+        render(<ChangingApp />);
+        fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+        layOutList();
+        fireEvent.pointerDown(handle("Stock"), pointer(175));
+        fireEvent.click(screen.getByRole("button", { name: "Remove name" }));
+        const watched = watchers.flatMap((watcher) => [...watcher.rows]);
+        expect(watched).toEqual(rows());
+      });
+
+      it("should stop watching the rows when the drag ends", () => {
+        renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        expect(watchers.flatMap((watcher) => [...watcher.rows])).toEqual(
+          rows(),
+        );
+        fireEvent.pointerUp(document, pointer(115));
+        expect(watchers.flatMap((watcher) => [...watcher.rows])).toEqual([]);
+      });
+
+      it("should still drag in a browser that has no size watcher", () => {
+        setSizeWatcher(undefined);
+        renderPicker();
+        layOutList();
+        fireEvent.pointerDown(handle("Name"), pointer(115));
+        fireEvent.pointerMove(document, pointer(180));
+        fireEvent.pointerUp(document, pointer(180));
+        expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+      });
+    });
+
+    it("should drop into the order just drawn when the release comes with that draw", () => {
+      changed.mockClear();
+      render(<ReleasingApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      // The app moves "Name" down to second place, and the pointer lets go above the first
+      // row in the same draw. In the order just drawn, that moves "Name" back up.
+      fireEvent.click(screen.getByRole("button", { name: "Put price first" }));
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(changed.mock.calls[0]?.[0]).toMatchObject({
+        order: ["name", "price", "stock", "notes"],
+      });
+    });
+
+    it("should move the held column when the list changes during the drag", () => {
+      render(<ChangingApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      fireEvent.pointerDown(handle("Stock"), pointer(175));
+      // "Stock" was the third row, and is now the second.
+      fireEvent.click(screen.getByRole("button", { name: "Remove name" }));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes");
+      expect(rows()[1]?.hasAttribute("data-dragging")).toBe(true);
+      fireEvent.pointerMove(document, pointer(400));
+      expect(rows()[2]?.getAttribute("data-drop")).toBe("after");
+      fireEvent.pointerUp(document, pointer(400));
+      // A drop that went by the old place would have moved "Notes", or nothing.
+      expect(listed()).toBe("⠿Price ⠿Notes ⠿Stock");
+      expect(announced()).toBe("Stock moved to position 3 of 3.");
+    });
+
+    it("should give up the drag when the held column leaves the list", () => {
+      render(<ChangingApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.click(screen.getByRole("button", { name: "Remove name" }));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes");
+      expect(rows().some((row) => row.hasAttribute("data-dragging"))).toBe(
+        false,
+      );
+      expect(screen.getByRole("list").hasAttribute("data-dragging")).toBe(
+        false,
+      );
+    });
+
+    it("should give up the drag when Tab closes the picker", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.blur(handle("Name"), {
+        relatedTarget: screen.getByRole("button", { name: "Elsewhere" }),
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // The pointer is let go only after the list has closed.
+      fireEvent.pointerUp(document, pointer(180));
+      expect(table()).toBe("name price stock");
+      expect(announced()).toBe("");
+      // The picker opens again with nothing held.
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(document.querySelector("[data-dragging]")).toBeNull();
+    });
+
+    it("should give up the drag when a second finger taps outside the picker", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Elsewhere" }), {
+        ...pointer(500),
+        pointerId: 2,
+      });
+      fireEvent.pointerUp(document, pointer(180));
+      expect(table()).toBe("name price stock");
+    });
+
+    it("should redraw the table once, on drop, and not while dragging", () => {
+      renderPicker();
+      layOutList();
+      tableDrawn.mockClear();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(150));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerMove(document, pointer(210));
+      expect(tableDrawn).not.toHaveBeenCalled();
+      fireEvent.pointerUp(document, pointer(210));
+      expect(tableDrawn).toHaveBeenCalledTimes(1);
+    });
+
+    it("should give up the drag on Escape, and keep the picker open", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.keyDown(handle("Name"), { key: "Escape" });
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(screen.getByRole("dialog")).toBeTruthy();
+    });
+
+    it("should give up the drag when the browser takes the pointer away", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerCancel(document, pointer(180));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    it("should give up the drag when the mouse moves with no button held", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      // The button was let go where the page could not hear it, such as over a system menu.
+      fireEvent.pointerMove(document, {
+        ...pointer(180),
+        pointerType: "mouse",
+        buttons: 0,
+      });
+      expect(document.querySelector("[data-dragging]")).toBeNull();
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    it("should keep the drag while a finger moves, which holds no button", () => {
+      renderPicker();
+      layOutList();
+      const finger = { ...pointer(180), pointerType: "touch", buttons: 0 };
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, finger);
+      fireEvent.pointerUp(document, finger);
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+    });
+
+    it("should give up the drag when the browser takes the capture away", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.lostPointerCapture(handle("Name"), pointer(180));
+      expect(document.querySelector("[data-dragging]")).toBeNull();
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    it("should let a new press replace a drag that never heard its release", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      // No release arrives. The next press starts a fresh drag of another column.
+      fireEvent.pointerDown(handle("Stock"), pointer(175));
+      const [name, , stock] = rows();
+      expect(name?.hasAttribute("data-dragging")).toBe(false);
+      expect(stock?.hasAttribute("data-dragging")).toBe(true);
+      fireEvent.pointerMove(document, pointer(105));
+      fireEvent.pointerUp(document, pointer(105));
+      expect(listed()).toBe("⠿Stock ⠿Name ⠿Price ⠿Notes");
+    });
+
+    it("should capture the pointer on the handle, and let it go after the drag", () => {
+      renderPicker();
+      layOutList();
+      const grip = handle("Name");
+      const capture = vi.spyOn(grip, "setPointerCapture");
+      const release = vi.spyOn(grip, "releasePointerCapture");
+      fireEvent.pointerDown(grip, pointer(115));
+      expect(capture).toHaveBeenCalledWith(1);
+      expect(release).not.toHaveBeenCalled();
+      fireEvent.pointerUp(document, pointer(115));
+      expect(release).toHaveBeenCalledWith(1);
+    });
+
+    it("should still drag in a browser that cannot capture the pointer", () => {
+      renderPicker();
+      layOutList();
+      vi.spyOn(handle("Name"), "setPointerCapture").mockImplementation(() => {
+        throw new Error("no capture");
+      });
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+    });
+
+    it("should ignore a press that is not the main button, and another pointer", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), { ...pointer(115), button: 2 });
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, { ...pointer(180), pointerId: 2 });
+      fireEvent.pointerUp(document, { ...pointer(180), pointerId: 2 });
+      expect(rows()[0]?.hasAttribute("data-dragging")).toBe(true);
+      fireEvent.pointerUp(document, pointer(115));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+  });
+
+  describe("inside the filter builder", () => {
+    // Taken off the page after every test, passed or failed. A style sheet left behind by a
+    // failed test would change what the later tests measure.
+    let loadedSheet: HTMLStyleElement | null = null;
+    afterEach(() => {
+      loadedSheet?.remove();
+      loadedSheet = null;
+    });
+
+    /** Loads the real style sheet and draws the open picker inside a builder's own element. */
+    function renderInBuilder() {
+      const sheet = document.createElement("style");
+      loadedSheet = sheet;
+      sheet.textContent = readFileSync(
+        `${import.meta.dirname}/../../styles.css`,
+        "utf8",
+      );
+      document.head.append(sheet);
+      const rendered = render(
+        <div className="fb">
+          <App extra={{}} />
+        </div>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      return { ...rendered, sheet };
+    }
+
+    it("should fade only the dragged row, not the whole list", () => {
+      renderInBuilder();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      // The builder fades its own dragged item. That rule must not also fade the list.
+      expect(getComputedStyle(screen.getByRole("list")).opacity).not.toBe(
+        "0.4",
+      );
+      expect(getComputedStyle(rows()[0] as HTMLElement).opacity).toBe("0.4");
+    });
+
+    it("should colour an unavailable button from the variables only", () => {
+      const { sheet } = renderInBuilder();
+      const button = reset();
+      expect(isUnavailable(button)).toBe(true);
+      // The test page does not work out variables, so this reads the style sheet: every
+      // rule written for an unavailable button must take its colours from `--fb-*`.
+      const rules = Array.from(sheet.sheet?.cssRules ?? [])
+        .map((rule) => rule as CSSStyleRule)
+        .filter((rule) => rule.selectorText?.includes("[aria-disabled"));
+      expect(rules.length).toBeGreaterThan(0);
+      for (const rule of rules) {
+        expect(button.matches(rule.selectorText.replace(":hover", ""))).toBe(
+          true,
+        );
+        const colours = [rule.style.color, rule.style.backgroundColor].filter(
+          (value) => value !== "",
+        );
+        expect(colours.length).toBeGreaterThan(0);
+        for (const colour of colours) {
+          expect(colour).toMatch(/^var\(--fb-[a-z-]+\)$/);
+        }
+      }
+    });
+
+    it("should show where the focus is when the list opens from the keyboard", () => {
+      const { sheet } = renderInBuilder();
+      // Opening moves the focus to the list's box. The test page does not know whether the
+      // keyboard was used (`:focus-visible`), so this reads the style sheet.
+      const popoverRules = Array.from(sheet.sheet?.cssRules ?? [])
+        .map((rule) => rule as CSSStyleRule)
+        .filter((rule) => rule.selectorText?.includes(".fb-columns-popover"));
+      const selectorsOf = (rule: CSSStyleRule) =>
+        rule.selectorText.split(",").map((selector) => selector.trim());
+
+      // A ring is drawn for a focus that came from the keyboard, in the variable's colour.
+      const ring = popoverRules.find((rule) =>
+        selectorsOf(rule).includes(".fb-columns-popover:focus-visible"),
+      );
+      expect(ring?.style.outlineColor).toBe("var(--fb-focus)");
+      // And no rule takes the ring away from such a focus.
+      const removing = popoverRules.filter(
+        (rule) =>
+          rule.style.outlineStyle === "none" ||
+          ["0", "0px"].includes(rule.style.outlineWidth),
+      );
+      for (const rule of removing) {
+        for (const selector of selectorsOf(rule)) {
+          expect(selector).toContain(":not(:focus-visible)");
+        }
+      }
+    });
+
+    it("should leave the drop line to the picker's own rules", () => {
+      const { sheet } = renderInBuilder();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(400));
+      const last = rows()[3] as HTMLElement;
+      expect(last.getAttribute("data-drop")).toBe("after");
+      // The test page does not draw the line itself (it is a `::before` part). So this reads
+      // the style sheet: every drop-line rule that reaches this row must be the picker's.
+      const lineRules = Array.from(sheet.sheet?.cssRules ?? [])
+        .flatMap(
+          (rule) => (rule as CSSStyleRule).selectorText?.split(",") ?? [],
+        )
+        .map((selector) => selector.trim())
+        .filter(
+          (selector) =>
+            selector.includes("[data-drop") &&
+            selector.endsWith("::before") &&
+            last.matches(selector.slice(0, -"::before".length)),
+        );
+      expect(lineRules.length).toBeGreaterThan(0);
+      expect(
+        lineRules.filter((selector) => !selector.startsWith(".fb-columns-row")),
+      ).toEqual([]);
+    });
+  });
+
+  describe("its style sheet", () => {
+    // The test page lays nothing out and scrolls nothing, so these tests read the rules.
+    let loadedSheet: HTMLStyleElement | null = null;
+    afterEach(() => {
+      loadedSheet?.remove();
+      loadedSheet = null;
+    });
+
+    /** Loads the real style sheet, once per test. */
+    function loadSheet(): HTMLStyleElement {
+      const sheet = document.createElement("style");
+      sheet.textContent = readFileSync(
+        `${import.meta.dirname}/../../styles.css`,
+        "utf8",
+      );
+      document.head.append(sheet);
+      return sheet;
+    }
+
+    /** The rules of the real style sheet that reach `element`, in the order written. */
+    function rulesFor(element: Element): CSSStyleRule[] {
+      loadedSheet ??= loadSheet();
+      return Array.from(loadedSheet.sheet?.cssRules ?? [])
+        .map((rule) => rule as CSSStyleRule)
+        .filter(
+          (rule) =>
+            rule.selectorText !== undefined &&
+            element.matches(rule.selectorText),
+        );
+    }
+
+    it("should let a long label on a button below the list wrap inside the popover", () => {
+      renderPicker({
+        labels: {
+          showAll: "Alle Tabellenspalten einblenden",
+          reset: "Spaltensichtbarkeitseinstellungen wiederherstellen",
+        },
+      });
+      const button = screen.getByRole("button", {
+        name: "Spaltensichtbarkeitseinstellungen wiederherstellen",
+      });
+      const footer = button.parentElement as HTMLElement;
+      /** What the rules give `element` for a property. A later rule wins, as these do. */
+      const styled = (element: Element, property: string) =>
+        rulesFor(element)
+          .map((rule) => rule.style.getPropertyValue(property))
+          .filter((value) => value !== "")
+          .at(-1);
+      // A button that does not fit beside the other takes a line of its own.
+      expect(styled(footer, "flex-wrap")).toBe("wrap");
+      // It is never wider than the popover, and its label breaks, even inside a long word.
+      expect(styled(button, "max-width")).toBe("100%");
+      expect(styled(button, "overflow-wrap")).toBe("anywhere");
+      expect(styled(button, "white-space")).toBeUndefined();
+      // It grows taller to hold the lines, and a short label keeps the usual height.
+      expect(styled(button, "height")).toBe("auto");
+      expect(styled(button, "min-height")).toBe("var(--fb-control-height)");
+    });
+
+    it("should let the page scroll on once the list has reached its end", () => {
+      renderPicker();
+      // Below a button near the bottom of the screen, the buttons under the list are out
+      // of view. A wheel or a finger over the list must then be able to scroll the page.
+      const rules = rulesFor(screen.getByRole("list"));
+      expect(rules.length).toBeGreaterThan(0);
+      for (const rule of rules) {
+        expect(rule.style.getPropertyValue("overscroll-behavior")).toBe("");
+      }
+    });
+  });
+
+  describe("inside a frame", () => {
+    /**
+     * Draws the app with the open picker in a document of its own, as a frame (a page within
+     * the page) has. The test page cannot load a real frame. What matters is the same: what
+     * happens in that document is not heard on the outer page's document.
+     */
+    function renderInFrame() {
+      const page = document.implementation.createHTMLDocument();
+      // A frame's document has a window. The test helpers need one to build an event.
+      Object.defineProperty(page, "defaultView", { value: window });
+      const container = page.body.appendChild(page.createElement("div"));
+      render(<App extra={{}} />, { container, baseElement: page.body });
+      const inside = within(page.body);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      return { page, inside };
+    }
+
+    it("should close on a click outside it", () => {
+      const { inside } = renderInFrame();
+      fireEvent.pointerDown(inside.getByRole("button", { name: "Elsewhere" }));
+      expect(inside.queryByRole("dialog")).toBeNull();
+    });
+
+    it("should close when Tab moves the focus out of the frame", () => {
+      vi.useFakeTimers();
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+      const { page, inside } = renderInFrame();
+      // The frame's own page loses the focus. The outer page keeps it.
+      page.hasFocus = () => false;
+      // Tab on the last control of the frame. No element is named as the next one.
+      const resetButton = inside.getByRole("button", { name: "Reset" });
+      fireEvent.keyDown(resetButton, { key: "Tab" });
+      fireEvent.blur(resetButton, { relatedTarget: null });
+      act(() => vi.runAllTimers());
+      expect(inside.queryByRole("dialog")).toBeNull();
+    });
+
+    it("should move a column to where its handle is dropped", () => {
+      const { page, inside } = renderInFrame();
+      placeAt(inside.getByRole("list"), 0, 1000);
+      inside.getAllByRole("listitem").forEach((row, index) => {
+        placeAt(row, 100 + index * 30, 30);
+      });
+      const name = inside.getByRole("button", { name: "Move Name" });
+      fireEvent.pointerDown(name, pointer(115));
+      fireEvent.pointerMove(page, pointer(180));
+      fireEvent.pointerUp(page, pointer(180));
+      expect(inside.getByTestId("table").textContent).toBe("price stock name");
+    });
+  });
+
+  describe("in an app that owns the settings", () => {
+    const openOwningApp = (atOnce = false, dropFocus = false) => {
+      render(<OwningApp atOnce={atOnce} dropFocus={dropFocus} />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+    };
+    const apply = () =>
+      fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    it("should not announce a move that the app turns down", () => {
+      openOwningApp();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(announced()).toBe("");
+      // Something else redraws the picker. The move is still not there, so still no word.
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(announced()).toBe("");
+    });
+
+    it("should announce a move, and leave the focus, when the handle gave it up before the app applies it", () => {
+      openOwningApp();
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      expect(announced()).toBe("");
+      // The handle gives the focus up before the app applies the move, as when a person
+      // clicks on a bare part of the page. The move is not what took the focus away.
+      handle("Name").blur();
+      expect(document.activeElement).toBe(document.body);
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(announced()).toBe("Name moved to position 4 of 4.");
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it("should give the focus back to the handle when the move takes it away", () => {
+      openOwningApp(true, true);
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(listed()).toBe("⠿Price ⠿Name ⠿Stock ⠿Notes");
+      expect(document.activeElement).toBe(handle("Name"));
+    });
+
+    it("should give the focus back to the handle when a late move takes it away", () => {
+      openOwningApp(false, true);
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      // The handle still holds the focus when the app applies the move.
+      expect(document.activeElement).toBe(handle("Name"));
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(announced()).toBe("Name moved to position 4 of 4.");
+      expect(document.activeElement).toBe(handle("Name"));
+    });
+
+    it("should give the focus back to a handle that took it after the move was asked for", () => {
+      openOwningApp(false, true);
+      // The focus is on the list's box when the move is asked for, and goes to the handle
+      // before the app applies the move.
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      handle("Name").focus();
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(document.activeElement).toBe(handle("Name"));
+    });
+
+    it("should leave the focus where the person has put it since the move", () => {
+      openOwningApp();
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      // The person goes on to another control of the picker before the app applies the move.
+      checkbox("Price").focus();
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(document.activeElement).toBe(checkbox("Price"));
+    });
+
+    it("should not take the focus back once the person has moved it on", () => {
+      openOwningApp();
+      handle("Name").focus();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      // The person goes on to another control, and that control then gives the focus up.
+      // Nothing holds the focus now, but the move is not what took it away.
+      checkbox("Price").focus();
+      checkbox("Price").blur();
+      expect(document.activeElement).toBe(document.body);
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Name ⠿Stock ⠿Notes");
+      expect(document.activeElement).toBe(document.body);
+      // The move itself is still read out.
+      expect(announced()).toBe("Name moved to position 2 of 4.");
+    });
+
+    it("should not give the focus to a handle that did not have it", () => {
+      openOwningApp();
+      // The focus is on the list's box, where opening put it, not on the handle.
+      const before = document.activeElement;
+      fireEvent.keyDown(handle("Name"), { key: "End" });
+      apply();
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes ⠿Name");
+      expect(document.activeElement).toBe(before);
+    });
+
+    it("should not announce a move when the app changes the list some other way", () => {
+      openOwningApp();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      // The app turns the move down, and then changes the order itself. That happens to put
+      // the name second, where the move had asked for it. It is still not that move.
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Price ⠿Stock");
+      expect(announced()).toBe("");
+    });
+
+    it("should announce a late drop the same way", () => {
+      openOwningApp();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(announced()).toBe("");
+      apply();
+      expect(announced()).toBe("Name moved to position 3 of 4.");
+    });
+
+    it("should announce Show all and Reset when the app applies them at once", () => {
+      openOwningApp(true);
+      fireEvent.click(showAll());
+      expect(announced()).toBe("All columns are shown.");
+      fireEvent.click(reset());
+      expect(announced()).toBe(
+        "The columns are back in their starting order and visibility.",
+      );
+    });
+
+    it("should announce Show all only once the app applies it", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      expect(announced()).toBe("");
+      expect(isUnavailable(showAll())).toBe(false);
+      apply();
+      expect(checkbox("Notes").checked).toBe(true);
+      expect(announced()).toBe("All columns are shown.");
+      expect(isUnavailable(showAll())).toBe(true);
+    });
+
+    it("should announce Reset only once the app applies it", () => {
+      openOwningApp();
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      fireEvent.click(reset());
+      expect(announced()).toBe("");
+      expect(isUnavailable(reset())).toBe(false);
+      apply();
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(announced()).toBe(
+        "The columns are back in their starting order and visibility.",
+      );
+      expect(isUnavailable(reset())).toBe(true);
+    });
+
+    it("should not announce Show all or Reset that the app turns down", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      expect(announced()).toBe("");
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      fireEvent.click(reset());
+      expect(announced()).toBe("");
+      // Something else redraws the picker. Neither press was applied, so still no word.
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(announced()).toBe("");
+      expect(isUnavailable(reset())).toBe(false);
+    });
+
+    it("should not announce Show all when the app applies something else", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      // The app turns the press down, and changes the order itself.
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Price ⠿Stock");
+      expect(announced()).toBe("");
+      // The press was given up then. A person who ticks the last column later did not
+      // press "Show all" for it.
+      fireEvent.click(checkbox("Notes"));
+      apply();
+      expect(checkbox("Notes").checked).toBe(true);
+      expect(announced()).toBe("");
+    });
+
+    it("should not announce Show all when the app shows every column in another order", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      // The app turns the press down, and applies settings of its own. They show every
+      // column too, but "Show all" keeps the order and these do not.
+      fireEvent.click(screen.getByRole("button", { name: "Show notes first" }));
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Price ⠿Stock");
+      expect(isUnavailable(showAll())).toBe(true);
+      expect(announced()).toBe("");
+    });
+
+    it("should not announce a Show all that was turned down when a tick shows the last column", async () => {
+      openOwningApp();
+      // The app never applies this press.
+      fireEvent.click(showAll());
+      // The press and the tick are two events. The hook lets go of a change that was turned
+      // down once the event's own code has finished, so the test waits for that.
+      await Promise.resolve();
+      // The person shows the one hidden column with its checkbox instead, and the app
+      // applies that. Every column is shown now, but not by "Show all".
+      fireEvent.click(checkbox("Notes"));
+      apply();
+      expect(checkbox("Notes").checked).toBe(true);
+      expect(isUnavailable(showAll())).toBe(true);
+      expect(announced()).toBe("");
+    });
+
+    it("should not announce a Reset that was turned down when a move restores the order", async () => {
+      openOwningApp();
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      // The app never applies this press.
+      fireEvent.click(reset());
+      await Promise.resolve();
+      // The person moves the column back by hand, and the app applies that.
+      fireEvent.keyDown(handle("Notes"), { key: "End" });
+      apply();
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(isUnavailable(reset())).toBe(true);
+      // Only the move is read out.
+      expect(announced()).toBe("Notes moved to position 4 of 4.");
+    });
+
+    it("should keep the focus on Reset while the app applies it late", () => {
+      openOwningApp();
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      reset().focus();
+      fireEvent.click(reset());
+      expect(document.activeElement).toBe(reset());
+      // The app's own button applies the change without taking the focus in this test page.
+      apply();
+      expect(isUnavailable(reset())).toBe(true);
+      expect(document.activeElement).toBe(reset());
+    });
+
+    it("should forget a waiting Show all when the picker closes", () => {
+      openOwningApp();
+      fireEvent.click(showAll());
+      fireEvent.keyDown(showAll(), { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      apply();
+      expect(announced()).toBe("");
+      // Opened again, the list shows what the app applied, and still nothing is read out.
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(checkbox("Notes").checked).toBe(true);
+      expect(announced()).toBe("");
+    });
+
+    it("should forget a waiting Reset when a click outside closes the picker", () => {
+      openOwningApp();
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      fireEvent.click(reset());
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Elsewhere" }));
+      apply();
+      expect(announced()).toBe("");
+    });
+
+    it("should forget a waiting move when the picker closes", () => {
+      openOwningApp();
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+      fireEvent.pointerDown(elsewhere);
+      elsewhere.focus();
+      apply();
+      // The person has moved on. Their focus stays put, and nothing is read out.
+      expect(announced()).toBe("");
+      expect(document.activeElement).toBe(elsewhere);
+    });
+  });
+
+  describe("closing", () => {
+    it("should close on Escape and return the focus to the button", () => {
+      renderPicker();
+      fireEvent.keyDown(checkbox("Price"), { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: /^Columns/ }),
+      );
+    });
+
+    it("should close on a click outside it, and stay open on a click inside", () => {
+      renderPicker();
+      fireEvent.pointerDown(screen.getByText("Stock"));
+      expect(screen.getByRole("dialog")).toBeTruthy();
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Elsewhere" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("should close on a click outside it that the app stops from spreading", () => {
+      render(
+        <>
+          <App extra={{}} />
+          <button
+            onPointerDown={(event) => event.stopPropagation()}
+            type="button"
+          >
+            Keeps to itself
+          </button>
+        </>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      fireEvent.pointerDown(
+        screen.getByRole("button", { name: "Keeps to itself" }),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("should stay open on a click inside it when it is drawn in a shadow tree", () => {
+      // A shadow tree is a part of the page that hides its insides from the rest. A press
+      // inside it reaches the page as a press on the tree's host. Only the event's path
+      // still lists the elements inside.
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      host.attachShadow({ mode: "open" }).append(container);
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      // The test page does not hide the pressed element as a browser does, so the press is
+      // built by hand: sent from the host, with the path a browser would give.
+      const press = new Event("pointerdown", { bubbles: true });
+      const path: EventTarget[] = [];
+      for (
+        let node: Node | null = inside.getByText("Stock");
+        node !== null;
+        node = node.parentNode ?? (node as Partial<ShadowRoot>).host ?? null
+      ) {
+        path.push(node);
+      }
+      press.composedPath = () => path;
+      fireEvent(host, press);
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      fireEvent.pointerDown(document.body);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      host.remove();
+    });
+
+    it("should tell a press in an open shadow tree apart when the host stops the press", () => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      const beside = document.createElement("p");
+      host.attachShadow({ mode: "open" }).append(container, beside);
+      // No listener inside the tree hears a press. Only the page's own listener does, and
+      // it is told that the press was on the host.
+      stopPressesAt(host);
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      pressInOpenTree(host, inside.getByText("Stock"));
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      // Inside the same tree, but outside the picker, on something that takes no focus.
+      pressInOpenTree(host, beside);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      host.remove();
+    });
+
+    it("should stay open on a click inside it when it is drawn in a closed shadow tree", () => {
+      // A closed shadow tree hides its insides from the page altogether. The page hears a
+      // press inside it as a press on the tree's host, and the event's path stops there too.
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      const beside = document.createElement("button");
+      const tree = host.attachShadow({ mode: "closed" });
+      tree.append(container, beside);
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+
+      // The test page does not hide the pressed element as a browser does. So the press
+      // answers by hand, as a browser would: a listener outside the tree is told of the
+      // host, and a listener inside the tree is told of the pressed element.
+      const press = (pressed: Element) => {
+        const event = new Event("pointerdown", {
+          bubbles: true,
+          composed: true,
+        });
+        const isHeardInside = () =>
+          event.currentTarget instanceof Node &&
+          tree.contains(event.currentTarget);
+        Object.defineProperty(event, "target", {
+          get: () => (isHeardInside() ? pressed : host),
+          set: () => {},
+        });
+        // The test page asks the event for its path to know where to send it, before any
+        // listener is called. That first answer must be the real path.
+        const realPath = event.composedPath.bind(event);
+        event.composedPath = () => {
+          if (event.currentTarget === null) return realPath();
+          return isHeardInside()
+            ? [pressed, tree, host, document.body, document]
+            : [host, document.body, document];
+        };
+        fireEvent(pressed, event);
+      };
+      press(inside.getByText("Stock"));
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      // Inside the same tree, but outside the picker.
+      press(beside);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      fireEvent.pointerDown(document.body);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      host.remove();
+    });
+
+    // A limit that has no fix. A closed tree hides from the page whether a press inside it
+    // was on the picker or beside it. Only a listener inside the tree can tell, and it never
+    // hears a press that was stopped before it got there. So the picker stays open: closing
+    // on a guess would also close it for a press on its own rows.
+    it.each([
+      { where: "at the tree's host", stopAt: (host: Element) => host },
+      { where: "above the tree's host", stopAt: () => document.body },
+    ])(
+      "should stay open on a press beside it in a closed shadow tree that is stopped on its way down $where",
+      ({ stopAt }) => {
+        const host = document.createElement("div");
+        document.body.append(host);
+        const container = document.createElement("div");
+        const beside = document.createElement("p");
+        host.attachShadow({ mode: "closed" }).append(container, beside);
+        const { unmount } = render(<App extra={{}} />, { container });
+        const inside = within(container);
+        fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+
+        const stop = (press: Event) => press.stopPropagation();
+        const stopper = stopAt(host);
+        stopper.addEventListener("pointerdown", stop, true);
+        fireEvent.pointerDown(beside);
+        expect(inside.queryByRole("dialog")).not.toBeNull();
+
+        // The same press closes the picker once nothing stops it.
+        stopper.removeEventListener("pointerdown", stop, true);
+        fireEvent.pointerDown(beside);
+        expect(inside.queryByRole("dialog")).toBeNull();
+        unmount();
+        host.remove();
+      },
+    );
+
+    it("should stay open on a press on a control the app slots into a row in a closed shadow tree", () => {
+      // An app's own row can hold a slot: a gap that shows an element the app keeps outside
+      // the tree, as a child of the host. The page sees that element, so a press on it is
+      // not told as a press on the host. Only its path inside the tree runs through the row.
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      const besideSlot = document.createElement("slot");
+      besideSlot.name = "beside";
+      const tree = host.attachShadow({ mode: "closed" });
+      tree.append(container, besideSlot);
+      const inRow = host.appendChild(document.createElement("button"));
+      inRow.slot = "price";
+      const beside = host.appendChild(document.createElement("button"));
+      beside.slot = "beside";
+      const { unmount } = render(
+        <App
+          extra={{
+            renderRow: (row) => (
+              <>
+                <input {...row.checkboxProps} />
+                <button {...row.handleProps}>grip</button>
+                <slot name={row.column.key} />
+              </>
+            ),
+          }}
+        />,
+        { container },
+      );
+      const inside = within(container);
+      const trigger = () => inside.getByRole("button", { name: /^Columns/ });
+      fireEvent.click(trigger());
+
+      // The test page does not send a press through the slot that shows the element. So the
+      // press answers by hand, as a browser would. A listener inside the tree is told the
+      // whole path. A listener outside it is told the path without the tree's insides.
+      const press = (slotted: HTMLElement) => {
+        const slot = tree.querySelector(`slot[name="${slotted.slot}"]`);
+        const inTree: EventTarget[] = [];
+        for (
+          let node: Node | null = slot;
+          node !== null;
+          node = node.parentNode
+        ) {
+          inTree.push(node);
+        }
+        const outside = [host, document.body, document];
+        const event = new Event("pointerdown", {
+          bubbles: true,
+          composed: true,
+        });
+        // The test page asks the event for its path to know where to send it, before any
+        // listener is called. That first answer must be the whole path.
+        event.composedPath = () => {
+          const isHeardOutside =
+            event.currentTarget instanceof Node &&
+            !tree.contains(event.currentTarget);
+          return isHeardOutside
+            ? [slotted, ...outside]
+            : [slotted, ...inTree, ...outside];
+        };
+        fireEvent(slotted, event);
+      };
+      press(inRow);
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      // Shown inside the same tree, but outside the picker.
+      press(beside);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      host.remove();
+    });
+
+    it.each(["open", "closed"] as const)(
+      "should stay open when the focus moves to a control the app slots into a row in a %s shadow tree",
+      (mode) => {
+        // A click on a button gives it the focus. The slotted button is a child of the host,
+        // so on the page it is outside the picker, though it is drawn in a row.
+        const host = document.createElement("div");
+        document.body.append(host);
+        const container = document.createElement("div");
+        const besideSlot = document.createElement("slot");
+        besideSlot.name = "beside";
+        host.attachShadow({ mode }).append(container, besideSlot);
+        const inRow = host.appendChild(document.createElement("button"));
+        inRow.slot = "price";
+        const beside = host.appendChild(document.createElement("button"));
+        beside.slot = "beside";
+        const { unmount } = render(
+          <App
+            extra={{
+              renderRow: (row) => (
+                <>
+                  <input {...row.checkboxProps} />
+                  <button {...row.handleProps}>grip</button>
+                  <slot name={row.column.key} />
+                </>
+              ),
+            }}
+          />,
+          { container },
+        );
+        const inside = within(container);
+        fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+        fireEvent.blur(inside.getByRole("dialog"), { relatedTarget: inRow });
+        expect(inside.queryByRole("dialog")).not.toBeNull();
+        // Shown inside the same tree, but outside the picker.
+        fireEvent.blur(inside.getByRole("dialog"), { relatedTarget: beside });
+        expect(inside.queryByRole("dialog")).toBeNull();
+        unmount();
+        host.remove();
+      },
+    );
+
+    it.each(["open", "closed"] as const)(
+      "should close on a press on the bare host of the %s shadow tree it is drawn in",
+      (mode) => {
+        const host = document.createElement("div");
+        document.body.append(host);
+        const container = document.createElement("div");
+        host.attachShadow({ mode }).append(container);
+        const { unmount } = render(<App extra={{}} />, { container });
+        const inside = within(container);
+        fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+        // A press on the host itself, such as on its padding. It is outside the picker, and
+        // no listener inside the tree hears it.
+        fireEvent.pointerDown(host);
+        expect(inside.queryByRole("dialog")).toBeNull();
+        unmount();
+        host.remove();
+      },
+    );
+
+    it("should close on a press on either bare host of a closed tree inside an open one", () => {
+      const outerHost = document.createElement("div");
+      document.body.append(outerHost);
+      const innerHost = document.createElement("div");
+      outerHost.attachShadow({ mode: "open" }).append(innerHost);
+      const container = document.createElement("div");
+      innerHost.attachShadow({ mode: "closed" }).append(container);
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      const trigger = () => inside.getByRole("button", { name: /^Columns/ });
+      fireEvent.click(trigger());
+      fireEvent.pointerDown(innerHost);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      fireEvent.click(trigger());
+      fireEvent.pointerDown(outerHost);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      outerHost.remove();
+    });
+
+    it("should stop listening on the host of a closed shadow tree once it closes", () => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      host.attachShadow({ mode: "closed" }).append(container);
+      const added = vi.spyOn(host, "addEventListener");
+      const removed = vi.spyOn(host, "removeEventListener");
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      expect(added).toHaveBeenCalledTimes(2);
+      fireEvent.keyDown(inside.getByRole("dialog"), { key: "Escape" });
+      expect(removed.mock.calls).toEqual(added.mock.calls);
+      unmount();
+      host.remove();
+    });
+
+    it("should leave a press alone in a browser that calls a closed host's listeners out of order", () => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      host.attachShadow({ mode: "closed" }).append(container);
+      const added = vi.spyOn(host, "addEventListener");
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      // An older browser calls a host's listeners in the order they were added, whichever
+      // way the press is travelling. The host's listener for the way back up then runs
+      // before any listener inside the tree, and cannot know yet whether the press is
+      // inside the picker. The test calls it by hand, as such a browser would.
+      const [firstAdded] = added.mock.calls;
+      const afterHost = firstAdded?.[1] as EventListener;
+      const press = new Event("pointerdown", { bubbles: true });
+      Object.defineProperty(press, "target", { value: host });
+      Object.defineProperty(press, "currentTarget", { value: host });
+      afterHost(press);
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      unmount();
+      host.remove();
+    });
+
+    it("should close when Tab moves the focus out of it", () => {
+      renderPicker();
+      fireEvent.blur(screen.getByRole("button", { name: "Reset" }), {
+        relatedTarget: screen.getByRole("button", { name: "Elsewhere" }),
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    describe("when Tab moves the focus off the page", () => {
+      // The focus has then gone to a place this page cannot name, such as the page around a
+      // frame (a page within the page) or the browser's own bar. The blur names no element.
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      });
+      /** Says whether the page holds the keyboard focus, which the test page cannot lose. */
+      const pageHasFocus = (has: boolean) =>
+        vi.spyOn(document, "hasFocus").mockReturnValue(has);
+      /** Lets the browser finish moving the focus, and the picker look where it went. */
+      const settle = () => act(() => vi.runAllTimers());
+      const tabAway = () => {
+        fireEvent.keyDown(reset(), { key: "Tab" });
+        fireEvent.blur(reset(), { relatedTarget: null });
+      };
+
+      it("should close once the page has lost the focus", () => {
+        renderPicker();
+        pageHasFocus(false);
+        tabAway();
+        // Not yet: the browser may still be moving the focus.
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+        settle();
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("should stay open when the page still holds the focus", () => {
+        renderPicker();
+        pageHasFocus(true);
+        tabAway();
+        settle();
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+      });
+
+      it("should stay open when the window loses the focus with no Tab pressed", () => {
+        renderPicker();
+        pageHasFocus(false);
+        fireEvent.blur(reset(), { relatedTarget: null });
+        settle();
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+      });
+
+      it("should stay open when Tab kept the focus inside and the window loses it later", () => {
+        renderPicker();
+        pageHasFocus(false);
+        fireEvent.keyDown(showAll(), { key: "Tab" });
+        fireEvent.blur(showAll(), { relatedTarget: reset() });
+        fireEvent.focus(reset());
+        // A person switches to another window.
+        fireEvent.blur(reset(), { relatedTarget: null });
+        settle();
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+      });
+
+      it("should stay open when a move of a row drops the focus", () => {
+        renderPicker();
+        pageHasFocus(false);
+        fireEvent.keyDown(reset(), { key: "Tab" });
+        fireEvent.keyDown(handle("Price"), { key: "ArrowDown" });
+        fireEvent.blur(handle("Price"), { relatedTarget: null });
+        settle();
+        expect(screen.queryByRole("dialog")).not.toBeNull();
+      });
+
+      it("should not look for the focus once the picker has closed", () => {
+        renderPicker();
+        const asked = pageHasFocus(false);
+        tabAway();
+        fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+        expect(vi.getTimerCount()).toBe(0);
+        settle();
+        expect(asked).not.toHaveBeenCalled();
+      });
+    });
+
+    it("should stay open when the focus moves within it", () => {
+      renderPicker();
+      fireEvent.blur(checkbox("Price"), { relatedTarget: handle("Price") });
+      expect(screen.getByRole("dialog")).toBeTruthy();
+    });
+
+    it("should close on a second click on the button", () => {
+      renderPicker();
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("should move the focus into the list when it opens", () => {
+      renderPicker();
+      expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    });
+  });
+
+  describe("replacing parts", () => {
+    it("should keep its own wording for a piece the app passes as undefined", () => {
+      renderPicker(
+        {
+          labels: {
+            trigger: "Edit columns",
+            move: undefined,
+            moved: undefined,
+          },
+        },
+        false,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Edit columns/ }));
+      fireEvent.keyDown(handle("Name"), { key: "ArrowDown" });
+      expect(announced()).toBe("Name moved to position 2 of 4.");
+    });
+
+    it("should use the app's wording", () => {
+      renderPicker(
+        {
+          labels: {
+            trigger: "Spalten",
+            title: "Spalten wählen",
+            showAll: "Alle zeigen",
+            reset: "Zurücksetzen",
+            hiddenCount: (count) => `${count} versteckt`,
+            move: (label) => `${label} verschieben`,
+            moved: (label, position, total) =>
+              `${label}: ${position} von ${total}`,
+          },
+        },
+        false,
+      );
+      const trigger = screen.getByRole("button", { name: /^Spalten/ });
+      expect(trigger.textContent).toBe("Spalten (1 versteckt)");
+      fireEvent.click(trigger);
+      expect(
+        screen.getByRole("dialog", { name: "Spalten wählen" }),
+      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Alle zeigen" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Zurücksetzen" })).toBeTruthy();
+      const grip = screen.getByRole("button", { name: "Price verschieben" });
+      fireEvent.keyDown(grip, { key: "ArrowDown" });
+      expect(announced()).toBe("Price: 3 von 4");
+    });
+
+    it("should draw the app's own trigger", () => {
+      renderPicker(
+        {
+          renderTrigger: (props, { open, hiddenCount }) => (
+            <button {...props} data-open={open}>
+              Edit columns, {hiddenCount} hidden
+            </button>
+          ),
+        },
+        false,
+      );
+      const trigger = screen.getByRole("button", {
+        name: "Edit columns, 1 hidden",
+      });
+      expect(trigger.getAttribute("data-open")).toBe("false");
+      fireEvent.click(trigger);
+      expect(trigger.getAttribute("data-open")).toBe("true");
+      fireEvent.keyDown(checkbox("Price"), { key: "Escape" });
+      expect(document.activeElement).toBe(trigger);
+    });
+
+    it("should draw the app's own rows, which still toggle and move", () => {
+      renderPicker({
+        renderRow: (row) => (
+          <>
+            <input {...row.checkboxProps} />
+            <button {...row.handleProps}>grip</button>
+            <label htmlFor={row.checkboxProps.id}>
+              {row.index + 1}. {row.column.label}
+              {row.visible ? "" : " (off)"}
+            </label>
+          </>
+        ),
+      });
+      expect(
+        rows().map((row) => within(row).getByText(/\d\./).textContent),
+      ).toEqual(["1. Name", "2. Price", "3. Stock", "4. Notes (off)"]);
+      fireEvent.click(checkbox("2. Price"));
+      expect(table()).toBe("name stock");
+      fireEvent.keyDown(handle("Stock"), { key: "Home" });
+      expect(table()).toBe("stock name");
+    });
+
+    it("should let a finger drag the handle of the app's own row", () => {
+      renderPicker({
+        renderRow: (row) => (
+          <>
+            <input {...row.checkboxProps} />
+            <button {...row.handleProps}>grip</button>
+            <label htmlFor={row.checkboxProps.id}>{row.column.label}</label>
+          </>
+        ),
+      });
+      // The app's button has none of the picker's classes, so the style sheet cannot reach
+      // it. Without this style the browser scrolls the list and the drag never starts.
+      expect(handle("Price").style.touchAction).toBe("none");
+    });
+
+    it("should add the app's class to its own", () => {
+      const { container } = renderPicker({ className: "toolbar-item" });
+      expect(container.firstElementChild?.className).toBe(
+        "fb-columns toolbar-item",
+      );
+    });
+
+    it("should line the list up with the edge the app asks for", () => {
+      renderPicker({ align: "end" });
+      expect(screen.getByRole("dialog").getAttribute("data-align")).toBe("end");
+    });
+  });
+
+  describe("staying on the screen", () => {
+    const popover = () => screen.getByRole("dialog");
+    const shift = () => popover().style.getPropertyValue("--fb-popover-shift");
+    const room = () => popover().style.getPropertyValue("--fb-popover-room");
+
+    /**
+     * Gives the test page a screen size, and every popover a place on it, which the test page
+     * does not do itself. `left` is where the style sheet alone would put the popover. Like a
+     * browser, the place reported includes the shift the popover carries.
+     */
+    function layOutScreen(
+      size: { width: number; height: number },
+      place: { left: number; top: number; width: number },
+    ) {
+      const page = document.documentElement;
+      vi.spyOn(page, "clientWidth", "get").mockImplementation(() => size.width);
+      vi.spyOn(page, "clientHeight", "get").mockImplementation(
+        () => size.height,
+      );
+      vi.spyOn(
+        HTMLElement.prototype,
+        "getBoundingClientRect",
+      ).mockImplementation(function (this: HTMLElement) {
+        const moved =
+          Number.parseFloat(
+            this.style.getPropertyValue("--fb-popover-shift"),
+          ) || 0;
+        const left = place.left + moved;
+        return {
+          left,
+          right: left + place.width,
+          top: place.top,
+          width: place.width,
+        } as DOMRect;
+      });
+    }
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("should leave the popover alone on a page that has no layout", () => {
+      renderPicker();
+      // The test page reports a size of 0 for everything.
+      expect(shift()).toBe("");
+      expect(room()).toBe("");
+    });
+
+    it("should leave a popover that fits where the style sheet put it", () => {
+      layOutScreen(
+        { width: 320, height: 568 },
+        { left: 16, top: 60, width: 288 },
+      );
+      renderPicker();
+      expect(shift()).toBe("");
+      // The height left below the popover's top edge, less the margin.
+      expect(room()).toBe("500px");
+    });
+
+    it("should move a popover that runs past the right edge back inside", () => {
+      const size = { width: 320, height: 568 };
+      layOutScreen(size, { left: 122, top: 60, width: 288 });
+      renderPicker();
+      expect(shift()).toBe("-98px");
+      // Drawing the picker again measures again, and comes to the same answer.
+      fireEvent.click(checkbox("Price"));
+      expect(shift()).toBe("-98px");
+    });
+
+    it("should move a popover that starts left of the screen back inside", () => {
+      layOutScreen(
+        { width: 320, height: 568 },
+        { left: -90, top: 60, width: 288 },
+      );
+      renderPicker({ align: "end" });
+      expect(shift()).toBe("98px");
+    });
+
+    it("should measure again when the window changes size, and only while open", () => {
+      const size = { width: 800, height: 600 };
+      layOutScreen(size, { left: 400, top: 60, width: 288 });
+      renderPicker();
+      expect(shift()).toBe("");
+
+      size.width = 500;
+      size.height = 300;
+      fireEvent(window, new Event("resize"));
+      expect(shift()).toBe("-196px");
+      expect(room()).toBe("232px");
+
+      // Wide again: the popover goes back to where the style sheet puts it.
+      size.width = 800;
+      fireEvent(window, new Event("resize"));
+      expect(shift()).toBe("");
+
+      const stopped = vi.spyOn(window, "removeEventListener");
+      fireEvent.keyDown(popover(), { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(stopped).toHaveBeenCalledWith("resize", expect.any(Function));
+    });
+
+    describe("when something scrolls", () => {
+      const { waiting, drawFrame } = holdFrames();
+      /** How many times the element has been measured since `layOutScreen`. */
+      const timesMeasured = (element: HTMLElement): number =>
+        vi
+          .mocked(HTMLElement.prototype.getBoundingClientRect)
+          .mock.contexts.filter((measured) => measured === element).length;
+      it("should measure again on the next screen frame after the page scrolls", () => {
+        const place = { left: 420, top: 60, width: 240 };
+        layOutScreen({ width: 800, height: 600 }, place);
+        renderPicker();
+        expect(shift()).toBe("");
+        expect(room()).toBe("532px");
+
+        // The page scrolls, which moves the popover right and down on the screen.
+        place.left = 620;
+        place.top = 100;
+        fireEvent.scroll(document);
+        expect(shift()).toBe("");
+        drawFrame();
+        expect(shift()).toBe("-68px");
+        expect(room()).toBe("492px");
+      });
+
+      it("should measure once for many scrolls within one screen frame", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 420, top: 60, width: 240 },
+        );
+        renderPicker();
+        const before = timesMeasured(popover());
+        fireEvent.scroll(document);
+        fireEvent.scroll(document);
+        fireEvent.scroll(document);
+        expect(waiting()).toBe(1);
+        expect(timesMeasured(popover())).toBe(before);
+        drawFrame();
+        expect(timesMeasured(popover())).toBe(before + 1);
+        // The next scroll asks for a frame of its own.
+        fireEvent.scroll(document);
+        expect(waiting()).toBe(1);
+      });
+
+      it("should measure again when a box around the picker scrolls", () => {
+        const place = { left: 420, top: 60, width: 240 };
+        layOutScreen({ width: 800, height: 600 }, place);
+        const { container } = renderPicker();
+        place.left = 620;
+        // Unlike the page's own, the scroll of a box inside the page does not spread upwards.
+        fireEvent(container, new Event("scroll", { bubbles: false }));
+        drawFrame();
+        expect(shift()).toBe("-68px");
+      });
+
+      describe.each([
+        { mode: "open", slotted: false, where: "inside an open shadow tree" },
+        {
+          mode: "closed",
+          slotted: false,
+          where: "inside a closed shadow tree",
+        },
+        {
+          mode: "open",
+          slotted: true,
+          where: "shown through an open tree's slot",
+        },
+      ] as const)("with the picker $where", ({ mode, slotted }) => {
+        // The page never hears the scroll of a box inside a shadow tree, not even on the
+        // scroll's way down. Only a listener inside that tree does.
+        it("should measure again when a box of that tree scrolls", () => {
+          const place = { left: 420, top: 60, width: 240 };
+          layOutScreen({ width: 800, height: 600 }, place);
+          const { box, inside } = renderInShadowBox(mode, slotted);
+          const dialog = inside.getByRole("dialog");
+          place.left = 620;
+          scrollBox(box);
+          scrollBox(box);
+          // Still at most one measurement per screen frame.
+          expect(waiting()).toBe(1);
+          const before = timesMeasured(dialog);
+          drawFrame();
+          expect(timesMeasured(dialog)).toBe(before + 1);
+          expect(dialog.style.getPropertyValue("--fb-popover-shift")).toBe(
+            "-68px",
+          );
+        });
+
+        it("should not measure when the list inside the popover scrolls", () => {
+          layOutScreen(
+            { width: 800, height: 600 },
+            { left: 420, top: 60, width: 240 },
+          );
+          const { inside } = renderInShadowBox(mode, slotted);
+          scrollBox(inside.getByRole("list"));
+          expect(waiting()).toBe(0);
+        });
+
+        it("should stop listening in that tree once the picker closes", () => {
+          // The tree is watched before the picker opens.
+          const { tree, container } = shadowBox(mode, slotted);
+          const added = vi.spyOn(tree, "addEventListener");
+          const removed = vi.spyOn(tree, "removeEventListener");
+          const scrollCalls = (calls: unknown[][]) =>
+            calls.filter(([type]) => type === "scroll");
+          render(<App extra={{}} />, { container });
+          const inside = within(container);
+          fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+          expect(scrollCalls(added.mock.calls)).toHaveLength(1);
+          fireEvent.keyDown(inside.getByRole("dialog"), { key: "Escape" });
+          expect(scrollCalls(removed.mock.calls)).toEqual(
+            scrollCalls(added.mock.calls),
+          );
+        });
+      });
+
+      it("should not measure when the list inside the popover scrolls", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 420, top: 60, width: 240 },
+        );
+        renderPicker();
+        fireEvent(screen.getByRole("list"), new Event("scroll"));
+        expect(waiting()).toBe(0);
+      });
+
+      it("should stop measuring once the picker closes, even with a frame waiting", () => {
+        const place = { left: 420, top: 60, width: 240 };
+        layOutScreen({ width: 800, height: 600 }, place);
+        renderPicker();
+        const dialog = popover();
+        fireEvent.scroll(document);
+        fireEvent.keyDown(dialog, { key: "Escape" });
+        expect(waiting()).toBe(0);
+        const before = timesMeasured(dialog);
+        fireEvent.scroll(document);
+        expect(waiting()).toBe(0);
+        expect(timesMeasured(dialog)).toBe(before);
+      });
+    });
+
+    describe("on a page that is zoomed in with two fingers", () => {
+      const { waiting, drawFrame } = holdFrames();
+      /**
+       * Gives the test page the part of it that a person sees after zooming in, which the
+       * test page does not have. A browser calls it the visual viewport.
+       */
+      function zoomTo(seen: { offsetLeft: number; width: number }) {
+        const viewport = Object.assign(new EventTarget(), seen);
+        Object.defineProperty(window, "visualViewport", {
+          configurable: true,
+          value: viewport,
+        });
+        onTestFinished(() => {
+          Reflect.deleteProperty(window, "visualViewport");
+        });
+        return viewport;
+      }
+
+      it("should move a popover that runs past the edge of the part in view", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 500, top: 60, width: 224 },
+        );
+        // A person sees only from 400 to 660 pixels across. The popover fits the page, and
+        // its last 64 pixels are out of view.
+        zoomTo({ offsetLeft: 400, width: 260 });
+        renderPicker();
+        expect(shift()).toBe("-72px");
+      });
+
+      it("should move a popover that starts left of the part in view", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 300, top: 60, width: 224 },
+        );
+        zoomTo({ offsetLeft: 400, width: 260 });
+        renderPicker();
+        expect(shift()).toBe("108px");
+      });
+
+      it("should measure again on the next screen frame when the part in view moves or changes size", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 500, top: 60, width: 224 },
+        );
+        const viewport = zoomTo({ offsetLeft: 400, width: 400 });
+        renderPicker();
+        expect(shift()).toBe("");
+        // The person slides the page under their fingers.
+        viewport.offsetLeft = 200;
+        viewport.dispatchEvent(new Event("scroll"));
+        viewport.dispatchEvent(new Event("scroll"));
+        expect(waiting()).toBe(1);
+        drawFrame();
+        expect(shift()).toBe("-132px");
+        // And zooms out again.
+        viewport.offsetLeft = 0;
+        viewport.width = 800;
+        viewport.dispatchEvent(new Event("resize"));
+        drawFrame();
+        expect(shift()).toBe("");
+      });
+
+      it("should fit the page instead when the part in view is narrower than the popover", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 500, top: 60, width: 224 },
+        );
+        // Following a part this narrow would pin the popover to its left edge, and no
+        // sliding of the page could bring the rest of the popover into view.
+        zoomTo({ offsetLeft: 520, width: 200 });
+        renderPicker();
+        expect(shift()).toBe("");
+      });
+
+      it("should stop listening once the picker closes", () => {
+        layOutScreen(
+          { width: 800, height: 600 },
+          { left: 500, top: 60, width: 224 },
+        );
+        const viewport = zoomTo({ offsetLeft: 400, width: 260 });
+        const added = vi.spyOn(viewport, "addEventListener");
+        const removed = vi.spyOn(viewport, "removeEventListener");
+        renderPicker();
+        expect(added.mock.calls.map(([type]) => type)).toEqual([
+          "resize",
+          "scroll",
+        ]);
+        fireEvent.keyDown(popover(), { key: "Escape" });
+        expect(removed.mock.calls).toEqual(added.mock.calls);
+      });
+    });
+
+    it("should not redraw a row to move the popover", () => {
+      const size = { width: 800, height: 600 };
+      layOutScreen(size, { left: 400, top: 60, width: 288 });
+      render(<ManyApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      drawn.mockClear();
+      size.width = 500;
+      fireEvent(window, new Event("resize"));
+      expect(shift()).toBe("-196px");
+      expect(drawn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("with many columns", () => {
+    it("should redraw only the row that was ticked", () => {
+      drawn.mockClear();
+      render(<ManyApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      expect(drawn).toHaveBeenCalledTimes(200);
+      drawn.mockClear();
+      fireEvent.click(checkbox("Column 7"));
+      expect(drawn.mock.calls).toEqual([["c7"]]);
+    });
+
+    it("should redraw only the changed rows when the wording is written in place", () => {
+      render(<ManyApp inlineLabels />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      drawn.mockClear();
+      fireEvent.click(checkbox("Column 7"));
+      expect(drawn.mock.calls).toEqual([["c7"]]);
+      drawn.mockClear();
+      fireEvent.pointerDown(handle("Column 0"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      expect(drawn.mock.calls).toEqual([["c0"], ["c3"]]);
+    });
+
+    it("should redraw only the rows whose drop line changes during a drag", () => {
+      render(<ManyApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      drawn.mockClear();
+      fireEvent.pointerDown(handle("Column 0"), pointer(115));
+      expect(drawn.mock.calls).toEqual([["c0"]]);
+      drawn.mockClear();
+      // The line moves from above "Column 3" to above "Column 4".
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerMove(document, pointer(185));
+      fireEvent.pointerMove(document, pointer(210));
+      expect(drawn.mock.calls).toEqual([["c3"], ["c3"], ["c4"]]);
+    });
+  });
+});
+
+describe("slotAt", () => {
+  // Three rows of 30 pixels, so their middles are 15, 45 and 75 pixels down.
+  const middles = [15, 45, 75];
+
+  it("should land before a row over its top half, and after it over its bottom half", () => {
+    expect(slotAt(middles, 0)).toBe(0);
+    expect(slotAt(middles, 14)).toBe(0);
+    expect(slotAt(middles, 16)).toBe(1);
+    expect(slotAt(middles, 44)).toBe(1);
+    expect(slotAt(middles, 46)).toBe(2);
+  });
+
+  it("should land first above the list and last below it", () => {
+    expect(slotAt(middles, -50)).toBe(0);
+    expect(slotAt(middles, 500)).toBe(3);
+    expect(slotAt([], 10)).toBe(0);
+  });
+});
+
+describe("placeFromSlot", () => {
+  it("should keep a row in place for the slots on either side of it", () => {
+    expect(placeFromSlot(1, 1)).toBe(1);
+    expect(placeFromSlot(1, 2)).toBe(1);
+  });
+
+  it("should count one less for a slot below the row", () => {
+    expect(placeFromSlot(0, 3)).toBe(2);
+    expect(placeFromSlot(2, 0)).toBe(0);
+  });
+});
+
+describe("shiftToFit", () => {
+  // A screen 320 pixels wide and a box 288 wide. With the margin of 8 on both sides, the
+  // box's left edge may be anywhere from 8 to 24.
+  it("should leave a box that fits where it is", () => {
+    expect(shiftToFit(8, 288, 320)).toBe(0);
+    expect(shiftToFit(24, 288, 320)).toBe(0);
+  });
+
+  it("should move a box left only as far as its right edge is past the screen", () => {
+    expect(shiftToFit(122, 288, 320)).toBe(-98);
+    expect(shiftToFit(25, 288, 320)).toBe(-1);
+  });
+
+  it("should move a box right only as far as its left edge is past the screen", () => {
+    expect(shiftToFit(-90, 288, 320)).toBe(98);
+    expect(shiftToFit(7, 288, 320)).toBe(1);
+  });
+
+  it("should keep the left edge of a box wider than the screen on the screen", () => {
+    expect(shiftToFit(100, 400, 320)).toBe(-92);
+  });
+
+  it("should move in whole pixels", () => {
+    expect(shiftToFit(122.4, 288, 320)).toBe(-98);
+  });
+
+  it("should fit a box into a screen that starts further right", () => {
+    // The part in view runs from 400 to 660.
+    expect(shiftToFit(500, 224, 260, 400)).toBe(-72);
+    expect(shiftToFit(300, 224, 260, 400)).toBe(108);
+    expect(shiftToFit(420, 224, 260, 400)).toBe(0);
+  });
+
+  it("should move nothing on a page that reports no width", () => {
+    expect(shiftToFit(0, 0, 0)).toBe(0);
+    expect(shiftToFit(500, 288, 0)).toBe(0);
+  });
+});

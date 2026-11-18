@@ -1,5 +1,5 @@
 /*
- * Default styling for the filter builder in `@arvilmena/filter-react/ui`.
+ * Default styling for the filter builder and the column picker in `@arvilmena/filter-react/ui`.
  *
  * Load it once in the app:  import "@arvilmena/filter-react/styles.css";
  *
@@ -8,6 +8,10 @@
  * `.fb` in the app's own style sheet, for example:
  *
  *   .fb { --fb-radius: 0; --fb-bar-bg: #334; }
+ *
+ * The column picker stands outside the builder, so it reads the same variables from its own
+ * class, `.fb-columns`. Wherever this file says to set a variable on `.fb`, set it on
+ * `.fb-columns` too.
  *
  * `--fb-page` should be the colour behind the builder. It defaults to `--background`, which
  * many apps already define, and otherwise to the browser's page colour.
@@ -24,7 +28,8 @@
  *   }
  */
 
-.fb {
+.fb,
+.fb-columns {
   --fb-page: var(--background, Canvas);
   --fb-border: color-mix(in srgb, currentColor 22%, transparent);
   --fb-control-bg: color-mix(in srgb, currentColor 7%, var(--fb-page));
@@ -44,18 +49,24 @@
   /* The widest a value box grows, so a short number does not sit in a very long box. */
   --fb-value-width: 12rem;
 
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.fb {
   /* Lets the rows respond to the width of the builder, not of the whole screen. */
   container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
 }
 
 .fb *,
 .fb *::before,
-.fb *::after {
+.fb *::after,
+.fb-columns *,
+.fb-columns *::before,
+.fb-columns *::after {
   box-sizing: border-box;
 }
 
@@ -323,12 +334,26 @@
   cursor: default;
 }
 
+/* A button with nothing to do right now. It is marked with `aria-disabled` and not turned off,
+   so that it keeps the keyboard focus. Its text is dimmed, and it does not answer the pointer. */
+.fb-button[aria-disabled="true"] {
+  color: var(--fb-muted);
+  cursor: default;
+}
+
+.fb-button[aria-disabled="true"]:hover {
+  background-color: var(--fb-control-bg);
+}
+
 .fb-control:focus-visible,
 .fb-value:focus-within,
 .fb-button:focus-visible,
 .fb-icon-button:focus-visible,
 .fb-bar-logic:focus-visible,
-.fb-bar-remove:focus-visible {
+.fb-bar-remove:focus-visible,
+.fb-columns-handle:focus-visible,
+.fb-columns-checkbox:focus-visible,
+.fb-columns-popover:focus-visible {
   outline: 2px solid var(--fb-focus);
   outline-offset: 1px;
 }
@@ -401,6 +426,190 @@
   font-weight: 600;
 }
 
+/* ---- Column picker ---- */
+
+.fb-columns {
+  position: relative;
+  display: inline-block;
+}
+
+/* The list opens over the table below it, so it needs a solid background of its own. */
+.fb-columns-popover {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: max-content;
+  /* Never wider than a narrow screen, as the widest size below. */
+  min-width: min(14rem, 90vw);
+  max-width: min(22rem, 90vw);
+  padding: 0.25rem;
+  border: 1px solid var(--fb-border);
+  border-radius: var(--fb-radius);
+  background: var(--fb-popover-bg);
+  box-shadow: 0 8px 24px var(--fb-shadow);
+  /* The picker sets these two on the popover once it has measured it. The first moves a
+     popover that would run off the screen back inside it. The second is the height the
+     screen has left below the popover's top edge. */
+  --fb-popover-shift: 0px;
+  --fb-popover-room: 100vh;
+  translate: var(--fb-popover-shift) 0;
+  /* On a short screen the list scrolls sooner, so the buttons below it stay in reach. Under
+     a button near the bottom of the screen the popover keeps a usable height, and the page
+     scrolls to show the rest of it. */
+  max-height: max(var(--fb-popover-room), 10rem);
+}
+
+/* For a picker near the right edge of the page. */
+.fb-columns-popover[data-align="end"] {
+  right: 0;
+  left: auto;
+}
+
+/* The box takes the focus when it opens, so that Tab starts from it. It is not a control, so
+   a click that opens it shows no focus ring. Opened from the keyboard, it keeps the ring of
+   the rule above, so a person can see where the focus went. */
+.fb-columns-popover:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.fb-columns-list {
+  max-height: 20rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  /* Scrolling past the end of the list scrolls the page on, as the browser does by default.
+     Below a button near the bottom of the screen, the buttons under the list are out of
+     view, and a wheel or a finger over the list must be able to bring them in. */
+  list-style: none;
+}
+
+/* While a row is dragged, the pointer must not select the names it passes over. */
+.fb-columns-list[data-dragging] {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.fb-columns-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 2rem;
+  padding: 0 0.375rem;
+  border-radius: calc(var(--fb-radius) - 2px);
+}
+
+.fb-columns-list:not([data-dragging]) > .fb-columns-row:hover {
+  background: var(--fb-hover-bg);
+}
+
+.fb-columns-row[data-dragging] {
+  opacity: 0.4;
+}
+
+/* A line where the dragged row would land: above this row, or below the last row. */
+.fb-columns-row[data-drop]::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--fb-focus);
+  pointer-events: none;
+}
+
+.fb-columns-row[data-drop="before"]::before {
+  top: -1px;
+}
+
+.fb-columns-row[data-drop="after"]::before {
+  bottom: -1px;
+}
+
+.fb-columns-checkbox {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+/* The grip that moves a column. It is a button, so the keyboard can reach it. */
+.fb-columns-handle {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--fb-radius) - 2px);
+  background: transparent;
+  color: var(--fb-muted);
+  font: inherit;
+  cursor: grab;
+  user-select: none;
+}
+
+.fb-columns-handle:active {
+  cursor: grabbing;
+}
+
+.fb-columns-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.375rem 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* A column that must stay shown: its checkbox is turned off, so its name is not clickable. */
+.fb-columns-row[data-fixed] .fb-columns-label {
+  cursor: default;
+}
+
+.fb-columns-footer {
+  display: flex;
+  /* A button whose label is too long to stand beside the other takes a line of its own. */
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--fb-gap);
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--fb-border);
+}
+
+/* An app may give these buttons long labels, such as translated ones. A button is never
+   wider than the popover: its label breaks into lines, inside a long word if it must, and
+   the button grows taller to hold them. A short label keeps the usual height. */
+.fb-columns-footer > .fb-button {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--fb-control-height);
+  padding-block: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+/* On the page for screen readers only: it takes no room and shows nothing. */
+.fb-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
 /* ---- Dragging ---- */
 
 /* The grip that drags a row or a group to a new place. */
@@ -419,8 +628,10 @@
   cursor: grabbing;
 }
 
-/* The row or group being dragged fades, so it is clear which one is moving. */
-.fb [data-dragging] {
+/* The row or group being dragged fades, so it is clear which one is moving.
+   These rules name the builder's own items. A bare `[data-dragging]` or `[data-drop]` would
+   also reach a column picker placed inside the builder, which uses the same marks. */
+.fb [data-fb-item][data-dragging] {
   opacity: 0.4;
 }
 
@@ -430,7 +641,8 @@
 }
 
 /* A line in the gap above the place where the dragged row or group would land. */
-.fb [data-drop]::before {
+.fb [data-fb-item][data-drop]::before,
+.fb-group-footer[data-drop]::before {
   content: "";
   position: absolute;
   top: calc(var(--fb-gap) / -2 - 1px);

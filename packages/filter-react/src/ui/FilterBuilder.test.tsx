@@ -10,6 +10,7 @@ import {
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { FilterBuilder, type FilterBuilderProps } from "./FilterBuilder";
+import { pressInOpenTree, stopPressesAt } from "./shadowPress.testing";
 
 const FIELDS: FieldDefinition[] = [
   { key: "amount", label: "Amount", type: "num", prefix: "$", suffix: "B" },
@@ -862,6 +863,67 @@ describe("FieldPicker", () => {
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(screen.getByRole("button", { name: "Field: Amount" })).toBeTruthy();
+  });
+
+  it.each(["open", "closed"] as const)(
+    "should close on a press on the bare host of the %s shadow tree it is drawn in",
+    (mode) => {
+      // A shadow tree is a part of the page that hides its insides from the rest.
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      host.attachShadow({ mode }).append(container);
+      const { unmount } = render(
+        <App
+          extra={{}}
+          initial={{ criteria: [amount("1")], logic: "AND" }}
+          onFilter={() => {}}
+        />,
+        { container },
+      );
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: "Field: Amount" }));
+      const search = inside.getByRole("combobox", { name: "Search fields" });
+      fireEvent.change(search, { target: { value: "sta" } });
+      // A press on the host itself, such as on its padding. It is outside the picker.
+      fireEvent.pointerDown(host);
+      expect(inside.queryByRole("listbox")).toBeNull();
+      // The search is cleared too, so the list is whole when it opens again.
+      fireEvent.click(inside.getByRole("button", { name: "Field: Amount" }));
+      expect(
+        within(inside.getByRole("listbox")).getAllByRole("option"),
+      ).toHaveLength(3);
+      unmount();
+      host.remove();
+    },
+  );
+
+  it("should tell a press in an open shadow tree apart when the host stops the press", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const container = document.createElement("div");
+    const beside = document.createElement("p");
+    host.attachShadow({ mode: "open" }).append(container, beside);
+    // No listener inside the tree hears a press. Only the page's own listener does, and it
+    // is told that the press was on the host.
+    stopPressesAt(host);
+    const { unmount } = render(
+      <App
+        extra={{}}
+        initial={{ criteria: [amount("1")], logic: "AND" }}
+        onFilter={() => {}}
+      />,
+      { container },
+    );
+    const inside = within(container);
+    fireEvent.click(inside.getByRole("button", { name: "Field: Amount" }));
+    pressInOpenTree(host, inside.getByRole("listbox"));
+    expect(inside.queryByRole("listbox")).not.toBeNull();
+    // Inside the same tree, but outside the picker, on something that takes no focus.
+    pressInOpenTree(host, beside);
+    expect(inside.queryByRole("listbox")).toBeNull();
+    unmount();
+    host.remove();
   });
 
   it("should close when the keyboard focus leaves it, and stay open while focus is inside", () => {

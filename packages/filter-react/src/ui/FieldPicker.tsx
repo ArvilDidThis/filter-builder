@@ -1,5 +1,6 @@
 import type { FieldDefinition } from "@arvilmena/filter-core";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useOutsidePointerDown } from "./useOutsidePointerDown";
 
 /** What the field picker needs. */
 export interface FieldPickerProps {
@@ -63,17 +64,7 @@ export function FieldPicker({
   };
 
   // A click or tap anywhere outside the picker closes it.
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setQuery("");
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
+  useOutsidePointerDown(rootRef, open, () => close(false));
 
   // Keep the highlighted field in view while the arrow keys move through a long list.
   useEffect(() => {
