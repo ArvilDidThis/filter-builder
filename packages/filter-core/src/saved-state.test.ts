@@ -10,6 +10,7 @@ import {
   readSavedState,
   resolveStateKey,
   type StatePart,
+  type StateParts,
 } from "./saved-state";
 import type { FilterDefinition } from "./types";
 
@@ -428,6 +429,37 @@ describe("a rule that spans parts (`check`)", () => {
       },
     );
     expect(state.filterName).toBe("");
+  });
+});
+
+describe("parts and values typed with an interface", () => {
+  interface TableValues {
+    filter: FilterDefinition;
+    sort: Sort | null;
+  }
+  interface TableParts {
+    filter: StatePart<FilterDefinition>;
+    sort: StatePart<Sort | null>;
+  }
+  const PRICE_SORT: Sort = { key: "price", direction: "desc" };
+
+  it("should read parts declared as an interface", () => {
+    const parts: TableParts = { filter: filterStatePart(), sort: sortPart };
+    const state = readSavedState(createSavedState({ sort: PRICE_SORT }), parts);
+    expectTypeOf(state.sort).toEqualTypeOf<Sort | null>();
+    expect(state).toEqual({ filter: EMPTY_FILTER, sort: PRICE_SORT });
+  });
+
+  it("should read and save values declared as an interface", () => {
+    const parts: StateParts<TableValues> = {
+      filter: filterStatePart(),
+      sort: sortPart,
+    };
+    const state: TableValues = readSavedState(undefined, parts);
+    expect(createSavedState(state)).toEqual({
+      version: 1,
+      parts: { filter: EMPTY_FILTER, sort: null },
+    });
   });
 });
 

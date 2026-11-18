@@ -187,7 +187,8 @@ export function readSavedState<Values>(
  * store.save("orders", createSavedState({ filter, columns }));
  */
 export function createSavedState(
-  values: Readonly<Record<string, unknown>>,
+  // `object`, not a record: a value typed with an `interface` is not a record to TypeScript.
+  values: object,
   version: number = DEFAULT_STATE_VERSION,
 ): SavedState {
   return { version, parts: { ...values } };
