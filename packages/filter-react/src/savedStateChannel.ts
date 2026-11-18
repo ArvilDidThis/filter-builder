@@ -163,6 +163,19 @@ function createChannel(store: StateStore, key: string): ListedChannel {
     if (after.order >= stored.order) stored = after;
   };
 
+  /**
+   * Ends a write the store turned down. The store may hold the write all the same: a request
+   * can reach a server and still fail on its way back. So the saved text is no longer known,
+   * and the next save is sent even when it equals the last one the store took.
+   *
+   * The parts stay as they were. The parts of other owners were the same in the write that
+   * failed, so they are right whichever state the store holds.
+   */
+  const fail = (write: Write, error: unknown): void => {
+    stored = { ...stored, text: undefined };
+    write.done({ status: "failed", error });
+  };
+
   /** Hands one write to the store, and deals with its answer. */
   const send = (write: Write): void => {
     // The write takes its turn before any code of the app or the store runs. Such code may
@@ -193,7 +206,7 @@ function createChannel(store: StateStore, key: string): ListedChannel {
       }
     } catch (error) {
       unanswered -= 1;
-      write.done({ status: "failed", error });
+      fail(write, error);
       return;
     }
 
@@ -204,16 +217,19 @@ function createChannel(store: StateStore, key: string): ListedChannel {
       return;
     }
     onItsWay = after.parts;
-    const answered = (outcome: WriteOutcome): void => {
+    const answered = (end: () => void): void => {
       unanswered -= 1;
       if (onItsWay === after.parts) onItsWay = undefined;
-      if (outcome.status === "accepted") accept(after);
-      write.done(outcome);
+      end();
       sendNext();
     };
     answer.then(
-      () => answered(ACCEPTED),
-      (error: unknown) => answered({ status: "failed", error }),
+      () =>
+        answered(() => {
+          accept(after);
+          write.done(ACCEPTED);
+        }),
+      (error: unknown) => answered(() => fail(write, error)),
     );
   };
 

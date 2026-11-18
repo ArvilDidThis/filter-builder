@@ -183,6 +183,39 @@ describe("the channel of a store and key", () => {
     expect(store.save).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    [
+      "throws",
+      () => {
+        throw new Error("offline");
+      },
+    ],
+    ["rejects", () => Promise.reject(new Error("offline"))],
+  ])(
+    "should send a save of the last state the store took, after a save that %s",
+    async (_label, fail) => {
+      const store = quickStore();
+      const channel = joinChannel(store, "orders");
+      save(channel, { sort: "price" });
+      vi.mocked(store.save).mockImplementationOnce(fail);
+      const failed = save(channel, { sort: "name" });
+      await Promise.resolve();
+      expect(failed).toHaveBeenCalledExactlyOnceWith({
+        status: "failed",
+        error: expect.any(Error),
+      });
+
+      // The failed save may have reached the store all the same, so the store may hold "name".
+      const again = save(channel, { sort: "price" });
+      expect(store.save).toHaveBeenCalledTimes(3);
+      expect(store.save).toHaveBeenLastCalledWith(
+        "orders",
+        savedWith({ sort: "price" }),
+      );
+      expect(again).toHaveBeenCalledExactlyOnceWith({ status: "accepted" });
+    },
+  );
+
   it("should send a save after a read that found nothing", () => {
     const store = quickStore();
     const channel = joinChannel(store, "orders");
