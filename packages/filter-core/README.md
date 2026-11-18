@@ -78,7 +78,8 @@ visibleColumns(columns, settings).map((column) => column.key);
 // ["notes", "name", "price"]
 
 // Settings read from storage may be old or broken. This fits them to the columns the app has
-// now: unknown keys go, new columns keep their default place, and nothing throws.
+// now, and nothing throws. Unknown keys go. A new column goes right after the nearest saved
+// column before it in the app's list, or first if no saved column comes before it.
 const stored: unknown = { order: ["price", "gone"], hidden: ["price"] };
 settings = reconcileColumnSettings(columns, stored);
 // { order: ["name", "price", "notes"], hidden: ["price", "notes"] }
