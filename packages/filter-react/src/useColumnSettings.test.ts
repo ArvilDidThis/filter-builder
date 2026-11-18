@@ -402,6 +402,115 @@ describe("useColumnSettings", () => {
     expect(result.current.visibleColumns).toBe(before);
   });
 
+  describe("whether Show all and Reset have anything to do", () => {
+    it("should start with the defaults, and not all shown while a column starts hidden", () => {
+      const { result } = renderUncontrolled();
+      expect(result.current.isDefault).toBe(true);
+      expect(result.current.allVisible).toBe(false);
+    });
+
+    it("should say all are shown when no column starts hidden", () => {
+      const { result } = renderHook(() =>
+        useColumnSettings({ columns: COLUMNS.slice(0, 3) }),
+      );
+      expect(result.current.allVisible).toBe(true);
+      expect(result.current.isDefault).toBe(true);
+    });
+
+    it("should follow each change a person makes", () => {
+      const { result } = renderUncontrolled();
+      act(() => result.current.actions.showAll());
+      expect(result.current.allVisible).toBe(true);
+      expect(result.current.isDefault).toBe(false);
+      act(() => result.current.actions.toggle("price"));
+      expect(result.current.allVisible).toBe(false);
+      act(() => result.current.actions.reset());
+      expect(result.current.isDefault).toBe(true);
+      expect(result.current.allVisible).toBe(false);
+    });
+
+    it("should not be the defaults once a column is only moved", () => {
+      const { result } = renderUncontrolled();
+      act(() => result.current.actions.move("stock", 0));
+      expect(result.current.isDefault).toBe(false);
+      act(() => result.current.actions.move("stock", 2));
+      expect(result.current.isDefault).toBe(true);
+    });
+
+    it("should count a column that cannot be hidden as shown", () => {
+      // Stored settings that try to hide the name, which must stay shown.
+      const { result } = renderUncontrolled({
+        defaultValue: {
+          order: ["name", "price", "stock", "notes"],
+          hidden: ["name"],
+        },
+      });
+      expect(result.current.allVisible).toBe(true);
+    });
+
+    it("should say an action has nothing to do exactly when it reports no change", () => {
+      const { result, onChange } = renderUncontrolled({
+        defaultValue: {
+          order: ["price", "name", "stock", "notes"],
+          hidden: [],
+        },
+      });
+      expect(result.current.allVisible).toBe(true);
+      act(() => result.current.actions.showAll());
+      expect(onChange).not.toHaveBeenCalled();
+      expect(result.current.isDefault).toBe(false);
+      act(() => result.current.actions.reset());
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(result.current.isDefault).toBe(true);
+      act(() => result.current.actions.reset());
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("should follow the app's settings when the app owns them", () => {
+      const { result, rerender } = renderHook(
+        (props: { value: ColumnSettings | null }) =>
+          useColumnSettings({ columns: COLUMNS, ...props }),
+        { initialProps: { value: null as ColumnSettings | null } },
+      );
+      expect(result.current.isDefault).toBe(true);
+      // The app turns the change down, so nothing is different.
+      act(() => result.current.actions.showAll());
+      expect(result.current.allVisible).toBe(false);
+      expect(result.current.isDefault).toBe(true);
+      rerender({
+        value: { order: ["name", "price", "stock", "notes"], hidden: [] },
+      });
+      expect(result.current.allVisible).toBe(true);
+      expect(result.current.isDefault).toBe(false);
+    });
+
+    it("should follow a column list that changes", () => {
+      const { result, rerender } = renderHook(
+        (props: { columns: readonly ColumnDefinition[] }) =>
+          useColumnSettings(props),
+        { initialProps: { columns: COLUMNS as readonly ColumnDefinition[] } },
+      );
+      act(() => result.current.actions.toggle("notes"));
+      expect(result.current.isDefault).toBe(false);
+      // The same columns, with notes now shown from the start.
+      rerender({
+        columns: COLUMNS.map((column) => ({ ...column, defaultHidden: false })),
+      });
+      expect(result.current.isDefault).toBe(true);
+    });
+
+    it("should leave the lists and actions as they were on a render that changes nothing", () => {
+      const { result, rerender } = renderUncontrolled();
+      const before = result.current;
+      rerender();
+      expect(result.current.isDefault).toBe(before.isDefault);
+      expect(result.current.allVisible).toBe(before.allVisible);
+      expect(result.current.orderedColumns).toBe(before.orderedColumns);
+      expect(result.current.visibleColumns).toBe(before.visibleColumns);
+      expect(result.current.actions).toBe(before.actions);
+    });
+  });
+
   it("should fit the settings to a column list that changes", () => {
     const { result, rerender } = renderHook(
       (props: { columns: readonly ColumnDefinition[] }) =>

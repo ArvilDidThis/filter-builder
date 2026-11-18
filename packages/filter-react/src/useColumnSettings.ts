@@ -1,6 +1,7 @@
 import {
   type ColumnDefinition,
   type ColumnSettings,
+  isDefaultColumnSettings,
   moveColumn,
   type OrderedColumn,
   orderedColumns,
@@ -79,6 +80,16 @@ export interface ColumnSettingsState<
    * content changes, so a memoised table does not redraw for nothing.
    */
   visibleColumns: readonly Column[];
+  /**
+   * Whether every column is shown, so that `actions.showAll` would change nothing. A picker
+   * uses it to turn its "show all" button off.
+   */
+  allVisible: boolean;
+  /**
+   * Whether the settings are the column list's own order and starting visibility, so that
+   * `actions.reset` would change nothing. A picker uses it to turn its "reset" button off.
+   */
+  isDefault: boolean;
   /** The changes a picker can make. The object stays the same between renders. */
   actions: ColumnSettingsActions<Column["key"]>;
 }
@@ -96,6 +107,7 @@ export interface ColumnSettingsState<
  * const table = useColumnSettings({ columns });
  * // table.visibleColumns: draw these as the table's columns.
  * // table.actions.toggle("price"), table.actions.move("price", 0)
+ * // table.allVisible, table.isDefault: whether "show all" and "reset" have anything to do.
  */
 export function useColumnSettings<Column extends ColumnDefinition>(
   options: UseColumnSettingsOptions<Column>,
@@ -207,10 +219,24 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     Object.is,
   );
 
+  // Both ask the action itself, so each says "nothing to do" exactly when its action would do
+  // nothing. They are worked out again only when the settings change.
+  const allVisible = useMemo(
+    // `showAllColumns` hands back the same settings when no column is hidden.
+    () => showAllColumns(settings) === settings,
+    [settings],
+  );
+  const isDefault = useMemo(
+    () => isDefaultColumnSettings(columns, settings),
+    [columns, settings],
+  );
+
   return {
     settings,
     orderedColumns: ordered,
     visibleColumns: visible,
+    allVisible,
+    isDefault,
     actions,
   };
 }

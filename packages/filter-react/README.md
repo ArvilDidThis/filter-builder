@@ -200,6 +200,17 @@ visible columns (`visibleColumns`), and the actions that change the settings. Th
 object never changes, and `visibleColumns` changes only when its content does, so a memoised
 table does not redraw for nothing.
 
+Two more values say whether a button has anything to do:
+
+| Value        | True when                                    | So this would change nothing |
+| ------------ | -------------------------------------------- | ---------------------------- |
+| `allVisible` | Every column is shown                        | `actions.showAll`            |
+| `isDefault`  | The settings are the column list's defaults  | `actions.reset`              |
+
+The example marks such a button with `aria-disabled`, not `disabled`. A button that turns itself
+`disabled` while it holds the keyboard focus loses that focus. The click needs no check of its
+own, because an action that has nothing to do changes nothing.
+
 ```tsx
 import type { ColumnDefinition } from "@arvilmena/filter-core";
 import { useColumnSettings } from "@arvilmena/filter-react";
@@ -211,9 +222,8 @@ const columns = [
 ] as const satisfies readonly ColumnDefinition[];
 
 function ProductColumns() {
-  const { orderedColumns, visibleColumns, actions } = useColumnSettings({
-    columns,
-  });
+  const { orderedColumns, visibleColumns, allVisible, isDefault, actions } =
+    useColumnSettings({ columns });
   return (
     <>
       <ul>
@@ -246,10 +256,10 @@ function ProductColumns() {
           </li>
         ))}
       </ul>
-      <button type="button" onClick={actions.showAll}>
+      <button type="button" aria-disabled={allVisible} onClick={actions.showAll}>
         Show all
       </button>
-      <button type="button" onClick={actions.reset}>
+      <button type="button" aria-disabled={isDefault} onClick={actions.reset}>
         Reset
       </button>
       <p>Showing: {visibleColumns.map((column) => column.label).join(", ")}</p>
