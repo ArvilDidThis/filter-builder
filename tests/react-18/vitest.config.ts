@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { defineConfig, mergeConfig } from "vitest/config";
+import filterReactConfig from "../../packages/filter-react/vitest.config.ts";
 
 // Runs the quick tests of `@arvilmena/filter-react` a second time, against React 18. The
 // package says it supports React from version 18, and its own tests run against the newest.
@@ -16,29 +17,29 @@ const filterReact = fileURLToPath(
 const own = (name: string): string =>
   fileURLToPath(new URL(`./node_modules/${name}`, import.meta.url));
 
-export default defineConfig({
-  root: filterReact,
-  resolve: {
-    alias: [
-      // Every import of React, from the source and from the tests, gets React 18. `$1` keeps
-      // what follows the name, as in "react-dom/client".
-      { find: /^react-dom($|\/.*)/, replacement: `${own("react-dom")}$1` },
-      { find: /^react($|\/.*)/, replacement: `${own("react")}$1` },
-      // The copy of the test helpers that was installed beside React 18, and so uses it.
-      {
-        find: /^@testing-library\/react$/,
-        replacement: own("@testing-library/react"),
-      },
-    ],
-  },
-  test: {
-    // The hooks need a browser-like page to render in.
-    environment: "happy-dom",
-    include: [
-      // The same tests as `filter-react` runs itself.
-      "src/**/*.test.{ts,tsx}",
-      // And one that checks that those tests really get React 18.
-      "react-18/react-version.test.ts",
-    ],
-  },
-});
+// Built on the package's own config, so the same tests run in the same kind of page. A test
+// or a setting added there reaches this run too.
+export default mergeConfig(
+  filterReactConfig,
+  defineConfig({
+    root: filterReact,
+    resolve: {
+      alias: [
+        // Every import of React, from the source and from the tests, gets React 18. `$1`
+        // keeps what follows the name, as in "react-dom/client".
+        { find: /^react-dom($|\/.*)/, replacement: `${own("react-dom")}$1` },
+        { find: /^react($|\/.*)/, replacement: `${own("react")}$1` },
+        // The copy of the test helpers that was installed beside React 18, and so uses it.
+        {
+          find: /^@testing-library\/react$/,
+          replacement: own("@testing-library/react"),
+        },
+      ],
+    },
+    test: {
+      // Added to the tests the package runs itself: one that checks that those tests
+      // really get React 18.
+      include: ["react-18/react-version.test.ts"],
+    },
+  }),
+);
