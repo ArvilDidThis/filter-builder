@@ -31,12 +31,26 @@ permissions:
 jobs:
   browsers:
     name: Chromium, Firefox & WebKit
-    # One named Ubuntu release, not "latest". The stored screenshots and the cached browsers
-    # were made for this release: text is drawn differently on another, and Playwright's
-    # browsers are built for each. To move to a newer release, change it here, in the cache
-    # key below and in `browser/store-linux-screenshots.sh`, then store new screenshots.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # The tests run inside Playwright's own container (a small Linux system that holds the
+    # browsers and the system libraries they need). Nothing is downloaded and installed on
+    # each run, which once took longer than this job's time limit. It is the same container
+    # that `browser/store-linux-screenshots.sh` uses, so the stored screenshots match.
+    #
+    # The image is pinned to its digest (a fingerprint of its exact content), so a moved tag
+    # can't change what runs here. Its version must equal the `playwright` version in
+    # `packages/filter-react/package.json`; a step below checks that. To move to a newer
+    # Playwright, change the version there, the tag and digest here, and the tag in the
+    # script, then store new screenshots.
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      # Chromium needs more shared memory than a container gets by default
+      options: --ipc=host
+    env:
+      # GitHub gives a container another home folder, where Firefox refuses to start as the
+      # container's own user
+      HOME: /root
     steps:
       # Actions are pinned to a full commit (with the version in a comment) so a moved tag
       # can't change what runs here
@@ -53,29 +67,18 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Each Playwright version downloads its own browser builds, so the version names the cache
-      - name: Read the Playwright version
-        id: playwright
+      # The container's browsers suit one Playwright version only. With another version
+      # installed, the tests would look for browsers that are not there.
+      - name: Check that the container matches the installed Playwright
+        env:
+          # Keep equal to the version in the container's tag above
+          CONTAINER_PLAYWRIGHT: "1.65.1"
         run: |
-          version=$(node -p "require('./packages/filter-react/package.json').devDependencies.playwright")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      # The browsers are about 500 MB. They are downloaded again only when Playwright changes.
-      # This workflow publishes nothing, so a cache cannot carry anything into a release.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: browser-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-ubuntu-24.04-${{ steps.playwright.outputs.version }}
-
-      - name: Download the browsers and the system libraries they need
-        if: steps.browser-cache.outputs.cache-hit != 'true'
-        run: pnpm --filter @arvilmena/filter-react exec playwright install --with-deps chromium firefox webkit
-
-      # The cache holds the browsers only. The system libraries are installed on every run.
-      - name: Install the system libraries the cached browsers need
-        if: steps.browser-cache.outputs.cache-hit == 'true'
-        run: pnpm --filter @arvilmena/filter-react exec playwright install-deps chromium firefox webkit
+          installed=$(node -p "require('./packages/filter-react/package.json').devDependencies.playwright")
+          if [ "$installed" != "$CONTAINER_PLAYWRIGHT" ]; then
+            echo "::error::package.json names Playwright $installed, but the container holds $CONTAINER_PLAYWRIGHT"
+            exit 1
+          fi
 
       - name: Run the browser tests
         if: ${{ !inputs.update-screenshots }}
