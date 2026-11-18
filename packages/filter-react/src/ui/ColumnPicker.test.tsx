@@ -424,6 +424,82 @@ describe("ColumnPicker", () => {
       expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
     });
 
+    it("should give up the drag when the mouse moves with no button held", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      // The button was let go where the page could not hear it, such as over a system menu.
+      fireEvent.pointerMove(document, {
+        ...pointer(180),
+        pointerType: "mouse",
+        buttons: 0,
+      });
+      expect(document.querySelector("[data-dragging]")).toBeNull();
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    it("should keep the drag while a finger moves, which holds no button", () => {
+      renderPicker();
+      layOutList();
+      const finger = { ...pointer(180), pointerType: "touch", buttons: 0 };
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, finger);
+      fireEvent.pointerUp(document, finger);
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+    });
+
+    it("should give up the drag when the browser takes the capture away", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.lostPointerCapture(handle("Name"), pointer(180));
+      expect(document.querySelector("[data-dragging]")).toBeNull();
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    it("should let a new press replace a drag that never heard its release", () => {
+      renderPicker();
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      // No release arrives. The next press starts a fresh drag of another column.
+      fireEvent.pointerDown(handle("Stock"), pointer(175));
+      const [name, , stock] = rows();
+      expect(name?.hasAttribute("data-dragging")).toBe(false);
+      expect(stock?.hasAttribute("data-dragging")).toBe(true);
+      fireEvent.pointerMove(document, pointer(105));
+      fireEvent.pointerUp(document, pointer(105));
+      expect(listed()).toBe("⠿Stock ⠿Name ⠿Price ⠿Notes");
+    });
+
+    it("should capture the pointer on the handle, and let it go after the drag", () => {
+      renderPicker();
+      layOutList();
+      const grip = handle("Name");
+      const capture = vi.spyOn(grip, "setPointerCapture");
+      const release = vi.spyOn(grip, "releasePointerCapture");
+      fireEvent.pointerDown(grip, pointer(115));
+      expect(capture).toHaveBeenCalledWith(1);
+      expect(release).not.toHaveBeenCalled();
+      fireEvent.pointerUp(document, pointer(115));
+      expect(release).toHaveBeenCalledWith(1);
+    });
+
+    it("should still drag in a browser that cannot capture the pointer", () => {
+      renderPicker();
+      layOutList();
+      vi.spyOn(handle("Name"), "setPointerCapture").mockImplementation(() => {
+        throw new Error("no capture");
+      });
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Name ⠿Notes");
+    });
+
     it("should ignore a press that is not the main button, and another pointer", () => {
       renderPicker();
       layOutList();

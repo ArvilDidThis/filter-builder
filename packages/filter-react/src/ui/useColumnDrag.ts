@@ -155,19 +155,31 @@ export function useColumnDrag({
       const list = listRef.current;
       const from = latest.current.keys.indexOf(key);
       // Only the main mouse button, a finger or a pen tip starts a drag.
-      if (
-        list === null ||
-        from === -1 ||
-        event.button !== 0 ||
-        session.current !== null
-      ) {
-        return;
-      }
+      if (list === null || from === -1 || event.button !== 0) return;
+      // A drag still held here never heard its pointer let go. The new press replaces it,
+      // so one lost event cannot leave the list stuck.
+      end();
       const { pointerId } = event;
+      const handle = event.currentTarget;
+      // Pointer capture (the browser sends every later event of this pointer to the handle)
+      // lets the release be heard even when it happens outside the window.
+      try {
+        handle.setPointerCapture(pointerId);
+      } catch {
+        // The pointer is gone already, or the browser has no capture. The checks below still
+        // end the drag.
+      }
 
       const onMove = (moved: PointerEvent) => {
         const drag = session.current;
         if (drag === null || moved.pointerId !== pointerId) return;
+        // A mouse that moves with no button held was let go where this page could not hear
+        // it, for example over a menu that the system opened. Nobody chose a place to drop,
+        // so the drag is given up.
+        if (moved.pointerType === "mouse" && moved.buttons === 0) {
+          end();
+          return;
+        }
         drag.clientY = moved.clientY;
         follow();
       };
@@ -179,7 +191,8 @@ export function useColumnDrag({
         if (listRef.current !== list) return;
         if (drag.to !== drag.from) latest.current.onDrop(drag.key, drag.to);
       };
-      // The browser took the pointer away, for example to scroll the page.
+      // The browser took the pointer away, for example to scroll the page, or took the
+      // capture away without a release.
       const onCancel = (cancelled: PointerEvent) => {
         if (cancelled.pointerId === pointerId) end();
       };
@@ -193,6 +206,7 @@ export function useColumnDrag({
       document.addEventListener("pointermove", onMove);
       document.addEventListener("pointerup", onUp);
       document.addEventListener("pointercancel", onCancel);
+      document.addEventListener("lostpointercapture", onCancel);
       // `true` lets this hear the key before the picker does.
       document.addEventListener("keydown", onKeyDown, true);
       // A mouse wheel can scroll the list under a pointer that stays still.
@@ -210,6 +224,12 @@ export function useColumnDrag({
           document.removeEventListener("pointermove", onMove);
           document.removeEventListener("pointerup", onUp);
           document.removeEventListener("pointercancel", onCancel);
+          document.removeEventListener("lostpointercapture", onCancel);
+          try {
+            handle.releasePointerCapture(pointerId);
+          } catch {
+            // The capture was never taken, or is gone already.
+          }
           document.removeEventListener("keydown", onKeyDown, true);
           list.removeEventListener("scroll", follow);
           const frame = session.current?.frame;

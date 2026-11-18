@@ -99,7 +99,8 @@ export interface ColumnPickerRow<
   /**
    * For the `<button>` that moves the column, by dragging and by the arrow keys. Its `style`
    * stops a finger on the handle from scrolling the list. If you set a `style` of your own,
-   * spread this one into it.
+   * spread this one into it. Keep the same element while the row is dragged: a handle that is
+   * replaced mid-drag ends the drag.
    */
   handleProps: {
     type: "button";
