@@ -13,7 +13,7 @@ import {
   type StateStore,
 } from "@arvilmena/filter-core";
 import { act, render, renderHook } from "@testing-library/react";
-import { Activity, createElement, StrictMode } from "react";
+import { Activity, createElement, StrictMode, useEffect } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import {
@@ -1736,24 +1736,29 @@ describe("useSavedTableState", () => {
       expect(store.save).not.toHaveBeenCalled();
     });
 
-    it("should hydrate the server's page without a mismatch", () => {
+    it("should hydrate the server's page without a mismatch", async () => {
       const options = {
         id: "orders",
         store: memoryStore(),
         initialSaved: READ_BY_SERVER,
       };
+      const takenOver = vi.fn();
+      const page = createElement(HydratedTable, { options, takenOver });
       const container = document.createElement("div");
-      container.innerHTML = renderToString(createElement(ServerTable, options));
+      container.innerHTML = renderToString(page);
+      expect(takenOver).not.toHaveBeenCalled();
       const onRecoverableError = vi.fn();
       const error = vi.spyOn(console, "error").mockImplementation(() => {});
-      const root = hydrateRoot(container, createElement(ServerTable, options), {
-        onRecoverableError,
+      let root: ReturnType<typeof hydrateRoot> | undefined;
+      await act(async () => {
+        root = hydrateRoot(container, page, { onRecoverableError });
       });
-      act(() => {});
+      // Without this, the text below would only be what the server drew.
+      expect(takenOver).toHaveBeenCalledOnce();
       expect(onRecoverableError).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
       expect(container.textContent).toBe(`ready ${JSON.stringify(NAME_SORT)}`);
-      act(() => root.unmount());
+      act(() => root?.unmount());
     });
 
     it("should save a change, with the parts it does not own", () => {
@@ -2267,4 +2272,14 @@ function ServerTable(props: Options & { drawn?: SavedTableState<Values>[] }) {
     null,
     `${saved.status} ${JSON.stringify(saved.values.sort)}`,
   );
+}
+
+/**
+ * `ServerTable`, with a call to `takenOver` once React has taken the page over in the browser.
+ * Effects never run on a server.
+ */
+function HydratedTable(props: { options: Options; takenOver: () => void }) {
+  const { options, takenOver } = props;
+  useEffect(() => takenOver(), [takenOver]);
+  return createElement(ServerTable, options);
 }
