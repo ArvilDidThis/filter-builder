@@ -78,7 +78,10 @@ describe("the open picker's look (item 14)", () => {
 describe("an accessibility scan of the picker (item 15)", () => {
   /** Each broken rule with the elements that break it, short enough to read in a failure. */
   async function violations(): Promise<string[]> {
-    const results = await axe.run(page.getByTestId("stage").element(), {
+    // The picker only. The plain button beside it is the test app's own, and a browser's
+    // unstyled button is not the library's to answer for.
+    const picker = document.querySelector(".fb-columns") as Element;
+    const results = await axe.run(picker, {
       resultTypes: ["violations"],
     });
     return results.violations.map(
