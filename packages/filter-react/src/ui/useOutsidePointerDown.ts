@@ -19,7 +19,15 @@ export function useOutsidePointerDown(
   useEffect(() => {
     if (!active) return;
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) latest.current();
+      const root = rootRef.current;
+      // Inside a shadow tree (a part of the page that hides its insides from the rest), the
+      // press is reported as a press on the tree's host, which the root does not contain. The
+      // event's path still lists every element the press went through.
+      const isInside =
+        root !== null &&
+        (root.contains(event.target as Node) ||
+          event.composedPath().includes(root));
+      if (!isInside) latest.current();
     };
     // The picker's own document, which is not the global one when the picker is drawn inside
     // a frame (a page within the page). A press there is never heard on the outer page.

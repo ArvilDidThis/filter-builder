@@ -751,6 +751,37 @@ describe("ColumnPicker", () => {
       expect(screen.queryByRole("dialog")).toBeNull();
     });
 
+    it("should stay open on a click inside it when it is drawn in a shadow tree", () => {
+      // A shadow tree is a part of the page that hides its insides from the rest. A press
+      // inside it reaches the page as a press on the tree's host. Only the event's path
+      // still lists the elements inside.
+      const host = document.createElement("div");
+      document.body.append(host);
+      const container = document.createElement("div");
+      host.attachShadow({ mode: "open" }).append(container);
+      const { unmount } = render(<App extra={{}} />, { container });
+      const inside = within(container);
+      fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+      // The test page does not hide the pressed element as a browser does, so the press is
+      // built by hand: sent from the host, with the path a browser would give.
+      const press = new Event("pointerdown", { bubbles: true });
+      const path: EventTarget[] = [];
+      for (
+        let node: Node | null = inside.getByText("Stock");
+        node !== null;
+        node = node.parentNode ?? (node as Partial<ShadowRoot>).host ?? null
+      ) {
+        path.push(node);
+      }
+      press.composedPath = () => path;
+      fireEvent(host, press);
+      expect(inside.queryByRole("dialog")).not.toBeNull();
+      fireEvent.pointerDown(document.body);
+      expect(inside.queryByRole("dialog")).toBeNull();
+      unmount();
+      host.remove();
+    });
+
     it("should close when Tab moves the focus out of it", () => {
       renderPicker();
       fireEvent.blur(screen.getByRole("button", { name: "Reset" }), {
