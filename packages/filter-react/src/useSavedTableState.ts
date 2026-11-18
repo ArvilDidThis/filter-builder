@@ -820,11 +820,13 @@ function withOtherParts(
   stored: SavedParts,
   own: object,
 ): Record<string, unknown> {
-  const parts: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(stored)) {
-    if (!Object.hasOwn(own, name)) parts[name] = value;
-  }
-  return Object.assign(parts, own);
+  // `Object.fromEntries`, not `parts[name] = value`: the names come from the store and are not
+  // to be trusted. A part named "__proto__" must stay a part, and not become the prototype
+  // (the object that others inherit from) of the parts.
+  const others = Object.fromEntries(
+    Object.entries(stored).filter(([name]) => !Object.hasOwn(own, name)),
+  );
+  return { ...others, ...own };
 }
 
 /**

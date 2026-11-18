@@ -855,6 +855,24 @@ describe("useSavedTableState", () => {
     const PAGE_PARTS = { pageSize: numberPart };
     const OTHER_PARTS = { other: numberPart };
 
+    it("should keep a stored part named like an object's prototype as a plain part", () => {
+      // `JSON.parse` makes "__proto__" an ordinary key. Stored values are not to be trusted.
+      const stored = JSON.parse(
+        '{"version":1,"parts":{"__proto__":{"polluted":true},"pageSize":50}}',
+      );
+      const store = memoryStore({ orders: stored });
+      const { result } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+
+      const sent = store.save.mock.calls[0]?.[1] as SavedState;
+      // The parts sent are a plain object, and the odd part is still one of them.
+      expect(Object.getPrototypeOf(sent.parts)).toBe(Object.prototype);
+      expect(Object.hasOwn(sent.parts, "__proto__")).toBe(true);
+      expect(sent.parts).toMatchObject({ pageSize: 50, sort: PRICE_SORT });
+      expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+    });
+
     it("should keep them when it saves", () => {
       const store = memoryStore({
         orders: savedWith({ sort: NAME_SORT, pageSize: 50, legacy: ["x"] }),
