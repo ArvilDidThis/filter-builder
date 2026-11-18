@@ -1,13 +1,10 @@
 import { commands } from "vitest/browser";
+import type { Point } from "../commands";
+
+export type { Point };
 
 // Real pointer input at real places on the screen. The places are read from the page's own
 // layout, so a test never guesses where a row is.
-
-/** A place in the test page, in CSS pixels from its top left corner. */
-export interface Point {
-  x: number;
-  y: number;
-}
 
 /**
  * The top left corner of the page that holds `element`, counted from the test page. It is
@@ -38,6 +35,12 @@ export function pointOn(element: Element, across = 0.5, down = 0.5): Point {
     y: corner.y + box.top + box.height * down,
   };
 }
+
+/** Just below the middle of a row: a drop here lands after that row. */
+export const lowerHalf = (row: Element): Point => pointOn(row, 0.5, 0.9);
+
+/** Just above the middle of a row: a drop here lands before that row. */
+export const upperHalf = (row: Element): Point => pointOn(row, 0.5, 0.1);
 
 /**
  * The middle of `element`, for real input to aim at. Throws when there is nothing to aim at:

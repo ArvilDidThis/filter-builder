@@ -11,6 +11,7 @@ import { ColumnPicker } from "../src/ui/ColumnPicker";
 import { FilterBuilder } from "../src/ui/FilterBuilder";
 import { useColumnSettings } from "../src/useColumnSettings";
 import styles from "../styles.css?inline";
+import { BLANK_PAGE_PATH } from "./fixture-paths";
 import {
   COLUMNS,
   type Counter,
@@ -19,11 +20,12 @@ import {
   PickerApp,
   type PickerParts,
 } from "./support/apps";
+import { untilBlank } from "./support/fixture-page";
 import { mount } from "./support/mount";
 import {
   clickOn,
+  lowerHalf,
   moveTo,
-  type Point,
   pointOn,
   pressOn,
   release,
@@ -33,9 +35,6 @@ import { VIEWPORT } from "./viewport";
 // The picker in the places an app may put it: a closed shadow tree, a frame, a phone-sized
 // screen and the filter builder.
 
-/** Just below the middle of a row: a drop here lands after that row. */
-const lowerHalf = (row: Element): Point => pointOn(row, 0.5, 0.9);
-
 /**
  * Adds the picker's style sheet to a shadow tree or to a frame's `<head>`. The page's own
  * copy does not reach into either.
@@ -44,6 +43,22 @@ function addStyles(to: ShadowRoot | HTMLHeadElement): void {
   const sheet = document.createElement("style");
   sheet.textContent = styles;
   to.append(sheet);
+}
+
+/** Checks that a tap still ticks a column of `LONG`, and that a drag still moves one. */
+async function tapAndDragStillWork(picker: PickerParts): Promise<void> {
+  await commands.tap(pointOn(picker.checkbox(LONG[1]?.label as string)));
+  await expect
+    .poll(() => picker.checkbox(LONG[1]?.label as string).checked)
+    .toBe(false);
+  await pressOn(
+    picker.rows()[0]?.querySelector("[data-fb-column-handle]") as Element,
+  );
+  await moveTo(lowerHalf(picker.rows()[2] as Element));
+  await release();
+  await expect
+    .poll(() => picker.rows()[2]?.textContent)
+    .toContain("Name of the product");
 }
 
 /** Column names far longer than a phone is wide. */
@@ -320,16 +335,10 @@ describe("the picker inside an embedded page (item 6)", () => {
     frame.title = "Embedded page";
     frame.style.cssText =
       "display: block; width: 480px; height: 400px; margin: 24px;";
-    frame.src = "/__fixtures__/blank";
+    frame.src = BLANK_PAGE_PATH;
     document.body.append(outside, frame);
     // A frame starts with a throwaway empty page. The real one is there once it has loaded.
-    await expect
-      .poll(
-        () =>
-          frame.contentDocument?.readyState === "complete" &&
-          frame.contentWindow?.location.pathname === "/__fixtures__/blank",
-      )
-      .toBe(true);
+    await untilBlank(frame);
     const inner = frame.contentDocument as Document;
     addStyles(inner.head);
     mount(
@@ -373,9 +382,7 @@ describe("the picker inside an embedded page (item 6)", () => {
     await moveTo(lowerHalf(picker.row("Stock")));
     await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
     await userEvent.keyboard("{Escape}");
-    await expect
-      .poll(() => picker.list().hasAttribute("data-dragging"))
-      .toBe(false);
+    await expect.poll(picker.isDragging).toBe(false);
     expect(picker.popover()).not.toBeNull();
     await release();
 
@@ -459,18 +466,7 @@ describe("the picker on a phone-sized screen (item 7)", () => {
       }
 
       // It still works at this size: a tap ticks a column, and a drag moves one.
-      await commands.tap(pointOn(picker.checkbox(LONG[1]?.label as string)));
-      await expect
-        .poll(() => picker.checkbox(LONG[1]?.label as string).checked)
-        .toBe(false);
-      await pressOn(
-        picker.rows()[0]?.querySelector("[data-fb-column-handle]") as Element,
-      );
-      await moveTo(lowerHalf(picker.rows()[2] as Element));
-      await release();
-      await expect
-        .poll(() => picker.rows()[2]?.textContent)
-        .toContain("Name of the product");
+      await tapAndDragStillWork(picker);
     },
   );
 
@@ -519,18 +515,7 @@ describe("the picker on a phone-sized screen (item 7)", () => {
       expect(scrollsSideways()).toBe(false);
 
       // It still works where it was moved to: a tap ticks a column, and a drag moves one.
-      await commands.tap(pointOn(picker.checkbox(LONG[1]?.label as string)));
-      await expect
-        .poll(() => picker.checkbox(LONG[1]?.label as string).checked)
-        .toBe(false);
-      await pressOn(
-        picker.rows()[0]?.querySelector("[data-fb-column-handle]") as Element,
-      );
-      await moveTo(lowerHalf(picker.rows()[2] as Element));
-      await release();
-      await expect
-        .poll(() => picker.rows()[2]?.textContent)
-        .toContain("Name of the product");
+      await tapAndDragStillWork(picker);
       expect(isInsideScreen(picker.popover())).toBe(true);
     },
   );

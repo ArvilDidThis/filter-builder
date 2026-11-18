@@ -9,26 +9,20 @@ import {
   openPicker,
   PickerApp,
   type PickerParts,
+  standardRow,
 } from "./support/apps";
 import { mount } from "./support/mount";
 import {
+  lowerHalf,
   moveTo,
   type Point,
   pointOn,
   pressOn,
   release,
+  upperHalf,
 } from "./support/pointer";
 
 // Dragging a column in the picker with a real pointer, at places read from the real layout.
-
-/** Just below the middle of a row: a drop here lands after that row. */
-const lowerHalf = (row: Element): Point => pointOn(row, 0.5, 0.9);
-/** Just above the middle of a row: a drop here lands before that row. */
-const upperHalf = (row: Element): Point => pointOn(row, 0.5, 0.1);
-
-/** Whether a drag is under way in the picker's list. */
-const isDragging = (picker: PickerParts): boolean =>
-  picker.list().hasAttribute("data-dragging");
 
 /** Lets a test tell `ReplacingApp` to draw every handle anew. */
 interface HandleControl {
@@ -51,22 +45,8 @@ function ReplacingApp({
     control.replaceHandles = () => setVersion((was) => was + 1);
   }, [control]);
   const renderRow = useCallback<NonNullable<ColumnPickerProps["renderRow"]>>(
-    (row) => (
-      <>
-        <input className="fb-columns-checkbox" {...row.checkboxProps} />
-        {/* A new `key` makes React put a new element in the old one's place. */}
-        <button
-          className="fb-columns-handle"
-          key={version}
-          {...row.handleProps}
-        >
-          <span aria-hidden="true">⠿</span>
-        </button>
-        <label className="fb-columns-label" htmlFor={row.checkboxProps.id}>
-          {row.column.label}
-        </label>
-      </>
-    ),
+    // A new key for the handle makes React put a new element in the old one's place.
+    (row) => standardRow(row, version),
     [version],
   );
   return <PickerApp changed={changed} picker={{ renderRow }} />;
@@ -103,7 +83,7 @@ describe("dragging a column by mouse (item 1)", () => {
     await moveTo(lowerHalf(picker.row("Stock")));
     // The line that marks the drop is drawn above the next row.
     await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
-    expect(isDragging(picker)).toBe(true);
+    expect(picker.isDragging()).toBe(true);
     expect(getComputedStyle(picker.row("Name")).opacity).toBe("0.4");
     // Nothing is asked of the app while the row is held.
     expect(changed.count).toBe(0);
@@ -111,7 +91,7 @@ describe("dragging a column by mouse (item 1)", () => {
     await release();
     await expect.poll(picker.table).toBe("price stock name");
     expect(picker.listed()).toEqual(["Price", "Stock", "Name", "Notes"]);
-    expect(isDragging(picker)).toBe(false);
+    expect(picker.isDragging()).toBe(false);
     expect(changed.count).toBe(1);
   });
 
@@ -129,9 +109,9 @@ describe("dragging a column by mouse (item 1)", () => {
     const picker = await mountOpenPicker({ changed });
     await pressOn(picker.handle("Price"));
     await moveTo(lowerHalf(picker.row("Price")));
-    await expect.poll(() => isDragging(picker)).toBe(true);
+    await expect.poll(() => picker.isDragging()).toBe(true);
     await release();
-    await expect.poll(() => isDragging(picker)).toBe(false);
+    await expect.poll(() => picker.isDragging()).toBe(false);
     expect(changed.count).toBe(0);
     expect(picker.table()).toBe("name price stock");
   });
@@ -144,7 +124,7 @@ describe("dragging a column by mouse (item 1)", () => {
     await expect.poll(() => picker.row("Notes").dataset.drop).toBe("before");
 
     await userEvent.keyboard("{Escape}");
-    await expect.poll(() => isDragging(picker)).toBe(false);
+    await expect.poll(() => picker.isDragging()).toBe(false);
     expect(picker.popover()).not.toBeNull();
     await release();
     // A drag that works again proves the release above was dealt with, and moved nothing.
@@ -317,7 +297,7 @@ describe("a drag that does not end with a drop (item 3)", () => {
     expect(changed.count).toBe(0);
     expect(picker.table()).toBe("name price stock");
     expect(picker.listed()).toEqual(["Name", "Price", "Stock", "Notes"]);
-    expect(isDragging(picker)).toBe(false);
+    expect(picker.isDragging()).toBe(false);
     expect(picker.rows().some((row) => row.dataset.drop)).toBe(false);
   });
 
@@ -335,7 +315,7 @@ describe("a drag that does not end with a drop (item 3)", () => {
     await expect.poll(picker.popover).toBeNull();
     // The finger is still down when the picker opens again.
     await mountedAgain(picker);
-    expect(isDragging(picker)).toBe(false);
+    expect(picker.isDragging()).toBe(false);
     expect(picker.rows().some((row) => row.hasAttribute("data-dragging"))).toBe(
       false,
     );
@@ -366,7 +346,7 @@ describe("a drag that does not end with a drop (item 3)", () => {
     // The picker stays open: only the drag ends. The browser tells the page of the lost
     // capture when the pointer next moves.
     await moveTo(lowerHalf(picker.row("Stock")));
-    await expect.poll(() => isDragging(picker)).toBe(false);
+    await expect.poll(() => picker.isDragging()).toBe(false);
     expect(picker.popover()).not.toBeNull();
     expect(picker.rows().some((row) => row.dataset.drop)).toBe(false);
 
@@ -429,12 +409,12 @@ describe("a drag that does not end with a drop (item 3)", () => {
     await release();
     await expect.poll(() => lost).toContain("pointerup");
     // The button is up, and the picker does not know.
-    expect(isDragging(picker)).toBe(true);
+    expect(picker.isDragging()).toBe(true);
     restore();
 
     // A mouse that moves with no button held shows that the release was missed.
     await moveTo(pointOn(picker.row("Price")));
-    await expect.poll(() => isDragging(picker)).toBe(false);
+    await expect.poll(() => picker.isDragging()).toBe(false);
     expect(changed.count).toBe(0);
     expect(picker.table()).toBe("name price stock");
   });
@@ -446,12 +426,12 @@ describe("a drag that does not end with a drop (item 3)", () => {
     await pressOn(handle);
     // A small move that stays on the handle, so the next press needs no move before it.
     await moveTo(pointOn(handle, 0.6, 0.6));
-    await expect.poll(() => isDragging(picker)).toBe(true);
+    await expect.poll(() => picker.isDragging()).toBe(true);
 
     const { lost, restore } = loseRelease();
     await release();
     await expect.poll(() => lost).toContain("pointerup");
-    expect(isDragging(picker)).toBe(true);
+    expect(picker.isDragging()).toBe(true);
     restore();
 
     // The picker is not stuck: the next press on the handle drags as any other.
@@ -461,7 +441,7 @@ describe("a drag that does not end with a drop (item 3)", () => {
     await release();
     await expect.poll(picker.table).toBe("price stock name");
     expect(changed.count).toBe(1);
-    expect(isDragging(picker)).toBe(false);
+    expect(picker.isDragging()).toBe(false);
   });
   if (server.browser === "chromium") {
     // A finger gets a new number each time it touches the screen, so the next touch is not
@@ -470,12 +450,12 @@ describe("a drag that does not end with a drop (item 3)", () => {
       const changed: Counter = { count: 0 };
       const picker = await mountOpenPicker({ changed });
       await commands.touch("start", pointOn(picker.handle("Name")));
-      await expect.poll(() => isDragging(picker)).toBe(true);
+      await expect.poll(() => picker.isDragging()).toBe(true);
 
       const { lost, restore } = loseRelease();
       await commands.touch("end");
       await expect.poll(() => lost).toContain("pointerup");
-      expect(isDragging(picker)).toBe(true);
+      expect(picker.isDragging()).toBe(true);
       restore();
 
       // Another row, under another touch. It moves, and the row held before does not.
@@ -486,7 +466,7 @@ describe("a drag that does not end with a drop (item 3)", () => {
       await commands.touch("end");
       await expect.poll(picker.table).toBe("name stock price");
       expect(changed.count).toBe(1);
-      expect(isDragging(picker)).toBe(false);
+      expect(picker.isDragging()).toBe(false);
     });
   }
 });

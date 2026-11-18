@@ -4,6 +4,7 @@ import { expect } from "vitest";
 import {
   ColumnPicker,
   type ColumnPickerProps,
+  type ColumnPickerRow,
 } from "../../src/ui/ColumnPicker";
 import { useColumnSettings } from "../../src/useColumnSettings";
 import { mount } from "./mount";
@@ -86,6 +87,31 @@ export function PickerApp({
   );
 }
 
+/**
+ * A row drawn by an app, with the same parts and classes as the picker's own. A test passes
+ * it as `renderRow` to count the rows drawn, or to change one part.
+ *
+ * `handleKey` is the handle's React key. A new one makes React put a new element in the old
+ * one's place.
+ */
+export function standardRow(row: ColumnPickerRow, handleKey?: number) {
+  return (
+    <>
+      <input className="fb-columns-checkbox" {...row.checkboxProps} />
+      <button
+        className="fb-columns-handle"
+        key={handleKey}
+        {...row.handleProps}
+      >
+        <span aria-hidden="true">⠿</span>
+      </button>
+      <label className="fb-columns-label" htmlFor={row.checkboxProps.id}>
+        {row.column.label}
+      </label>
+    </>
+  );
+}
+
 /** Finds the parts of one picker. `within` is the page, shadow tree or element that holds it. */
 export function pickerParts(within: ParentNode = document) {
   const one = <Found extends Element = HTMLElement>(
@@ -118,6 +144,8 @@ export function pickerParts(within: ParentNode = document) {
     trigger: () => one<HTMLButtonElement>(".fb-columns-trigger"),
     popover: () => within.querySelector<HTMLElement>(".fb-columns-popover"),
     list: () => one(".fb-columns-list"),
+    /** Whether a drag is under way in the list. */
+    isDragging: () => one(".fb-columns-list").hasAttribute("data-dragging"),
     rows,
     row,
     /** The names in the list, in order. */
