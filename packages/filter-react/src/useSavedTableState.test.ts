@@ -2,6 +2,7 @@ import {
   type ColumnDefinition,
   type ColumnSettings,
   CookieTooLargeError,
+  carryOverStore,
   columnStatePart,
   cookieStore,
   type FetchStoreOptions,
@@ -10,6 +11,7 @@ import {
   filterStatePart,
   type SavedState,
   type StatePart,
+  type StateParts,
   type StateStore,
 } from "@arvilmena/filter-core";
 import { act, cleanup, render, renderHook } from "@testing-library/react";
@@ -2562,6 +2564,501 @@ describe("useSavedTableState", () => {
       act(() => vi.advanceTimersByTime(1000));
       expect(store.save).toHaveBeenCalledOnce();
       expect(store.items.has("archive")).toBe(false);
+    });
+  });
+
+  describe("parts built inside the component", () => {
+    it("should load once, though the parts are a new object on every render", () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result, rerender } = renderHook(() =>
+        useSavedTableState({
+          id: "orders",
+          store,
+          parts: { filter: filterStatePart(), sort: sortPart },
+        }),
+      );
+      const before = result.current.values;
+      rerender();
+      rerender();
+      expect(store.load).toHaveBeenCalledOnce();
+      expect(result.current.values).toBe(before);
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+    });
+  });
+
+  describe("a column part without the column list", () => {
+    /** The column list goes to the column hook only. */
+    function renderTable(store: StateStore) {
+      return renderHook(() => {
+        const saved = useSavedTableState({
+          id: "orders",
+          store,
+          parts: { columns: columnStatePart() },
+        });
+        const table = useColumnSettings({
+          columns: COLUMNS,
+          value: saved.values.columns,
+          onChange: saved.set.columns,
+        });
+        return { saved, table };
+      });
+    }
+    const shownKeys = (table: { visibleColumns: readonly { key: string }[] }) =>
+      table.visibleColumns.map((column) => column.key);
+
+    it("should show the list's defaults, and save nothing, until a column changes", () => {
+      const store = memoryStore();
+      const { result } = renderTable(store);
+      expect(result.current.saved.values.columns).toBeNull();
+      expect(shownKeys(result.current.table)).toEqual(["name", "price"]);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(store.save).not.toHaveBeenCalled();
+
+      act(() => result.current.table.actions.toggle("notes"));
+      act(() => vi.advanceTimersByTime(300));
+      expect(shownKeys(result.current.table)).toEqual([
+        "name",
+        "price",
+        "notes",
+      ]);
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          columns: { order: ["name", "price", "notes"], hidden: [] },
+        }),
+      );
+    });
+
+    it("should let the column hook fit settings saved for an older list", () => {
+      const store = memoryStore({
+        orders: savedWith({
+          columns: { order: ["price", "gone", "name"], hidden: ["price"] },
+        }),
+      });
+      const { result } = renderTable(store);
+      expect(shownKeys(result.current.table)).toEqual(["name"]);
+      expect(store.save).not.toHaveBeenCalled();
+    });
+
+    it("should go back to the list's defaults on clear", () => {
+      const store = memoryStore({
+        orders: savedWith({
+          columns: { order: ["price", "name"], hidden: [] },
+        }),
+      });
+      const { result } = renderTable(store);
+      expect(shownKeys(result.current.table)[0]).toBe("price");
+      act(() => result.current.saved.clear());
+      expect(result.current.saved.values.columns).toBeNull();
+      expect(shownKeys(result.current.table)).toEqual(["name", "price"]);
+    });
+  });
+
+  describe("parts and values typed with an interface", () => {
+    interface TableValues {
+      filter: FilterDefinition;
+      sort: Sort | null;
+    }
+    interface TableParts {
+      filter: StatePart<FilterDefinition>;
+      sort: StatePart<Sort | null>;
+    }
+
+    it("should take parts declared as an interface", () => {
+      const parts: TableParts = { filter: filterStatePart(), sort: sortPart };
+      const { result } = renderHook(() =>
+        useSavedTableState({ id: "orders", parts, store: memoryStore() }),
+      );
+      expectTypeOf(result.current.values.sort).toEqualTypeOf<Sort | null>();
+      expect(result.current.values.sort).toBeNull();
+    });
+
+    it("should take values declared as an interface", () => {
+      const parts: StateParts<TableValues> = {
+        filter: filterStatePart(),
+        sort: sortPart,
+      };
+      const { result } = renderHook(() =>
+        useSavedTableState<TableValues>({
+          id: "orders",
+          parts,
+          store: memoryStore(),
+        }),
+      );
+      const values: Readonly<TableValues> = result.current.values;
+      act(() => result.current.set.sort(PRICE_SORT));
+      expect(values.sort).toBeNull();
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+    });
+  });
+
+  describe("a rule that spans parts (`check`)", () => {
+    /** Drops the sort when the saved filter was not usable. */
+    const dropSortWithoutFilter: NonNullable<Options["check"]> = (
+      _values,
+      defaulted,
+    ) => (defaulted.includes("filter") ? { sort: null } : undefined);
+
+    it("should correct the loaded parts, and save nothing", () => {
+      const store = memoryStore({
+        orders: savedWith({ filter: "broken", sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store, check: dropSortWithoutFilter });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toBeNull();
+      act(() => vi.advanceTimersByTime(1000));
+      expect(store.save).not.toHaveBeenCalled();
+    });
+
+    it("should leave the parts alone when the rule has nothing to correct", () => {
+      const store = memoryStore({
+        orders: savedWith({ filter: priceFilter("10"), sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store, check: dropSortWithoutFilter });
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+    });
+
+    it("should use the parsed parts when the rule throws", () => {
+      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const onError = vi.fn();
+      const { result } = renderSaved({
+        store,
+        onError,
+        check: () => {
+          throw new Error("the rule broke");
+        },
+      });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it("should correct the state a server already read", () => {
+      const { result } = renderSaved({
+        store: memoryStore(),
+        initialSaved: savedWith({ filter: "broken", sort: NAME_SORT }),
+        check: dropSortWithoutFilter,
+      });
+      expect(result.current.values.sort).toBeNull();
+    });
+
+    it("should correct what a store that answers later hands back", async () => {
+      const load = deferred<unknown>();
+      const store = { ...memoryStore(), load: () => load.promise };
+      const { result } = renderSaved({ store, check: dropSortWithoutFilter });
+      load.resolve(savedWith({ filter: "broken", sort: NAME_SORT }));
+      await settle();
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toBeNull();
+    });
+
+    it("should save the corrected part with the next change", () => {
+      const store = memoryStore({
+        orders: savedWith({ filter: "broken", sort: NAME_SORT }),
+      });
+      const { result } = renderSaved({ store, check: dropSortWithoutFilter });
+      act(() => result.current.set.filter(priceFilter("10")));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          filter: priceFilter("10"),
+          sort: null,
+          columns: COLUMN_DEFAULTS,
+        }),
+      );
+    });
+  });
+
+  describe("state carried over from an older place", () => {
+    /** What the app kept under a key of its own, before it used this hook. */
+    const OLD = { filter: priceFilter("10"), sort: NAME_SORT };
+
+    /** The older place: one value, which the app's `read` and `remove` reach. */
+    function oldPlace(value: unknown = OLD) {
+      const place = {
+        value,
+        read: vi.fn((): unknown => place.value),
+        remove: vi.fn((): void => {
+          place.value = undefined;
+        }),
+      };
+      return place;
+    }
+
+    it("should show the old state when nothing is saved under the key", () => {
+      const old = oldPlace();
+      const inner = memoryStore();
+      const store = carryOverStore(inner, old);
+      const { result } = renderSaved({ store });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.filter).toEqual(priceFilter("10"));
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+      expect(result.current.values.columns).toEqual(COLUMN_DEFAULTS);
+    });
+
+    it("should write nothing and keep the old entry until a part changes", async () => {
+      const old = oldPlace();
+      const inner = memoryStore();
+      const { result, unmount } = renderSaved({
+        store: carryOverStore(inner, old),
+      });
+      act(() => vi.advanceTimersByTime(1000));
+      await act(() => result.current.flush());
+      act(() => window.dispatchEvent(new Event("pagehide")));
+      unmount();
+      expect(inner.save).not.toHaveBeenCalled();
+      expect(inner.remove).not.toHaveBeenCalled();
+      expect(old.remove).not.toHaveBeenCalled();
+    });
+
+    it("should read the old state loosely, part by part", () => {
+      const old = oldPlace({ filter: "broken", sort: NAME_SORT, columns: 7 });
+      const { result } = renderSaved({
+        store: carryOverStore(memoryStore(), old),
+      });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values).toEqual({
+        filter: EMPTY_FILTER,
+        columns: COLUMN_DEFAULTS,
+        sort: NAME_SORT,
+      });
+    });
+
+    it("should start from the defaults when the old place cannot be read", () => {
+      const old = oldPlace();
+      old.read.mockImplementation(() => {
+        throw new Error("blocked");
+      });
+      const onError = vi.fn();
+      const { result } = renderSaved({
+        store: carryOverStore(memoryStore(), old),
+        onError,
+      });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it("should use the state saved under the key, not the old one", () => {
+      const old = oldPlace();
+      const inner = memoryStore({ orders: savedWith({ sort: PRICE_SORT }) });
+      const { result } = renderSaved({ store: carryOverStore(inner, old) });
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+      expect(result.current.values.filter).toEqual(EMPTY_FILTER);
+      expect(old.read).not.toHaveBeenCalled();
+    });
+
+    it("should save every carried part with the first change, then remove the old entry", () => {
+      const old = oldPlace();
+      const inner = memoryStore();
+      const { result } = renderSaved({ store: carryOverStore(inner, old) });
+      act(() => result.current.set.sort(PRICE_SORT));
+      expect(old.remove).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(300));
+      expect(inner.items.get("orders")).toEqual(
+        savedWith({
+          filter: priceFilter("10"),
+          sort: PRICE_SORT,
+          columns: COLUMN_DEFAULTS,
+        }),
+      );
+      expect(old.remove).toHaveBeenCalledOnce();
+    });
+
+    it("should keep the old entry after a save when the app passes no `remove`", () => {
+      const old = oldPlace();
+      const inner = memoryStore();
+      const { result } = renderSaved({
+        store: carryOverStore(inner, { read: old.read }),
+      });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(inner.items.has("orders")).toBe(true);
+      expect(old.value).toBe(OLD);
+    });
+
+    it("should carry the state over when the wrapper is made on every render", () => {
+      const old = oldPlace();
+      const inner = memoryStore();
+      const { result, rerender } = renderHook(() =>
+        useSavedTableState({
+          id: "orders",
+          parts: PARTS,
+          store: carryOverStore(inner, old),
+        }),
+      );
+      rerender();
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      expect(old.read).toHaveBeenCalledOnce();
+      expect(inner.items.get("orders")).toMatchObject({
+        parts: { filter: priceFilter("10"), sort: PRICE_SORT },
+      });
+      expect(old.remove).toHaveBeenCalledOnce();
+    });
+
+    describe("clear", () => {
+      it("should remove the old entry too, so it does not come back", () => {
+        const old = oldPlace();
+        const inner = memoryStore();
+        const first = renderSaved({ store: carryOverStore(inner, old) });
+        act(() => first.result.current.clear());
+        expect(first.result.current.values.sort).toBeNull();
+        expect(old.remove).toHaveBeenCalledOnce();
+        first.unmount();
+
+        const next = renderSaved({ store: carryOverStore(inner, old) });
+        expect(next.result.current.status).toBe("ready");
+        expect(next.result.current.values.sort).toBeNull();
+        expect(next.result.current.values.filter).toEqual(EMPTY_FILTER);
+      });
+
+      it("should keep the old state away without `remove`, and leave its entry", () => {
+        const old = oldPlace();
+        const inner = memoryStore();
+        const carry = { read: old.read };
+        const first = renderSaved({ store: carryOverStore(inner, carry) });
+        act(() => first.result.current.clear());
+        first.unmount();
+        expect(old.value).toBe(OLD);
+
+        const next = renderSaved({ store: carryOverStore(inner, carry) });
+        expect(next.result.current.status).toBe("ready");
+        expect(next.result.current.values.sort).toBeNull();
+        // A change after the clear is saved as usual.
+        act(() => next.result.current.set.sort(PRICE_SORT));
+        act(() => vi.advanceTimersByTime(300));
+        expect(inner.items.get("orders")).toEqual(
+          savedWith({
+            filter: EMPTY_FILTER,
+            columns: COLUMN_DEFAULTS,
+            sort: PRICE_SORT,
+          }),
+        );
+      });
+
+      it("should report a remove whose old entry could not be removed", async () => {
+        const old = oldPlace();
+        old.remove.mockImplementation(() => {
+          throw new Error("no access");
+        });
+        const onError = vi.fn();
+        const { result } = renderSaved({
+          store: carryOverStore(memoryStore(), old),
+          onError,
+        });
+        act(() => result.current.clear());
+        expect(result.current.errorAction).toBe("remove");
+        expect(onError).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ message: "no access" }),
+          "remove",
+        );
+        await expect(result.current.flush()).resolves.toBe(false);
+      });
+    });
+
+    describe("with a store and an old place that answer later", () => {
+      it("should load, carry over, save and remove in that order", async () => {
+        const load = deferred<unknown>();
+        const read = deferred<unknown>();
+        const inner = slowStore();
+        const remove = vi.fn(async () => {});
+        const store = carryOverStore(
+          { ...inner, load: () => load.promise },
+          { read: () => read.promise, remove },
+        );
+        const { result } = renderSaved({ store });
+        expect(result.current.status).toBe("loading");
+
+        load.resolve(undefined);
+        await settle();
+        // The store found nothing, and the older place has not answered yet.
+        expect(result.current.status).toBe("loading");
+
+        read.resolve(OLD);
+        await settle();
+        expect(result.current.status).toBe("ready");
+        expect(result.current.values.sort).toEqual(NAME_SORT);
+        act(() => vi.advanceTimersByTime(1000));
+        expect(inner.save).not.toHaveBeenCalled();
+
+        act(() => result.current.set.sort(PRICE_SORT));
+        act(() => vi.advanceTimersByTime(300));
+        expect(inner.save).toHaveBeenCalledOnce();
+        // The old entry stays until the store has taken the save.
+        expect(remove).not.toHaveBeenCalled();
+
+        let flushed: Promise<boolean> | undefined;
+        act(() => {
+          flushed = result.current.flush();
+        });
+        inner.requests[0]?.answer();
+        await settle();
+        await expect(flushed).resolves.toBe(true);
+        expect(remove).toHaveBeenCalledExactlyOnceWith("orders");
+        expect(inner.items.get("orders")).toMatchObject({
+          parts: { filter: priceFilter("10"), sort: PRICE_SORT },
+        });
+      });
+
+      it("should keep a change made while the old place was answering", async () => {
+        const read = deferred<unknown>();
+        const inner = memoryStore();
+        const store = carryOverStore(inner, { read: () => read.promise });
+        const { result } = renderSaved({ store });
+        act(() => result.current.set.sort(PRICE_SORT));
+        act(() => vi.advanceTimersByTime(1000));
+        expect(inner.save).not.toHaveBeenCalled();
+
+        read.resolve(OLD);
+        await settle();
+        expect(result.current.values.sort).toEqual(PRICE_SORT);
+        expect(result.current.values.filter).toEqual(priceFilter("10"));
+        act(() => vi.advanceTimersByTime(300));
+        expect(inner.items.get("orders")).toMatchObject({
+          parts: { filter: priceFilter("10"), sort: PRICE_SORT },
+        });
+      });
+
+      it("should keep the old entry when the first save fails, and remove it after the retry", async () => {
+        const old = oldPlace();
+        const inner = slowStore();
+        const { result } = renderSaved({ store: carryOverStore(inner, old) });
+        act(() => result.current.set.sort(PRICE_SORT));
+        act(() => vi.advanceTimersByTime(300));
+        inner.requests[0]?.fail(new Error("offline"));
+        await settle();
+        expect(result.current.errorAction).toBe("save");
+        expect(old.remove).not.toHaveBeenCalled();
+
+        act(() => void result.current.flush());
+        inner.requests[1]?.answer();
+        await settle();
+        expect(result.current.status).toBe("ready");
+        expect(old.remove).toHaveBeenCalledOnce();
+      });
+
+      it("should report a load that the store rejects, and not carry over", async () => {
+        const old = oldPlace();
+        const inner = {
+          ...memoryStore(),
+          load: () => Promise.reject(new Error("offline")),
+        };
+        const { result } = renderSaved({ store: carryOverStore(inner, old) });
+        await settle();
+        expect(result.current.errorAction).toBe("load");
+        expect(result.current.values.sort).toBeNull();
+        expect(old.read).not.toHaveBeenCalled();
+      });
+    });
+
+    it("should run the rule that spans parts on the carried state", () => {
+      const old = oldPlace({ filter: "broken", sort: NAME_SORT });
+      const { result } = renderSaved({
+        store: carryOverStore(memoryStore(), old),
+        check: (_values, defaulted) =>
+          defaulted.includes("filter") ? { sort: null } : undefined,
+      });
+      expect(result.current.values.sort).toBeNull();
     });
   });
 });

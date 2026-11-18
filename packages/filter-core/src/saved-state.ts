@@ -104,8 +104,8 @@ export type StateParts<Values> = {
   readonly [Name in keyof Values]: StatePart<Values[Name]>;
 };
 
-/** How `readSavedState` treats versions. */
-export interface ReadSavedStateOptions {
+/** How a saved value's version is treated. */
+export interface SavedStateVersionOptions {
   /** The version the app writes now. Defaults to 1. */
   version?: number;
   /**
@@ -121,6 +121,30 @@ export interface ReadSavedStateOptions {
   ) => Record<string, unknown>;
 }
 
+/** How `readSavedState` treats versions, and the rules that span several parts. */
+export interface ReadSavedStateOptions<Values = unknown>
+  extends SavedStateVersionOptions {
+  /**
+   * Checks the parts against each other, after each one was read by itself. Use it for a rule
+   * that spans parts: for example, to drop a saved filter's name when the filter was not usable.
+   *
+   * It gets every part's value, and the names of the parts that got their default because
+   * nothing usable was saved for them. Return the parts to correct, by name, or nothing to
+   * keep them all. A returned part replaces the read one as it is, and is not parsed again.
+   *
+   * The step is as loose as `parse`: when it throws, the values read before it are used. It is
+   * not called when nothing usable is saved at all, because every part then has its default.
+   *
+   * @example
+   * check: (values, defaulted) =>
+   *   defaulted.includes("filter") ? { filterName: "" } : undefined,
+   */
+  check?: (
+    values: Readonly<NoInfer<Values>>,
+    defaulted: readonly (keyof NoInfer<Values>)[],
+  ) => Partial<NoInfer<Values>> | undefined;
+}
+
 /**
  * Reads a saved value into one value per part. Call it on anything a store hands back.
  *
@@ -128,6 +152,7 @@ export interface ReadSavedStateOptions {
  * - A saved part the app no longer has is ignored.
  * - A value that is not a saved state at all, or that `migrate` cannot upgrade, gives every
  *   part its default.
+ * - `check`, when given, then corrects the parts that depend on each other.
  *
  * Nothing here throws, whatever was saved.
  *
@@ -141,14 +166,18 @@ export interface ReadSavedStateOptions {
 export function readSavedState<Values>(
   saved: unknown,
   parts: StateParts<Values>,
-  options: ReadSavedStateOptions = {},
+  options: ReadSavedStateOptions<Values> = {},
 ): Values {
   const savedParts = readSavedParts(saved, options);
   const values = {} as Values;
+  const defaulted: (keyof Values)[] = [];
   for (const name of Object.keys(parts) as (keyof Values & string)[]) {
-    values[name] = readPart(parts[name], savedParts, name);
+    const read = readPart(parts[name], savedParts, name);
+    values[name] = read.value;
+    if (read.isDefault) defaulted.push(name);
   }
-  return values;
+  if (savedParts === undefined || options.check === undefined) return values;
+  return checkTogether(values, defaulted, options.check);
 }
 
 /**
@@ -158,7 +187,8 @@ export function readSavedState<Values>(
  * store.save("orders", createSavedState({ filter, columns }));
  */
 export function createSavedState(
-  values: Readonly<Record<string, unknown>>,
+  // `object`, not a record: a value typed with an `interface` is not a record to TypeScript.
+  values: object,
   version: number = DEFAULT_STATE_VERSION,
 ): SavedState {
   return { version, parts: { ...values } };
@@ -185,12 +215,43 @@ export function filterStatePart(
 }
 
 /**
- * The column part of a table's state: which columns are shown, and in what order. The saved
- * settings are fitted to the column list with `reconcileColumnSettings`.
+ * The column part of a table's state: which columns are shown, and in what order.
+ *
+ * With the column list, the saved settings are fitted to it with `reconcileColumnSettings`,
+ * and the part is never empty.
+ *
+ * Without the column list, the part is `null` until something is saved, and saved settings
+ * are handed on as they are once their shape is right. Use this form when the settings go to
+ * something that fits them to the column list itself, as the column hook of
+ * `@arvilmena/filter-react` does. The column list is then passed in one place only.
+ *
+ * @example
+ * // The settings are ready to use anywhere.
+ * const parts = { columns: columnStatePart(columns) };
+ *
+ * @example
+ * // The column hook fits the settings, so only the hook gets the column list.
+ * const parts = { columns: columnStatePart() };
+ * const saved = useSavedTableState({ id: "orders", parts });
+ * const table = useColumnSettings({
+ *   columns,
+ *   value: saved.values.columns,
+ *   onChange: saved.set.columns,
+ * });
  */
 export function columnStatePart(
   columns: readonly ColumnDefinition[],
-): StatePart<ColumnSettings> {
+): StatePart<ColumnSettings>;
+export function columnStatePart(): StatePart<ColumnSettings | null>;
+export function columnStatePart(
+  columns?: readonly ColumnDefinition[],
+): StatePart<ColumnSettings> | StatePart<ColumnSettings | null> {
+  if (columns === undefined) {
+    return {
+      defaultValue: null,
+      parse: (saved) => (isColumnSettings(saved) ? saved : undefined),
+    };
+  }
   return {
     defaultValue: defaultColumnSettings(columns),
     parse: (saved) => reconcileColumnSettings(columns, saved),
@@ -210,7 +271,7 @@ export function columnStatePart(
  */
 export function readSavedParts(
   saved: unknown,
-  options: ReadSavedStateOptions = {},
+  options: SavedStateVersionOptions = {},
 ): Record<string, unknown> | undefined {
   if (!isRecord(saved) || !isRecord(saved.parts)) return undefined;
   const current = options.version ?? DEFAULT_STATE_VERSION;
@@ -227,28 +288,70 @@ export function readSavedParts(
   }
 }
 
-/** One part's value: the saved one when its `parse` accepts it, and the default otherwise. */
+/**
+ * One part's value: the saved one when its `parse` accepts it, and the default otherwise.
+ * `isDefault` tells which of the two it is.
+ */
 function readPart<Value>(
   part: StatePart<Value>,
   savedParts: Record<string, unknown> | undefined,
   name: string,
-): Value {
+): { value: Value; isDefault: boolean } {
+  const fallback = { value: part.defaultValue, isDefault: true };
   // `Object.hasOwn`, not a plain read: a part named like something every object carries
   // ("toString") must not pick that up as its saved value.
   if (savedParts === undefined || !Object.hasOwn(savedParts, name)) {
-    return part.defaultValue;
+    return fallback;
   }
   try {
     const value = part.parse(savedParts[name]);
-    return value === undefined ? part.defaultValue : value;
+    return value === undefined ? fallback : { value, isDefault: false };
   } catch {
-    return part.defaultValue;
+    return fallback;
+  }
+}
+
+/**
+ * The values after the app's `check` has corrected them. Only parts the app named are taken
+ * from its answer. When `check` throws, or answers with nothing usable, `values` come back.
+ */
+function checkTogether<Values>(
+  values: Values,
+  defaulted: readonly (keyof Values)[],
+  check: NonNullable<ReadSavedStateOptions<Values>["check"]>,
+): Values {
+  try {
+    // A copy goes in, so a `check` that changes it and then throws leaves `values` whole.
+    const corrections: unknown = check({ ...values }, defaulted);
+    if (!isRecord(corrections)) return values;
+    const corrected = { ...values };
+    for (const name of Object.keys(values as object) as (keyof Values)[]) {
+      // `undefined` is no value for a part: it means "leave this one".
+      if (
+        Object.hasOwn(corrections, name) &&
+        corrections[name as string] !== undefined
+      ) {
+        corrected[name] = corrections[name as string] as Values[keyof Values];
+      }
+    }
+    return corrected;
+  } catch {
+    return values;
   }
 }
 
 /** Whether the value is an object that is not a list. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Whether a saved value has the shape of column settings: two lists of keys. */
+function isColumnSettings(value: unknown): value is ColumnSettings {
+  return isRecord(value) && isKeyList(value.order) && isKeyList(value.hidden);
+}
+
+function isKeyList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((key) => typeof key === "string");
 }
 
 /** Whether a saved value can be the top group of a filter. */

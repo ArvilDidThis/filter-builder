@@ -315,6 +315,18 @@ hook's options and guarantees. The
 [filter-core README](packages/filter-core/README.md#saved-table-state) describes the key, the
 saved format and the stores, which need no React.
 
+Two options go beyond the example:
+
+- **State the app kept elsewhere before.** Wrap the store in `carryOverStore` to show state
+  from an older key when nothing is saved under the new one: see
+  [State the app kept elsewhere before](packages/filter-react/README.md#state-the-app-kept-elsewhere-before).
+- **A rule that spans parts.** Pass `check` to correct one part from what another turned out
+  to be: see [A rule that spans parts](packages/filter-react/README.md#a-rule-that-spans-parts).
+
+The parts may be built inside the component, and `columnStatePart()` with no column list
+lets you pass the list to the column hook alone: see
+[Where to build the parts](packages/filter-react/README.md#where-to-build-the-parts).
+
 A browser may end a closing tab before its last change is saved. In this library's tests,
 the engine of Safari did. An app that leaves a page itself should wait for `saved.flush()`
 first: see
