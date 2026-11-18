@@ -102,6 +102,13 @@ export interface CookieStoreOptions extends StorePrefixOptions {
    * true with `sameSite: "none"`, which browsers require.
    */
   secure?: boolean;
+  /**
+   * The most bytes one cookie may take, counting its name and its encoded value. Defaults to
+   * 4096, the most a browser keeps, and a larger number is cut down to that. Lower it when
+   * several tables save cookies, because every cookie is sent with every request and a server
+   * refuses a request whose headers grow too large.
+   */
+  maxBytes?: number;
 }
 
 /** The state does not fit in a cookie, so nothing was written. */
@@ -111,16 +118,16 @@ export class CookieTooLargeError extends Error {
   readonly key: string;
   /** The bytes the cookie would have taken. */
   readonly size: number;
-  /** The bytes a cookie can hold. */
+  /** The bytes the cookie may hold: the store's `maxBytes`. */
   readonly limit: number;
 
-  constructor(key: string, size: number) {
+  constructor(key: string, size: number, limit: number = COOKIE_SIZE_LIMIT) {
     super(
-      `The saved state for "${key}" takes ${size} bytes as a cookie, and a cookie holds ${COOKIE_SIZE_LIMIT}. Nothing was saved. Save fewer parts, or use another store.`,
+      `The saved state for "${key}" takes ${size} bytes as a cookie, and the cookie may hold ${limit}. Nothing was saved. Save fewer parts, or use another store.`,
     );
     this.key = key;
     this.size = size;
-    this.limit = COOKIE_SIZE_LIMIT;
+    this.limit = limit;
   }
 }
 
@@ -131,6 +138,14 @@ export class CookieTooLargeError extends Error {
  * A cookie holds about 4 KB. `save` throws a `CookieTooLargeError` for a larger value and
  * writes nothing, so a value that was saved before stays as it was.
  *
+ * Only a small state fits. The value is encoded to be safe in a cookie, which makes the JSON
+ * about twice as long, so about 2 KB of state fills the cookie. Each key is a cookie of its
+ * own, and the browser sends them all with every request. Several of them can pass the size a
+ * server accepts for a request's headers (often 8 KB in total), and the server then refuses
+ * every request. Give each table a `name` or an `id`, so that the page path is not used as the
+ * key: that adds a cookie per page. Lower `maxBytes` to cap each cookie. For a larger state,
+ * use `fetchStore` or `localStorageStore`.
+ *
  * Where there is no `document` (on a server), `load` finds nothing and `save` and `remove` do
  * nothing.
  *
@@ -139,6 +154,10 @@ export class CookieTooLargeError extends Error {
  */
 export function cookieStore(options: CookieStoreOptions = {}): StateStore {
   const { maxAgeDays = 365, path = "/", sameSite = "lax" } = options;
+  const limit = Math.min(
+    options.maxBytes ?? COOKIE_SIZE_LIMIT,
+    COOKIE_SIZE_LIMIT,
+  );
 
   const write = (name: string, value: string, maxAgeSeconds: number): void => {
     const page = findDocument();
@@ -169,7 +188,7 @@ export function cookieStore(options: CookieStoreOptions = {}): StateStore {
       const text = encodeURIComponent(JSON.stringify(value));
       // Encoded text is plain ASCII, so its length is its size in bytes. The 1 is the "=".
       const size = name.length + 1 + text.length;
-      if (size > COOKIE_SIZE_LIMIT) throw new CookieTooLargeError(key, size);
+      if (size > limit) throw new CookieTooLargeError(key, size, limit);
       write(name, text, Math.round(maxAgeDays * SECONDS_PER_DAY));
     },
     remove(key) {

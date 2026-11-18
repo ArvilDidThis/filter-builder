@@ -248,6 +248,33 @@ describe("cookieStore", () => {
     expect(written).toHaveLength(1);
   });
 
+  it("should refuse a value larger than the app allows", () => {
+    const { written } = stubDocument();
+    const store = cookieStore({ prefix: "", maxBytes: 100 });
+    // The name "k", the "=" and a JSON text in quotes: 1 + 1 + (2 * 3 + length) bytes.
+    store.save("k", "x".repeat(100 - 8));
+    expect(written).toHaveLength(1);
+
+    let error: unknown;
+    try {
+      store.save("k", "x".repeat(100 - 7));
+    } catch (thrown) {
+      error = thrown;
+    }
+    expect(error).toBeInstanceOf(CookieTooLargeError);
+    expect(error).toMatchObject({ key: "k", size: 101, limit: 100 });
+    expect((error as Error).message).toContain("may hold 100");
+    expect(written).toHaveLength(1);
+  });
+
+  it("should never allow more than a browser keeps", () => {
+    stubDocument();
+    const store = cookieStore({ prefix: "", maxBytes: 10_000 });
+    expect(() => store.save("k", "x".repeat(4096 - 7))).toThrow(
+      expect.objectContaining({ limit: 4096 }),
+    );
+  });
+
   it("should do nothing where there is no document", () => {
     const store = cookieStore();
     expect(store.load("orders")).toBeUndefined();
