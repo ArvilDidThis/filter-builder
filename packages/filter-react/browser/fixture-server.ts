@@ -45,22 +45,32 @@ export function fixturePages(options: {
   // is written for Node to load itself. It is started on the first page that needs it.
   let renderer: ReturnType<typeof createViteServer> | undefined;
   const startRenderer = (root: string) => {
-    renderer ??= createViteServer({
-      root,
-      configFile: false,
-      appType: "custom",
-      resolve: { alias: options.alias },
-      server: { middlewareMode: true, ws: false, watch: null },
-      optimizeDeps: { noDiscovery: true },
-      logLevel: "error",
-    });
+    if (renderer === undefined) {
+      const starting = createViteServer({
+        root,
+        configFile: false,
+        appType: "custom",
+        resolve: { alias: options.alias },
+        server: { middlewareMode: true, ws: false, watch: null },
+        optimizeDeps: { noDiscovery: true },
+        logLevel: "error",
+      });
+      renderer = starting;
+      // A start that failed is forgotten, so the next page tries again instead of being
+      // handed the same failure for the rest of the run.
+      starting.catch(() => {
+        if (renderer === starting) renderer = undefined;
+      });
+    }
     return renderer;
   };
 
   return {
     name: "fixture-pages",
     async closeBundle() {
-      await (await renderer)?.close();
+      // A start that failed left nothing to close.
+      const started = await renderer?.catch(() => undefined);
+      await started?.close();
     },
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
