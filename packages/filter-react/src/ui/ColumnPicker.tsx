@@ -21,6 +21,7 @@ import type {
   ColumnSettingsState,
 } from "../useColumnSettings";
 import { useColumnDrag } from "./useColumnDrag";
+import { useKeepOnScreen } from "./useKeepOnScreen";
 import { useOutsidePointerDown } from "./useOutsidePointerDown";
 
 // A ready-made column picker with default styling: a button that opens a list of every column.
@@ -149,7 +150,10 @@ export interface ColumnPickerProps<
   state: ColumnSettingsState<Column>;
   /** Replace some of the wording, e.g. `{ trigger: "Edit columns" }`. */
   labels?: Partial<ColumnPickerLabels>;
-  /** Which edge of the button the list lines up with. Use "end" near a page's right edge. */
+  /**
+   * Which edge of the button the list lines up with. Use "end" near a page's right edge. Where
+   * the list would run off the screen, it moves sideways just far enough to stay on it.
+   */
   align?: "start" | "end";
   /** Draws the button that opens the picker. Spread `props` onto the button. */
   renderTrigger?: (
@@ -220,6 +224,9 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     if (returnFocus) triggerRef.current?.focus();
   };
   useOutsidePointerDown(rootRef, open, () => close(false));
+  // The list lines up with the side of the button that `align` names. On a narrow screen that
+  // may leave it too little room, so it is moved back inside the screen.
+  useKeepOnScreen(popoverRef, open);
 
   // Opening moves the keyboard focus into the list, so that Tab reaches its first control and
   // a screen reader reads out the list's name.

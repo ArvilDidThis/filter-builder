@@ -197,6 +197,9 @@ reports the difference. Saving table state is planned as a feature of its own.
 | `renderRow`     | Draws the inside of one row from the `checkboxProps` and `handleProps` |
 | `className`     | Added to the picker's own class                                        |
 
+The list stays on the screen. Where lining it up with the button would run it past an edge of
+the screen, it moves sideways just far enough to fit, and on a short screen it scrolls sooner.
+
 Spread all of `handleProps` onto your handle. It carries the `touch-action` style that lets a
 finger drag the handle. Keep the same `renderRow` function between renders (see `useCallback`),
 or every row redraws whenever the picker does. `labels` may be written in place.

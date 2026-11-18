@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
 import { placeFromSlot, slotAt } from "./useColumnDrag";
+import { shiftToFit } from "./useKeepOnScreen";
 
 const COLUMNS: readonly ColumnDefinition[] = [
   { key: "name", label: "Name", hideable: false },
@@ -1310,6 +1311,119 @@ describe("ColumnPicker", () => {
     });
   });
 
+  describe("staying on the screen", () => {
+    const popover = () => screen.getByRole("dialog");
+    const shift = () => popover().style.getPropertyValue("--fb-popover-shift");
+    const room = () => popover().style.getPropertyValue("--fb-popover-room");
+
+    /**
+     * Gives the test page a screen size, and every popover a place on it, which the test page
+     * does not do itself. `left` is where the style sheet alone would put the popover. Like a
+     * browser, the place reported includes the shift the popover carries.
+     */
+    function layOutScreen(
+      size: { width: number; height: number },
+      place: { left: number; top: number; width: number },
+    ) {
+      const page = document.documentElement;
+      vi.spyOn(page, "clientWidth", "get").mockImplementation(() => size.width);
+      vi.spyOn(page, "clientHeight", "get").mockImplementation(
+        () => size.height,
+      );
+      vi.spyOn(
+        HTMLElement.prototype,
+        "getBoundingClientRect",
+      ).mockImplementation(function (this: HTMLElement) {
+        const moved =
+          Number.parseFloat(
+            this.style.getPropertyValue("--fb-popover-shift"),
+          ) || 0;
+        const left = place.left + moved;
+        return {
+          left,
+          right: left + place.width,
+          top: place.top,
+          width: place.width,
+        } as DOMRect;
+      });
+    }
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("should leave the popover alone on a page that has no layout", () => {
+      renderPicker();
+      // The test page reports a size of 0 for everything.
+      expect(shift()).toBe("");
+      expect(room()).toBe("");
+    });
+
+    it("should leave a popover that fits where the style sheet put it", () => {
+      layOutScreen(
+        { width: 320, height: 568 },
+        { left: 16, top: 60, width: 288 },
+      );
+      renderPicker();
+      expect(shift()).toBe("");
+      // The height left below the popover's top edge, less the margin.
+      expect(room()).toBe("500px");
+    });
+
+    it("should move a popover that runs past the right edge back inside", () => {
+      const size = { width: 320, height: 568 };
+      layOutScreen(size, { left: 122, top: 60, width: 288 });
+      renderPicker();
+      expect(shift()).toBe("-98px");
+      // Drawing the picker again measures again, and comes to the same answer.
+      fireEvent.click(checkbox("Price"));
+      expect(shift()).toBe("-98px");
+    });
+
+    it("should move a popover that starts left of the screen back inside", () => {
+      layOutScreen(
+        { width: 320, height: 568 },
+        { left: -90, top: 60, width: 288 },
+      );
+      renderPicker({ align: "end" });
+      expect(shift()).toBe("98px");
+    });
+
+    it("should measure again when the window changes size, and only while open", () => {
+      const size = { width: 800, height: 600 };
+      layOutScreen(size, { left: 400, top: 60, width: 288 });
+      renderPicker();
+      expect(shift()).toBe("");
+
+      size.width = 500;
+      size.height = 300;
+      fireEvent(window, new Event("resize"));
+      expect(shift()).toBe("-196px");
+      expect(room()).toBe("232px");
+
+      // Wide again: the popover goes back to where the style sheet puts it.
+      size.width = 800;
+      fireEvent(window, new Event("resize"));
+      expect(shift()).toBe("");
+
+      const stopped = vi.spyOn(window, "removeEventListener");
+      fireEvent.keyDown(popover(), { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(stopped).toHaveBeenCalledWith("resize", expect.any(Function));
+    });
+
+    it("should not redraw a row to move the popover", () => {
+      const size = { width: 800, height: 600 };
+      layOutScreen(size, { left: 400, top: 60, width: 288 });
+      render(<ManyApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      drawn.mockClear();
+      size.width = 500;
+      fireEvent(window, new Event("resize"));
+      expect(shift()).toBe("-196px");
+      expect(drawn).not.toHaveBeenCalled();
+    });
+  });
+
   describe("with many columns", () => {
     it("should redraw only the row that was ticked", () => {
       drawn.mockClear();
@@ -1379,5 +1493,37 @@ describe("placeFromSlot", () => {
   it("should count one less for a slot below the row", () => {
     expect(placeFromSlot(0, 3)).toBe(2);
     expect(placeFromSlot(2, 0)).toBe(0);
+  });
+});
+
+describe("shiftToFit", () => {
+  // A screen 320 pixels wide and a box 288 wide. With the margin of 8 on both sides, the
+  // box's left edge may be anywhere from 8 to 24.
+  it("should leave a box that fits where it is", () => {
+    expect(shiftToFit(8, 288, 320)).toBe(0);
+    expect(shiftToFit(24, 288, 320)).toBe(0);
+  });
+
+  it("should move a box left only as far as its right edge is past the screen", () => {
+    expect(shiftToFit(122, 288, 320)).toBe(-98);
+    expect(shiftToFit(25, 288, 320)).toBe(-1);
+  });
+
+  it("should move a box right only as far as its left edge is past the screen", () => {
+    expect(shiftToFit(-90, 288, 320)).toBe(98);
+    expect(shiftToFit(7, 288, 320)).toBe(1);
+  });
+
+  it("should keep the left edge of a box wider than the screen on the screen", () => {
+    expect(shiftToFit(100, 400, 320)).toBe(-92);
+  });
+
+  it("should move in whole pixels", () => {
+    expect(shiftToFit(122.4, 288, 320)).toBe(-98);
+  });
+
+  it("should move nothing on a page that reports no width", () => {
+    expect(shiftToFit(0, 0, 0)).toBe(0);
+    expect(shiftToFit(500, 288, 0)).toBe(0);
   });
 });

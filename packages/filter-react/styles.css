@@ -450,6 +450,16 @@
   border-radius: var(--fb-radius);
   background: var(--fb-popover-bg);
   box-shadow: 0 8px 24px var(--fb-shadow);
+  /* The picker sets these two on the popover once it has measured it. The first moves a
+     popover that would run off the screen back inside it. The second is the height the
+     screen has left below the popover's top edge. */
+  --fb-popover-shift: 0px;
+  --fb-popover-room: 100vh;
+  translate: var(--fb-popover-shift) 0;
+  /* On a short screen the list scrolls sooner, so the buttons below it stay in reach. Under
+     a button near the bottom of the screen the popover keeps a usable height, and the page
+     scrolls to show the rest of it. */
+  max-height: max(var(--fb-popover-room), 10rem);
 }
 
 /* For a picker near the right edge of the page. */
