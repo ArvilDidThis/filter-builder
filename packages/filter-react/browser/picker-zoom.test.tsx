@@ -12,6 +12,10 @@ import { tablePagePath } from "./fixture-paths";
 // Chromium only. Its debugging interface puts two real fingers on the screen and moves them
 // apart. Playwright has no way to zoom like this in Firefox or WebKit, so nothing is checked
 // there: `ColumnPicker.test.tsx` covers the sums with a made-up part in view.
+//
+// Not on Linux either, where CI runs. Chromium there takes the two fingers and does not
+// zoom, with or without its `--enable-pinch` switch, so the test has nothing to check. It
+// runs on a developer's Mac.
 
 /** The gap the picker keeps between its popover and the edge of the part in view. */
 const MARGIN = 8;
@@ -27,7 +31,7 @@ function isInView(reading: ZoomReading): boolean {
   );
 }
 
-describe.runIf(server.browser === "chromium")(
+describe.runIf(server.browser === "chromium" && server.platform !== "linux")(
   "the popover on a page zoomed with two fingers",
   () => {
     test("moves into the part in view, and follows it when the page is slid", async () => {
