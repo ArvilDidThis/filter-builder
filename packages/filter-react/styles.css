@@ -431,7 +431,8 @@
   flex-direction: column;
   gap: 0.25rem;
   width: max-content;
-  min-width: 14rem;
+  /* Never wider than a narrow screen, as the widest size below. */
+  min-width: min(14rem, 90vw);
   max-width: min(22rem, 90vw);
   padding: 0.25rem;
   border: 1px solid var(--fb-border);
