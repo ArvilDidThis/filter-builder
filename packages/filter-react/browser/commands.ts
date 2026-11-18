@@ -74,6 +74,9 @@ function debugLine(context: BrowserCommandContext): Promise<CDPSession> {
   return line;
 }
 
+/** The pages with a finger on their screen, put there by `touch` and not lifted yet. */
+const touched = new WeakSet<Page>();
+
 /**
  * Puts a finger on the screen, moves it, or lifts it. Playwright itself can only tap, so this
  * asks Chromium's debugging interface for a real touch. The other browsers have no such way.
@@ -88,6 +91,22 @@ const touch: BrowserCommand<
   const touchPoints =
     point === undefined ? [] : [await toWindow(context, point)];
   await line.send("Input.dispatchTouchEvent", { type, touchPoints });
+  if (phase === "end") touched.delete(context.page);
+  else touched.add(context.page);
+};
+
+/**
+ * Lifts a finger that `touch` left on the screen, as when a test failed before it lifted it.
+ * Does nothing when no finger is down, so it is safe after every test and in every browser.
+ */
+const liftFinger: BrowserCommand<[]> = async (context) => {
+  if (!touched.has(context.page)) return;
+  touched.delete(context.page);
+  const line = await debugLine(context);
+  await line.send("Input.dispatchTouchEvent", {
+    type: "touchCancel",
+    touchPoints: [],
+  });
 };
 
 /** Tells the page that the person's device is set to a light or a dark theme. */
@@ -167,6 +186,7 @@ export const browserCommands = {
   mouseUp,
   tap,
   touch,
+  liftFinger,
   colorScheme,
   hasBaseline,
   visitAndLeave,
@@ -179,6 +199,7 @@ declare module "vitest/browser" {
     mouseUp: () => Promise<void>;
     tap: (point: Point) => Promise<void>;
     touch: (phase: "start" | "move" | "end", point?: Point) => Promise<void>;
+    liftFinger: () => Promise<void>;
     colorScheme: (scheme: "light" | "dark") => Promise<void>;
     hasBaseline: (name: string) => Promise<boolean>;
     visitAndLeave: (

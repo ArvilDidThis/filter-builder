@@ -10,8 +10,10 @@ import { VIEWPORT } from "./viewport";
 afterEach(async () => {
   try {
     unmountAll();
-    // A test that failed mid-drag would otherwise leave the button held for the next test.
+    // A test that failed mid-drag would otherwise leave the button held, or a finger on the
+    // screen, for the next test.
     await commands.mouseUp();
+    await commands.liftFinger();
     await commands.mouseMove({ x: 0, y: 0 });
     await commands.colorScheme("light");
     await page.viewport(VIEWPORT.width, VIEWPORT.height);
