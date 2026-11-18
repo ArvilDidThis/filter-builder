@@ -212,9 +212,12 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     latest.current = { orderedColumns, labels };
   });
 
+  // A column is named by its key, not its place: the list may have changed since the row that
+  // asks for the move was drawn or picked up.
   const moveTo = useCallback(
-    (from: number, to: number) => {
+    (key: string, to: number) => {
       const { orderedColumns: list, labels: wording } = latest.current;
+      const from = list.findIndex((item) => item.column.key === key);
       const entry = list[from];
       if (entry === undefined || to < 0 || to >= list.length || to === from) {
         return;
@@ -225,7 +228,11 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     },
     [actions],
   );
-  const drag = useColumnDrag(listRef, moveTo);
+  const keys = useMemo(
+    () => orderedColumns.map((entry) => entry.column.key),
+    [orderedColumns],
+  );
+  const drag = useColumnDrag(listRef, keys, moveTo);
 
   const hiddenCount = useMemo(
     () =>
@@ -296,7 +303,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           </span>
           <ul
             className="fb-columns-list"
-            data-dragging={drag.from === null ? undefined : ""}
+            data-dragging={drag.key === null ? undefined : ""}
             ref={listRef}
           >
             {orderedColumns.map((entry, index) => (
@@ -307,7 +314,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
                 hintId={hintId}
                 index={index}
                 count={orderedColumns.length}
-                isDragging={drag.from === index}
+                isDragging={drag.key === entry.column.key}
                 key={entry.column.key}
                 moveLabel={labels.move(entry.column.label)}
                 onDragStart={drag.start}
@@ -362,8 +369,8 @@ interface RowProps<Column extends ColumnDefinition> {
   moveLabel: string;
   hintId: string;
   actions: ColumnSettingsActions<Column["key"]>;
-  onDragStart: (event: PointerEvent<HTMLElement>, index: number) => void;
-  onMove: (from: number, to: number) => void;
+  onDragStart: (event: PointerEvent<HTMLElement>, key: string) => void;
+  onMove: (key: string, to: number) => void;
   renderRow: ColumnPickerProps<Column>["renderRow"];
 }
 
@@ -406,13 +413,13 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
       "aria-label": moveLabel,
       "aria-describedby": hintId,
       "data-fb-column-handle": "",
-      onPointerDown: (event) => onDragStart(event, index),
+      onPointerDown: (event) => onDragStart(event, column.key),
       onKeyDown: (event) => {
         const to = keyTarget(event.key, index, count);
         if (to === undefined) return;
         // The arrow keys would otherwise scroll the list.
         event.preventDefault();
-        onMove(index, to);
+        onMove(column.key, to);
       },
     },
   };

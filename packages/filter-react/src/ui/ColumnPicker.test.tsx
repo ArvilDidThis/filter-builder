@@ -7,7 +7,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
@@ -43,6 +43,21 @@ function App({ extra }: { extra: Partial<ColumnPickerProps> }) {
       <ColumnPicker state={state} {...extra} />
       <Table columns={state.visibleColumns} />
       <button type="button">Elsewhere</button>
+    </>
+  );
+}
+
+/** An app whose column list changes while the picker is open. */
+function ChangingApp() {
+  const [columns, setColumns] = useState(COLUMNS);
+  const state = useColumnSettings({ columns });
+  return (
+    <>
+      <ColumnPicker state={state} />
+      <Table columns={state.visibleColumns} />
+      <button onClick={() => setColumns(COLUMNS.slice(1))} type="button">
+        Remove name
+      </button>
     </>
   );
 }
@@ -307,6 +322,40 @@ describe("ColumnPicker", () => {
       fireEvent.pointerUp(document, pointer(140));
       expect(name?.hasAttribute("data-dragging")).toBe(false);
       expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+    });
+
+    it("should move the held column when the list changes during the drag", () => {
+      render(<ChangingApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      fireEvent.pointerDown(handle("Stock"), pointer(175));
+      // "Stock" was the third row, and is now the second.
+      fireEvent.click(screen.getByRole("button", { name: "Remove name" }));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes");
+      expect(rows()[1]?.hasAttribute("data-dragging")).toBe(true);
+      fireEvent.pointerMove(document, pointer(400));
+      expect(rows()[2]?.getAttribute("data-drop")).toBe("after");
+      fireEvent.pointerUp(document, pointer(400));
+      // A drop that went by the old place would have moved "Notes", or nothing.
+      expect(listed()).toBe("⠿Price ⠿Notes ⠿Stock");
+      expect(announced()).toBe("Stock moved to position 3 of 3.");
+    });
+
+    it("should give up the drag when the held column leaves the list", () => {
+      render(<ChangingApp />);
+      fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+      layOutList();
+      fireEvent.pointerDown(handle("Name"), pointer(115));
+      fireEvent.pointerMove(document, pointer(180));
+      fireEvent.click(screen.getByRole("button", { name: "Remove name" }));
+      fireEvent.pointerUp(document, pointer(180));
+      expect(listed()).toBe("⠿Price ⠿Stock ⠿Notes");
+      expect(rows().some((row) => row.hasAttribute("data-dragging"))).toBe(
+        false,
+      );
+      expect(screen.getByRole("list").hasAttribute("data-dragging")).toBe(
+        false,
+      );
     });
 
     it("should redraw the table once, on drop, and not while dragging", () => {

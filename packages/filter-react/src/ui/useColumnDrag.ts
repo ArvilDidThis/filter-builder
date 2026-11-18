@@ -17,15 +17,15 @@ import { useEarlyEffect } from "../useEarlyEffect";
 
 /** What the column picker's list needs to drag its rows. */
 export interface ColumnDrag {
-  /** The position of the row being dragged, or `null` when none is. */
-  from: number | null;
+  /** The key of the row being dragged, or `null` when none is. */
+  key: string | null;
   /**
    * Where a drop would land: before the row at this position, or after the last row when it
    * equals the number of rows. It is `null` when a drop would change nothing.
    */
   slot: number | null;
-  /** Call from the `onPointerDown` of the handle of the row at `index`. */
-  start: (event: ReactPointerEvent<HTMLElement>, index: number) => void;
+  /** Call from the `onPointerDown` of the handle of the row with this key. */
+  start: (event: ReactPointerEvent<HTMLElement>, key: string) => void;
 }
 
 /** How close to the list's top or bottom edge the pointer scrolls the list, in pixels. */
@@ -35,6 +35,12 @@ const SCROLL_STEP = 10;
 
 /** One drag, from the press on a handle to the drop. */
 interface DragSession {
+  /**
+   * The key of the row held. The row is known by its key, not its place, because the app may
+   * change the list while the row is held, and then the same place means another row.
+   */
+  key: string;
+  /** The row's place in the list as it is now. */
   from: number;
   /** The place the row would end up at if dropped now. */
   to: number;
@@ -51,19 +57,24 @@ interface DragSession {
 
 /**
  * Keeps track of a drag in the list `listRef` points at. Each child of the list must be one
- * row. `onDrop` is called once, and only when the row landed in a new place.
+ * row, and `keys` must name the rows in the order they are drawn. Keep the same `keys` list
+ * between renders until the rows change (see `useMemo`).
+ *
+ * `onDrop` is called once, with the row's key and its new place, and only when the row landed
+ * in a new place.
  */
 export function useColumnDrag(
   listRef: RefObject<HTMLElement | null>,
-  onDrop: (from: number, to: number) => void,
+  keys: readonly string[],
+  onDrop: (key: string, to: number) => void,
 ): ColumnDrag {
-  const [held, setHeld] = useState<Pick<ColumnDrag, "from" | "slot">>(IDLE);
+  const [held, setHeld] = useState<Pick<ColumnDrag, "key" | "slot">>(IDLE);
   const session = useRef<DragSession | null>(null);
 
   // Read through a ref, so `start` can stay the same function between renders.
-  const latestOnDrop = useRef(onDrop);
+  const latest = useRef({ keys, onDrop });
   useEarlyEffect(() => {
-    latestOnDrop.current = onDrop;
+    latest.current = { keys, onDrop };
   });
 
   const end = useCallback(() => {
@@ -80,15 +91,15 @@ export function useColumnDrag(
     const drag = session.current;
     const list = listRef.current;
     if (drag === null || list === null) return;
-    // One read of the list's place per pointer move. The rows were measured when the drag
-    // began, so no row is measured here.
+    // One read of the list's place per pointer move. The rows were measured already, so no
+    // row is measured here.
     const box = list.getBoundingClientRect();
     const slot = slotAt(drag.middles, drag.clientY - box.top + list.scrollTop);
     drag.to = placeFromSlot(drag.from, slot);
     const shown = drag.to === drag.from ? null : slot;
     // The pointer moves many times a second, so the state changes only when the slot does.
     setHeld((was) =>
-      was.slot === shown ? was : { from: drag.from, slot: shown },
+      was.slot === shown ? was : { key: drag.key, slot: shown },
     );
 
     const direction = edgeDirection(drag.clientY, box);
@@ -103,20 +114,38 @@ export function useColumnDrag(
     });
   }, [listRef]);
 
+  // The app changed the list while a row was held, for example by taking a column away. A
+  // place only means something in the list it was measured in, so the held row is found again
+  // by its key and the rows are measured again.
+  useEffect(() => {
+    const drag = session.current;
+    const list = listRef.current;
+    if (drag === null || list === null) return;
+    const from = keys.indexOf(drag.key);
+    if (from === -1) {
+      // The held column itself is gone.
+      end();
+      return;
+    }
+    drag.from = from;
+    drag.middles = measureMiddles(list);
+    follow();
+  }, [keys, listRef, follow, end]);
+
   const start = useCallback<ColumnDrag["start"]>(
-    (event, index) => {
+    (event, key) => {
       const list = listRef.current;
+      const from = latest.current.keys.indexOf(key);
       // Only the main mouse button, a finger or a pen tip starts a drag.
-      if (list === null || event.button !== 0 || session.current !== null) {
+      if (
+        list === null ||
+        from === -1 ||
+        event.button !== 0 ||
+        session.current !== null
+      ) {
         return;
       }
       const { pointerId } = event;
-      const box = list.getBoundingClientRect();
-      // Every row is measured once, here, and never again during the drag.
-      const middles = Array.from(list.children, (row) => {
-        const rowBox = row.getBoundingClientRect();
-        return rowBox.top + rowBox.height / 2 - box.top + list.scrollTop;
-      });
 
       const onMove = (moved: PointerEvent) => {
         const drag = session.current;
@@ -128,7 +157,7 @@ export function useColumnDrag(
         const drag = session.current;
         if (drag === null || released.pointerId !== pointerId) return;
         end();
-        if (drag.to !== drag.from) latestOnDrop.current(drag.from, drag.to);
+        if (drag.to !== drag.from) latest.current.onDrop(drag.key, drag.to);
       };
       // The browser took the pointer away, for example to scroll the page.
       const onCancel = (cancelled: PointerEvent) => {
@@ -149,11 +178,13 @@ export function useColumnDrag(
       // A mouse wheel can scroll the list under a pointer that stays still.
       list.addEventListener("scroll", follow);
       session.current = {
-        from: index,
-        to: index,
+        key,
+        from,
+        to: from,
         pointerId,
         clientY: event.clientY,
-        middles,
+        // Every row is measured once, here, and not again while the list stays as it is.
+        middles: measureMiddles(list),
         frame: null,
         stop: () => {
           document.removeEventListener("pointermove", onMove);
@@ -165,15 +196,24 @@ export function useColumnDrag(
           if (frame != null) cancelAnimationFrame(frame);
         },
       };
-      setHeld({ from: index, slot: null });
+      setHeld({ key, slot: null });
     },
     [listRef, follow, end],
   );
 
-  return { from: held.from, slot: held.slot, start };
+  return { key: held.key, slot: held.slot, start };
 }
 
-const IDLE: Pick<ColumnDrag, "from" | "slot"> = { from: null, slot: null };
+const IDLE: Pick<ColumnDrag, "key" | "slot"> = { key: null, slot: null };
+
+/** The middle of each row of the list, measured from the top of the list's whole content. */
+function measureMiddles(list: HTMLElement): number[] {
+  const box = list.getBoundingClientRect();
+  return Array.from(list.children, (row) => {
+    const rowBox = row.getBoundingClientRect();
+    return rowBox.top + rowBox.height / 2 - box.top + list.scrollTop;
+  });
+}
 
 /**
  * The slot a pointer at height `y` is over: the number of rows whose middle is above it. So a
