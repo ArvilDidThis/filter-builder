@@ -250,9 +250,11 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     // `hadFocus` for that, in case the other control has lost the focus since.
     const focused = root.ownerDocument.activeElement;
     const isFocusLost = focused === null || focused === root.ownerDocument.body;
-    if (pending.hadFocus && isFocusLost) {
-      handleAt(listRef.current, pending.to)?.focus();
-    }
+    const handle = handleAt(listRef.current, pending.to);
+    if (pending.hadFocus && isFocusLost) handle?.focus();
+    // React may instead move the other rows around a handle that kept the focus. Nothing
+    // scrolls then, so a long list could leave the moved row out of sight.
+    if (holdsFocus(handle)) handle?.scrollIntoView({ block: "nearest" });
     announce(
       labels.moved(entry.column.label, pending.to + 1, orderedColumns.length),
     );
@@ -302,11 +304,6 @@ export function ColumnPicker<Column extends ColumnDefinition>({
         return;
       }
       const handle = handleAt(listRef.current, from);
-      // Asked of the handle's own tree, which is a shadow tree (a part of the page that hides
-      // its insides) when the picker is drawn in one. The page would name the tree's host.
-      const focused = (
-        handle?.getRootNode() as Document | ShadowRoot | undefined
-      )?.activeElement;
       const before = list.map((item) => item.column.key);
       const after = [...before];
       after.splice(from, 1);
@@ -315,7 +312,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
         to,
         before,
         after,
-        hadFocus: handle !== null && focused === handle,
+        hadFocus: holdsFocus(handle),
       };
       actions.move(entry.column.key, to);
     },
@@ -497,6 +494,15 @@ function handleAt(list: HTMLElement | null, index: number): HTMLElement | null {
       "[data-fb-column-handle]",
     ) ?? null
   );
+}
+
+/** Whether the element holds the keyboard focus. */
+function holdsFocus(element: HTMLElement | null): boolean {
+  if (element === null) return false;
+  // Asked of the element's own tree, which is a shadow tree (a part of the page that hides
+  // its insides) when the picker is drawn in one. The page would name the tree's host.
+  const tree = element.getRootNode() as Document | ShadowRoot;
+  return tree.activeElement === element;
 }
 
 /** Whether two lists of column keys hold the same keys in the same order. */

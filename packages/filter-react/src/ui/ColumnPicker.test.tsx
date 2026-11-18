@@ -423,6 +423,25 @@ describe("ColumnPicker", () => {
       expect(document.activeElement).toBe(handle("Name"));
     });
 
+    it("should bring a moved column's handle into view when it kept the focus", () => {
+      renderPicker();
+      const moved = handle("Notes");
+      const scrolled = vi.spyOn(moved, "scrollIntoView");
+      moved.focus();
+      fireEvent.keyDown(moved, { key: "Home" });
+      expect(document.activeElement).toBe(handle("Notes"));
+      expect(scrolled).toHaveBeenCalledWith({ block: "nearest" });
+    });
+
+    it("should not scroll to a moved column once the focus has gone elsewhere", () => {
+      renderPicker();
+      const moved = handle("Notes");
+      const scrolled = vi.spyOn(moved, "scrollIntoView");
+      fireEvent.keyDown(moved, { key: "Home" });
+      expect(listed()).toBe("⠿Notes ⠿Name ⠿Price ⠿Stock");
+      expect(scrolled).not.toHaveBeenCalled();
+    });
+
     it("should do nothing at either end of the list, or for another key", () => {
       renderPicker();
       fireEvent.keyDown(handle("Name"), { key: "ArrowUp" });
