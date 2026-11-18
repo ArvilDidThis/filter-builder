@@ -594,13 +594,16 @@ function createController<Values>(
     }
     saveRun += 1;
     const run = saveRun;
+    // Read now, not when the save is sent. The save may wait behind another, and by then the
+    // app may show another key with another version.
+    const { version } = latest.current;
     send(channel, {
       kind: "save",
       owner,
       build: (stored) =>
         createSavedState(
           withOtherParts(stored, change.values as object),
-          latest.current.version,
+          version,
         ),
       done: (outcome) => saveEnded(change, run, outcome),
     });

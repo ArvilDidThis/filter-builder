@@ -1360,6 +1360,27 @@ describe("useSavedTableState", () => {
       );
     });
 
+    it("should save a change that waited behind another save with its own key's version", async () => {
+      const store = slowStore();
+      const { result, rerender } = renderSaved({ store, version: 1 });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => result.current.set.sort(NAME_SORT));
+      // The second save waits behind the first, and the new key has a newer version.
+      rerender({ store, id: "archive", version: 2 });
+      expect(store.save).toHaveBeenCalledOnce();
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(store.save).toHaveBeenLastCalledWith(
+        "orders",
+        savedWith(
+          { filter: EMPTY_FILTER, columns: COLUMN_DEFAULTS, sort: NAME_SORT },
+          1,
+        ),
+      );
+    });
+
     it("should save a later change under the new key only", () => {
       const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
       const { result, rerender } = renderSaved({ store });
