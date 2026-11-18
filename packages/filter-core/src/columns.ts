@@ -241,7 +241,7 @@ export function unpinnedRange(
 ): { first: number; last: number } {
   const pins = new Map<string, ColumnPin>();
   for (const [key, column] of createColumnLookup(columns)) {
-    const pin = pinOf(column);
+    const pin = columnPin(column);
     if (pin !== undefined) pins.set(key, pin);
   }
   let first = 0;
@@ -250,6 +250,24 @@ export function unpinnedRange(
   while (first <= last && pins.get(order[first] as string) === "start") first++;
   while (last >= first && pins.get(order[last] as string) === "end") last--;
   return { first, last };
+}
+
+/**
+ * The end of the order the column is pinned to, or `undefined` for a column a person may move.
+ *
+ * A table can read `column.pinned` itself. This function also suits a column list written
+ * with `as const`, where only some columns have the property and TypeScript would turn a plain
+ * read down. It is read loosely, as an app written in plain JavaScript may pass anything: only
+ * `"start"` and `"end"` pin a column.
+ *
+ * @example
+ * <th className={columnPin(column) === "start" ? "sticky-start" : undefined}>
+ */
+export function columnPin(
+  column: ColumnDefinition | undefined,
+): ColumnPin | undefined {
+  const pin = column?.pinned;
+  return pin === "start" || pin === "end" ? pin : undefined;
 }
 
 /** Shows every column, keeping the order. */
@@ -301,7 +319,7 @@ export function orderedColumns<Column extends ColumnDefinition>(
 ): OrderedColumn<Column>[] {
   const result: OrderedColumn<Column>[] = [];
   eachColumnInOrder(columns, settings, (column, visible, hideable) => {
-    result.push({ column, visible, hideable, pinned: pinOf(column) });
+    result.push({ column, visible, hideable, pinned: columnPin(column) });
   });
   return result;
 }
@@ -399,15 +417,15 @@ function eachColumnInOrder<Column extends ColumnDefinition>(
   };
   // The columns pinned to the start, in the list's order. The order is not asked about them.
   for (const [key, column] of lookup) {
-    if (pinOf(column) === "start") place(key, column);
+    if (columnPin(column) === "start") place(key, column);
   }
   for (const key of settings.order) {
     const column = lookup.get(key);
-    if (pinOf(column) === undefined) place(key, column);
+    if (columnPin(column) === undefined) place(key, column);
   }
   // Columns the order does not name, then the columns pinned to the end.
   for (const [key, column] of lookup) {
-    if (pinOf(column) === undefined) place(key, column);
+    if (columnPin(column) === undefined) place(key, column);
   }
   for (const [key, column] of lookup) place(key, column);
 }
@@ -429,15 +447,6 @@ function isHideable(column: ColumnDefinition | undefined): boolean {
 }
 
 /**
- * The end of the order the column is pinned to, if any. Read loosely, as an app written in
- * plain JavaScript may pass anything: only the two known values pin a column.
- */
-function pinOf(column: ColumnDefinition | undefined): ColumnPin | undefined {
-  const pin = column?.pinned;
-  return pin === "start" || pin === "end" ? pin : undefined;
-}
-
-/**
  * The order with every pinned column at its end of it: the columns pinned to the start, then
  * the rest as the order has them, then the columns pinned to the end. Pinned columns stand in
  * the list's order. `order` must name every column of the lookup.
@@ -451,7 +460,7 @@ function withPinnedInPlace(
   const start: string[] = [];
   const end: string[] = [];
   for (const [key, column] of lookup) {
-    const pin = pinOf(column);
+    const pin = columnPin(column);
     if (pin === "start") start.push(key);
     else if (pin === "end") end.push(key);
   }
@@ -459,7 +468,7 @@ function withPinnedInPlace(
   const result = start;
   // Added one at a time, as a very long list cannot be handed to one `push` call.
   for (const key of order) {
-    if (pinOf(lookup.get(key)) === undefined) result.push(key);
+    if (columnPin(lookup.get(key)) === undefined) result.push(key);
   }
   for (const key of end) result.push(key);
   return result;

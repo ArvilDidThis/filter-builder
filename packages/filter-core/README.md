@@ -106,6 +106,7 @@ settings = resetColumnSettings(columns, settings);
 | `moveColumn`              | Moves one column to a place in the order             |
 | `moveColumnAroundPinned`  | The same move, leaving pinned columns in place       |
 | `unpinnedRange`           | The places of an order that a column may be moved to |
+| `columnPin`               | The end a column is pinned to, if any                |
 | `showAllColumns`          | Shows every column, keeping the order                |
 | `resetColumnSettings`     | Puts the defaults back                               |
 | `isDefaultColumnSettings` | Whether the settings are the defaults                |
@@ -156,7 +157,9 @@ The rules:
 - Pinning says where a column stands, not whether it is shown. Add `hideable: false` to keep a
   pinned column shown.
 - The library draws no table, so it adds no sticky styling. A table reads `pinned` from each
-  column of `visibleColumns`, which are the app's own column objects.
+  column of `visibleColumns`, which are the app's own column objects. `columnPin(column)` reads
+  it too, and also compiles for a list written with `as const` where only some columns are
+  pinned.
 
 ### Searching the columns
 

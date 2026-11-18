@@ -3,6 +3,7 @@ import {
   type ColumnDefinition,
   type ColumnSettings,
   columnMatchesSearch,
+  columnPin,
   defaultColumnSettings,
   isDefaultColumnSettings,
   moveColumn,
@@ -598,6 +599,32 @@ describe("pinned columns", () => {
       ];
       const { first, last } = unpinnedRange(columns, ["a", "b"]);
       expect(last).toBeLessThan(first);
+    });
+  });
+
+  describe("columnPin", () => {
+    it("should say which end a column is pinned to", () => {
+      expect(columnPin(PINNED[1])).toBe("end");
+      expect(columnPin(PINNED[2])).toBe("start");
+      expect(columnPin(PINNED[0])).toBeUndefined();
+    });
+
+    it("should read a column of a list written with `as const`", () => {
+      const exact = [
+        { key: "name", label: "Name", pinned: "start" },
+        { key: "price", label: "Price" },
+      ] as const satisfies readonly ColumnDefinition[];
+      // A plain `column.pinned` does not compile here: "price" has no such property.
+      expect(exact.map((column) => columnPin(column))).toEqual([
+        "start",
+        undefined,
+      ]);
+    });
+
+    it("should count anything else as not pinned", () => {
+      const odd = { key: "a", label: "A", pinned: "middle" };
+      expect(columnPin(odd as unknown as ColumnDefinition)).toBeUndefined();
+      expect(columnPin(undefined)).toBeUndefined();
     });
   });
 
