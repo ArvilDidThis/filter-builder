@@ -334,6 +334,17 @@
   cursor: default;
 }
 
+/* A button with nothing to do right now. It is marked with `aria-disabled` and not turned off,
+   so that it keeps the keyboard focus. Its text is dimmed, and it does not answer the pointer. */
+.fb-button[aria-disabled="true"] {
+  color: var(--fb-muted);
+  cursor: default;
+}
+
+.fb-button[aria-disabled="true"]:hover {
+  background-color: var(--fb-control-bg);
+}
+
 .fb-control:focus-visible,
 .fb-value:focus-within,
 .fb-button:focus-visible,

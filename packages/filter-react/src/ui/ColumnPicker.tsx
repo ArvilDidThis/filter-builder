@@ -33,9 +33,12 @@ export interface ColumnPickerLabels {
   hiddenCount: (count: number) => string;
   /** The name of the list, read out by a screen reader when the picker opens. */
   title: string;
-  /** The button that shows every column. */
+  /** The button that shows every column. It is unavailable while every column is shown. */
   showAll: string;
-  /** The button that puts back the starting order and visibility. */
+  /**
+   * The button that puts back the starting order and visibility. It is unavailable while the
+   * settings are the starting ones.
+   */
   reset: string;
   /** The name of a row's handle, read out by a screen reader. */
   move: (label: string) => string;
@@ -169,7 +172,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   renderRow,
   className,
 }: ColumnPickerProps<Column>) {
-  const { orderedColumns, actions } = state;
+  const { orderedColumns, allVisible, isDefault, actions } = state;
   const [open, setOpen] = useState(false);
   // What a screen reader is told. `count` goes up with every message, so that the same text
   // said twice is still a new message.
@@ -389,31 +392,29 @@ export function ColumnPicker<Column extends ColumnDefinition>({
             ))}
           </ul>
           <div className="fb-columns-footer">
-            <button
-              className="fb-button"
-              onClick={() => {
+            <FooterButton
+              onPress={() => {
                 pendingMove.current = null;
                 actions.showAll();
                 // The button stays where it is and the list barely changes, so without
                 // this a screen reader would say nothing.
                 announce(labels.showAllDone);
               }}
-              type="button"
+              unavailable={allVisible}
             >
               {labels.showAll}
-            </button>
-            <button
-              className="fb-button"
-              onClick={() => {
+            </FooterButton>
+            <FooterButton
+              onPress={() => {
                 // Reset moves columns too. A move still waiting must not take the credit.
                 pendingMove.current = null;
                 actions.reset();
                 announce(labels.resetDone);
               }}
-              type="button"
+              unavailable={isDefault}
             >
               {labels.reset}
-            </button>
+            </FooterButton>
           </div>
         </div>
       )}
@@ -425,6 +426,36 @@ export function ColumnPicker<Column extends ColumnDefinition>({
         <span key={announcement.count}>{announcement.text}</span>
       </span>
     </div>
+  );
+}
+
+/**
+ * A button below the list. While it has nothing to do it is marked as unavailable, and a press
+ * on it is ignored.
+ *
+ * It is marked with `aria-disabled`, not turned off with `disabled`. These buttons become
+ * unavailable by being pressed, and a button that turns itself off loses the keyboard focus:
+ * a person using the keyboard would be sent back to the top of the page.
+ */
+function FooterButton({
+  unavailable,
+  onPress,
+  children,
+}: {
+  /** Whether a press would change nothing. */
+  unavailable: boolean;
+  onPress: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      aria-disabled={unavailable ? true : undefined}
+      className="fb-button"
+      onClick={unavailable ? undefined : onPress}
+      type="button"
+    >
+      {children}
+    </button>
   );
 }
 

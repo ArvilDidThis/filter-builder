@@ -53,6 +53,12 @@ A button that opens a list of a table's columns. A person ticks a column to show
 its handle to move it. The handle also works from the keyboard: the arrow keys, Home and End
 move the column, and a screen reader hears each move.
 
+Below the list, "Show all" shows every column and "Reset" puts back the starting order and
+visibility. Each button is unavailable while it has nothing to do: "Show all" while every column
+is shown, and "Reset" while the settings are the starting ones. An unavailable button is dimmed
+and ignores a press, but it keeps the keyboard focus, so a person who presses "Reset" with the
+keyboard stays where they are.
+
 The `useColumnSettings` hook keeps the settings. Its result goes to the picker, and gives the
 table its columns.
 
@@ -202,10 +208,10 @@ table does not redraw for nothing.
 
 Two more values say whether a button has anything to do:
 
-| Value        | True when                                    | So this would change nothing |
-| ------------ | -------------------------------------------- | ---------------------------- |
-| `allVisible` | Every column is shown                        | `actions.showAll`            |
-| `isDefault`  | The settings are the column list's defaults  | `actions.reset`              |
+| Value        | True when                                   | So this would change nothing |
+| ------------ | ------------------------------------------- | ---------------------------- |
+| `allVisible` | Every column is shown                       | `actions.showAll`            |
+| `isDefault`  | The settings are the column list's defaults | `actions.reset`              |
 
 The example marks such a button with `aria-disabled`, not `disabled`. A button that turns itself
 `disabled` while it holds the keyboard focus loses that focus. The click needs no check of its
@@ -256,7 +262,11 @@ function ProductColumns() {
           </li>
         ))}
       </ul>
-      <button type="button" aria-disabled={allVisible} onClick={actions.showAll}>
+      <button
+        type="button"
+        aria-disabled={allVisible}
+        onClick={actions.showAll}
+      >
         Show all
       </button>
       <button type="button" aria-disabled={isDefault} onClick={actions.reset}>

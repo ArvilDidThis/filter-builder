@@ -35,9 +35,12 @@ const Table = memo(function Table({
   );
 });
 
+/** Counts the changes the picker asks for, to prove that a press did nothing. */
+const changed = vi.fn();
+
 /** An app around the picker: a table that follows it, and something else to click on. */
 function App({ extra }: { extra: Partial<ColumnPickerProps> }) {
-  const state = useColumnSettings({ columns: COLUMNS });
+  const state = useColumnSettings({ columns: COLUMNS, onChange: changed });
   return (
     <>
       <ColumnPicker state={state} {...extra} />
@@ -136,6 +139,7 @@ function ManyApp({ inlineLabels = false }: { inlineLabels?: boolean }) {
 /** Draws the app. With `open`, it also opens the picker, as most tests need. */
 function renderPicker(extra: Partial<ColumnPickerProps> = {}, open = true) {
   tableDrawn.mockClear();
+  changed.mockClear();
   const rendered = render(<App extra={extra} />);
   if (open) fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
   return rendered;
@@ -152,6 +156,11 @@ const checkbox = (label: string) =>
   screen.getByRole<HTMLInputElement>("checkbox", { name: label });
 const handle = (label: string) =>
   screen.getByRole("button", { name: `Move ${label}` });
+const showAll = () => screen.getByRole("button", { name: "Show all" });
+const reset = () => screen.getByRole("button", { name: "Reset" });
+/** Whether a button is marked as having nothing to do. */
+const isUnavailable = (button: HTMLElement): boolean =>
+  button.getAttribute("aria-disabled") === "true";
 const announced = (): string =>
   document.querySelector("[aria-live]")?.textContent ?? "";
 
@@ -286,6 +295,81 @@ describe("ColumnPicker", () => {
     expect(announced()).toBe("Alle sichtbar.");
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     expect(announced()).toBe("Zurückgesetzt.");
+  });
+
+  describe("a button with nothing to do", () => {
+    it("should mark Show all as unavailable only while every column is shown", () => {
+      renderPicker();
+      expect(isUnavailable(showAll())).toBe(false);
+      fireEvent.click(checkbox("Notes"));
+      expect(isUnavailable(showAll())).toBe(true);
+      fireEvent.click(checkbox("Price"));
+      expect(isUnavailable(showAll())).toBe(false);
+      expect(showAll().hasAttribute("aria-disabled")).toBe(false);
+    });
+
+    it("should mark Reset as unavailable only while the settings are the starting ones", () => {
+      renderPicker();
+      expect(isUnavailable(reset())).toBe(true);
+      fireEvent.keyDown(handle("Stock"), { key: "Home" });
+      expect(isUnavailable(reset())).toBe(false);
+      expect(reset().hasAttribute("aria-disabled")).toBe(false);
+      fireEvent.keyDown(handle("Stock"), { key: "End" });
+      fireEvent.keyDown(handle("Stock"), { key: "ArrowUp" });
+      expect(listed()).toBe("⠿Name ⠿Price ⠿Stock ⠿Notes");
+      expect(isUnavailable(reset())).toBe(true);
+    });
+
+    it("should make each button unavailable once it has done its work", () => {
+      renderPicker();
+      fireEvent.click(showAll());
+      expect(isUnavailable(showAll())).toBe(true);
+      expect(isUnavailable(reset())).toBe(false);
+      fireEvent.click(reset());
+      expect(isUnavailable(reset())).toBe(true);
+      expect(isUnavailable(showAll())).toBe(false);
+    });
+
+    it("should never turn the buttons off, so that they stay in the Tab order", () => {
+      renderPicker();
+      fireEvent.click(showAll());
+      expect(showAll().hasAttribute("disabled")).toBe(false);
+      fireEvent.click(reset());
+      expect(reset().hasAttribute("disabled")).toBe(false);
+      expect(reset().tabIndex).toBe(0);
+    });
+
+    it("should do nothing when an unavailable button is pressed", () => {
+      renderPicker();
+      // The settings are the starting ones, so Reset has nothing to do.
+      fireEvent.click(reset());
+      expect(changed).not.toHaveBeenCalled();
+      fireEvent.click(checkbox("Notes"));
+      changed.mockClear();
+      fireEvent.click(showAll());
+      expect(changed).not.toHaveBeenCalled();
+      expect(announced()).toBe("");
+      expect(table()).toBe("name price stock notes");
+    });
+
+    it("should keep the focus on Reset after it is pressed with the keyboard", () => {
+      renderPicker();
+      fireEvent.click(checkbox("Price"));
+      reset().focus();
+      // Enter or Space on a button reaches it as a click.
+      fireEvent.click(reset());
+      expect(table()).toBe("name price stock");
+      expect(isUnavailable(reset())).toBe(true);
+      expect(document.activeElement).toBe(reset());
+    });
+
+    it("should keep the focus on Show all after it is pressed with the keyboard", () => {
+      renderPicker();
+      showAll().focus();
+      fireEvent.click(showAll());
+      expect(isUnavailable(showAll())).toBe(true);
+      expect(document.activeElement).toBe(showAll());
+    });
   });
 
   describe("moving with the keyboard", () => {
@@ -639,6 +723,30 @@ describe("ColumnPicker", () => {
         "0.4",
       );
       expect(getComputedStyle(rows()[0] as HTMLElement).opacity).toBe("0.4");
+    });
+
+    it("should colour an unavailable button from the variables only", () => {
+      const { sheet } = renderInBuilder();
+      const button = reset();
+      expect(isUnavailable(button)).toBe(true);
+      // The test page does not work out variables, so this reads the style sheet: every
+      // rule written for an unavailable button must take its colours from `--fb-*`.
+      const rules = Array.from(sheet.sheet?.cssRules ?? [])
+        .map((rule) => rule as CSSStyleRule)
+        .filter((rule) => rule.selectorText?.includes("[aria-disabled"));
+      expect(rules.length).toBeGreaterThan(0);
+      for (const rule of rules) {
+        expect(button.matches(rule.selectorText.replace(":hover", ""))).toBe(
+          true,
+        );
+        const colours = [rule.style.color, rule.style.backgroundColor].filter(
+          (value) => value !== "",
+        );
+        expect(colours.length).toBeGreaterThan(0);
+        for (const colour of colours) {
+          expect(colour).toMatch(/^var\(--fb-[a-z-]+\)$/);
+        }
+      }
     });
 
     it("should leave the drop line to the picker's own rules", () => {
