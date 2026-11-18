@@ -169,7 +169,19 @@ summaryToText(
 ## The builder
 
 `@arvilmena/filter-react/ui` holds a ready-made builder. It uses plain HTML controls, and takes
-its colours from the `--fb-*` variables in the stylesheet.
+its colours from the `--fb-*` variables in the stylesheet. Set a variable with one class or an
+inline style, on the component or on any element around it, and your value wins:
+
+```tsx
+<FilterBuilder
+  style={{ "--fb-radius": "0" }}
+  value={filter}
+  onChange={setFilter}
+  fields={fields}
+/>;
+```
+
+The [filter-react README](packages/filter-react/README.md#theming) lists the variables.
 
 ```tsx
 import type { FieldDefinition, FilterDefinition } from "@arvilmena/filter-core";
@@ -242,6 +254,9 @@ function Products() {
   );
 }
 ```
+
+A column with `pinned: "start"` or `pinned: "end"` keeps its place at that end of the table,
+and the picker shows it as fixed. A long list has a search box that narrows it by column name.
 
 The picker works with a mouse, with touch and with a keyboard. To draw your own picker, use the
 hook alone: it returns every column in order, the visible columns and the actions. The
