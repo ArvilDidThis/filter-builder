@@ -40,6 +40,12 @@ export interface UseColumnSettingsOptions<
 /**
  * Every change a column picker can make. An action that changes nothing does not call
  * `onChange`.
+ *
+ * Call an action from an event handler, or from a `useEffect`. An action reads the options of the
+ * last render React put on screen, and it gets them in a layout effect (one that runs before
+ * the browser paints) of the component that calls the hook. A layout effect of a child
+ * component runs before that one. So an action called there, in the very render that passes a
+ * new `onChange`, `columns` or `value`, still uses the ones from the render before.
  */
 export interface ColumnSettingsActions<Key extends string = string> {
   /** Shows or hides one column. A column that cannot be hidden stays shown. */
