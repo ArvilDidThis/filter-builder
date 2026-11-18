@@ -43,13 +43,23 @@ settings are plain JSON, so an app can store them. Every function is pure. A fun
 both the column list and the settings takes the column list first.
 
 A function that takes settings and returns settings hands back the same object when nothing
-changed. Those are `setColumnVisible`, `moveColumn`, `showAllColumns`, `resetColumnSettings` and
-`reconcileColumnSettings`. The others, `visibleColumns`, `orderedColumns` and
+changed. Those are `setColumnVisible`, `moveColumn`, `moveColumnAroundPinned`, `showAllColumns`,
+`resetColumnSettings` and `reconcileColumnSettings`. The others, `visibleColumns`, `orderedColumns` and
 `defaultColumnSettings`, build a new result on each call. The React hook `useColumnSettings`
 memoises them (keeps the result until its inputs change).
 
 `isDefaultColumnSettings` answers whether a reset would change anything, so a picker can turn
 its reset button off.
+
+A column definition has these parts:
+
+| Part            | Means                                                           |
+| --------------- | --------------------------------------------------------------- |
+| `key`           | Stored in the settings. Unique in the list.                     |
+| `label`         | The column's name, as a picker shows it.                        |
+| `hideable`      | `false` keeps the column shown. Defaults to `true`.             |
+| `defaultHidden` | `true` hides the column until a person shows it.                |
+| `pinned`        | `"start"` or `"end"` keeps the column at that end of the order. |
 
 ```ts
 import {
@@ -94,11 +104,57 @@ settings = resetColumnSettings(columns, settings);
 | `reconcileColumnSettings` | Fits saved settings to the column list               |
 | `setColumnVisible`        | Shows or hides one column                            |
 | `moveColumn`              | Moves one column to a place in the order             |
+| `moveColumnAroundPinned`  | The same move, leaving pinned columns in place       |
+| `unpinnedRange`           | The places of an order that a column may be moved to |
 | `showAllColumns`          | Shows every column, keeping the order                |
 | `resetColumnSettings`     | Puts the defaults back                               |
 | `isDefaultColumnSettings` | Whether the settings are the defaults                |
 | `orderedColumns`          | Every column in order, each with whether it is shown |
 | `visibleColumns`          | The shown columns in order, as the app's own objects |
+
+### Pinned columns
+
+A column with `pinned: "start"` or `pinned: "end"` keeps its place at that end of the order.
+Use it for a column a table keeps in view while it scrolls sideways, such as the one that names
+the row.
+
+```ts
+const columns = [
+  { key: "name", label: "Name", pinned: "start", hideable: false },
+  { key: "price", label: "Price" },
+  { key: "stock", label: "Stock" },
+  { key: "actions", label: "Actions", pinned: "end" },
+] satisfies ColumnDefinition[];
+
+// Settings saved before the columns were pinned still load. The pinned columns go to their
+// ends, and the other columns keep their saved order.
+let settings = reconcileColumnSettings(columns, {
+  order: ["stock", "actions", "name", "price"],
+  hidden: [],
+});
+// { order: ["name", "stock", "price", "actions"], hidden: [] }
+
+// A pinned column does not move: the same settings come back.
+moveColumnAroundPinned(columns, settings, "name", 2) === settings; // true
+
+// Another column stops at the pinned ones. Place 0 is taken, so "price" lands in place 1.
+settings = moveColumnAroundPinned(columns, settings, "price", 0);
+// { order: ["name", "price", "stock", "actions"], hidden: [] }
+
+orderedColumns(columns, settings).map((entry) => entry.pinned);
+// ["start", undefined, undefined, "end"]
+```
+
+The rules:
+
+- Pinned columns stand in the order the column list gives them, at their end of the order.
+- `defaultColumnSettings`, `reconcileColumnSettings`, `orderedColumns` and `visibleColumns` all
+  put pinned columns in place. `moveColumn` takes no column list, so it cannot. Use
+  `moveColumnAroundPinned` in a list that pins columns.
+- Pinning says where a column stands, not whether it is shown. Add `hideable: false` to keep a
+  pinned column shown.
+- The library draws no table, so it adds no sticky styling. A table reads `pinned` from each
+  column of `visibleColumns`, which are the app's own column objects.
 
 ## Saved table state
 

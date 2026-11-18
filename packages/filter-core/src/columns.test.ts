@@ -5,11 +5,13 @@ import {
   defaultColumnSettings,
   isDefaultColumnSettings,
   moveColumn,
+  moveColumnAroundPinned,
   orderedColumns,
   reconcileColumnSettings,
   resetColumnSettings,
   setColumnVisible,
   showAllColumns,
+  unpinnedRange,
   visibleColumns,
 } from "./columns";
 
@@ -435,5 +437,193 @@ describe("visibleColumns", () => {
 
   it("should return nothing for an empty list", () => {
     expect(visibleColumns([], DEFAULTS)).toEqual([]);
+  });
+});
+
+describe("pinned columns", () => {
+  // "name" is pinned to the start and "actions" to the end, though the list has neither there.
+  const PINNED = [
+    { key: "price", label: "Price" },
+    { key: "actions", label: "Actions", pinned: "end" },
+    { key: "name", label: "Name", pinned: "start", hideable: false },
+    { key: "stock", label: "Stock" },
+    { key: "notes", label: "Notes", defaultHidden: true },
+  ] satisfies ColumnDefinition[];
+
+  const FITTED: ColumnSettings = {
+    order: ["name", "price", "stock", "notes", "actions"],
+    hidden: ["notes"],
+  };
+
+  describe("defaultColumnSettings", () => {
+    it("should put each pinned column at its end of the order", () => {
+      expect(defaultColumnSettings(PINNED)).toEqual(FITTED);
+    });
+
+    it("should keep several pinned columns in the list's order", () => {
+      const settings = defaultColumnSettings([
+        { key: "a", label: "A" },
+        { key: "z2", label: "Z2", pinned: "end" },
+        { key: "s1", label: "S1", pinned: "start" },
+        { key: "z1", label: "Z1", pinned: "end" },
+        { key: "s2", label: "S2", pinned: "start" },
+      ]);
+      expect(settings.order).toEqual(["s1", "s2", "a", "z2", "z1"]);
+    });
+
+    it("should count as the defaults, so a reset has nothing to do", () => {
+      expect(isDefaultColumnSettings(PINNED, FITTED)).toBe(true);
+      expect(resetColumnSettings(PINNED, FITTED)).toBe(FITTED);
+    });
+  });
+
+  describe("reconcileColumnSettings", () => {
+    it("should load settings saved before the columns were pinned", () => {
+      const saved = {
+        order: ["stock", "actions", "price", "name", "notes"],
+        hidden: ["price"],
+      };
+      expect(reconcileColumnSettings(PINNED, saved)).toEqual({
+        order: ["name", "stock", "price", "notes", "actions"],
+        hidden: ["price"],
+      });
+    });
+
+    it("should return the same object when the pinned columns are already in place", () => {
+      expect(reconcileColumnSettings(PINNED, FITTED)).toBe(FITTED);
+    });
+
+    it("should put a new pinned column at its end of the order", () => {
+      const saved = { order: ["stock", "price", "notes"], hidden: [] };
+      expect(reconcileColumnSettings(PINNED, saved).order).toEqual([
+        "name",
+        "stock",
+        "price",
+        "notes",
+        "actions",
+      ]);
+    });
+
+    it("should keep a pinned column hidden when a person hid it", () => {
+      const saved = { order: FITTED.order, hidden: ["actions"] };
+      expect(reconcileColumnSettings(PINNED, saved)).toBe(saved);
+    });
+
+    it("should ignore a pin that is not one of the two known values", () => {
+      const columns = [
+        { key: "a", label: "A" },
+        { key: "b", label: "B", pinned: true },
+      ] as unknown as ColumnDefinition[];
+      const saved = { order: ["a", "b"], hidden: [] };
+      expect(reconcileColumnSettings(columns, saved)).toBe(saved);
+      expect(orderedColumns(columns, saved)[1]?.pinned).toBeUndefined();
+    });
+  });
+
+  describe("moveColumnAroundPinned", () => {
+    const order = (key: string, toIndex: number) =>
+      moveColumnAroundPinned(PINNED, FITTED, key, toIndex).order.join(" ");
+
+    it("should move a column among the places between the pinned columns", () => {
+      expect(order("price", 2)).toBe("name stock price notes actions");
+      expect(order("notes", 1)).toBe("name notes price stock actions");
+    });
+
+    it("should not move a pinned column", () => {
+      expect(moveColumnAroundPinned(PINNED, FITTED, "name", 3)).toBe(FITTED);
+      expect(moveColumnAroundPinned(PINNED, FITTED, "actions", 0)).toBe(FITTED);
+    });
+
+    it("should stop a column at the pinned columns", () => {
+      // Into a pinned column's place, or past either end: the nearest place it may take.
+      expect(order("stock", 0)).toBe("name stock price notes actions");
+      expect(order("stock", -5)).toBe("name stock price notes actions");
+      expect(order("price", 4)).toBe("name stock notes price actions");
+      expect(order("price", 99)).toBe("name stock notes price actions");
+    });
+
+    it("should return the same settings when the column is already next to the pinned ones", () => {
+      expect(moveColumnAroundPinned(PINNED, FITTED, "price", 0)).toBe(FITTED);
+      expect(moveColumnAroundPinned(PINNED, FITTED, "notes", 4)).toBe(FITTED);
+    });
+
+    it("should return the same settings for an unknown key or a place that is no number", () => {
+      expect(moveColumnAroundPinned(PINNED, FITTED, "gone", 2)).toBe(FITTED);
+      expect(moveColumnAroundPinned(PINNED, FITTED, "price", Number.NaN)).toBe(
+        FITTED,
+      );
+    });
+
+    it("should move as moveColumn does when no column is pinned", () => {
+      expect(moveColumnAroundPinned(COLUMNS, DEFAULTS, "notes", 0)).toEqual(
+        moveColumn(DEFAULTS, "notes", 0),
+      );
+      expect(moveColumnAroundPinned(COLUMNS, DEFAULTS, "name", 0)).toBe(
+        DEFAULTS,
+      );
+    });
+
+    it("should not move anything when every column is pinned", () => {
+      const columns: ColumnDefinition[] = [
+        { key: "a", label: "A", pinned: "start" },
+        { key: "b", label: "B", pinned: "end" },
+      ];
+      const settings = defaultColumnSettings(columns);
+      expect(moveColumnAroundPinned(columns, settings, "a", 1)).toBe(settings);
+      expect(moveColumnAroundPinned(columns, settings, "b", 0)).toBe(settings);
+    });
+  });
+
+  describe("unpinnedRange", () => {
+    it("should give the places between the pinned columns", () => {
+      expect(unpinnedRange(PINNED, FITTED.order)).toEqual({
+        first: 1,
+        last: 3,
+      });
+    });
+
+    it("should give every place when no column is pinned", () => {
+      expect(unpinnedRange(COLUMNS, DEFAULTS.order)).toEqual({
+        first: 0,
+        last: 3,
+      });
+    });
+
+    it("should give no place when every column is pinned", () => {
+      const columns: ColumnDefinition[] = [
+        { key: "a", label: "A", pinned: "start" },
+        { key: "b", label: "B", pinned: "start" },
+      ];
+      const { first, last } = unpinnedRange(columns, ["a", "b"]);
+      expect(last).toBeLessThan(first);
+    });
+  });
+
+  describe("orderedColumns and visibleColumns", () => {
+    // Settings that were not fitted to the list: the order has the pinned columns elsewhere.
+    const loose: ColumnSettings = {
+      order: ["stock", "actions", "name", "price"],
+      hidden: ["price"],
+    };
+
+    it("should keep the pinned columns in place whatever the order says", () => {
+      // "notes" is not in the order, so it goes last of the columns a person may move.
+      expect(shape(PINNED, loose)).toBe("name stock (price) notes actions");
+      expect(visibleColumns(PINNED, loose).map((column) => column.key)).toEqual(
+        ["name", "stock", "notes", "actions"],
+      );
+    });
+
+    it("should say which columns are pinned", () => {
+      expect(
+        orderedColumns(PINNED, FITTED).map((entry) => entry.pinned),
+      ).toEqual(["start", undefined, undefined, undefined, "end"]);
+    });
+
+    it("should leave the pin on the columns a table draws", () => {
+      const [first] = visibleColumns(PINNED, FITTED);
+      expect(first).toBe(PINNED[2]);
+      expect(first?.pinned).toBe("start");
+    });
   });
 });
