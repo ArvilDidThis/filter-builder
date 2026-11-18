@@ -306,7 +306,7 @@ function createController<Values>(
   let saveRun = 0;
   /** Goes up with every failed save or remove. `flush` reads it to tell how its saves went. */
   let failures = 0;
-  /** Called once the store has answered everything. `flush` waits here. */
+  /** Called once the store has answered everything. `flush` and a load wait here. */
   const whenIdle: (() => void)[] = [];
 
   const store = (): StateStore => {
@@ -478,50 +478,44 @@ function createController<Values>(
     }, latest.current.saveDelayMs ?? DEFAULT_SAVE_DELAY_MS);
   };
 
-  return {
-    /** Starts the load for a key. `start` is the state React drew for it. */
-    begin(start: Snapshot<Values>): void {
-      live = start;
-      active = true;
-      canSave = false;
-      unowned = {};
-      touched.clear();
-      loadRun += 1;
-      const run = loadRun;
-      const { key } = start;
-      if (key !== undefined) joinSharers(key);
+  /** Reads the state saved under `live.key`, and puts it on screen when the store answers. */
+  const load = (): void => {
+    loadRun += 1;
+    const run = loadRun;
+    const { key } = live;
 
-      const fail = (error: unknown): void => {
-        // The key changed or the table left the screen while the store was answering.
-        if (run !== loadRun) return;
-        report(error, "load", key);
-      };
-      if (key === undefined) {
-        fail(
-          new Error(
-            "There is no key to save the table state under. Pass `name` or `id`.",
-          ),
-        );
-        return;
+    const fail = (error: unknown): void => {
+      // The key changed or the table left the screen while the store was answering.
+      if (run !== loadRun) return;
+      report(error, "load", key);
+    };
+    if (key === undefined) {
+      fail(
+        new Error(
+          "There is no key to save the table state under. Pass `name` or `id`.",
+        ),
+      );
+      return;
+    }
+    const finish = (saved: unknown): void => {
+      if (run !== loadRun) return;
+      // With nothing saved the values on screen are already right. Keeping them, and not a
+      // fresh copy of the defaults, saves the table a redraw.
+      let values = live.values;
+      if (saved !== null && saved !== undefined) {
+        const loaded = readLoadedState(saved, latest.current);
+        values = loaded.values;
+        unowned = loaded.unowned;
+        // A part changed while loading keeps the change.
+        for (const part of touched) values[part] = live.values[part];
       }
-      const finish = (saved: unknown): void => {
-        if (run !== loadRun) return;
-        // With nothing saved the values on screen are already right. Keeping them, and not a
-        // fresh copy of the defaults, saves the table a redraw.
-        let values = live.values;
-        if (saved !== null && saved !== undefined) {
-          const loaded = readLoadedState(saved, latest.current);
-          values = loaded.values;
-          unowned = loaded.unowned;
-          // A part changed while loading keeps the change.
-          for (const part of touched) values[part] = live.values[part];
-        }
-        canSave = true;
-        publish({ key, values, status: "ready", error: undefined });
-        if (touched.size > 0) scheduleSave(key);
-        touched.clear();
-      };
-
+      canSave = true;
+      publish({ key, values, status: "ready", error: undefined });
+      if (touched.size > 0) scheduleSave(key);
+      touched.clear();
+    };
+    const read = (): void => {
+      if (run !== loadRun) return;
       try {
         const answer = store().load(key);
         if (isPromiseLike(answer)) answer.then(finish, fail);
@@ -529,6 +523,37 @@ function createController<Values>(
       } catch (error) {
         fail(error);
       }
+    };
+
+    // A load asked for while a save is on its way could be answered with the state from before
+    // that save. So it waits until the store has answered everything sent to it.
+    if (sending > 0 || queue.length > 0) whenIdle.push(read);
+    else read();
+  };
+
+  return {
+    /**
+     * Called when the table comes on screen, and when its key changes. `start` is the state
+     * React drew for the key.
+     *
+     * React also calls this again for the same key: twice in a row in development (strict
+     * mode), and when a hidden part of the page is shown again. The state the hook holds is
+     * then at least as new as the store's, so it is kept and not loaded a second time.
+     */
+    begin(start: Snapshot<Values>): void {
+      active = true;
+      if (start.key !== live.key) {
+        live = start;
+        canSave = false;
+        unowned = {};
+        touched.clear();
+      } else if (live !== start) {
+        // The state moved on while nothing could be drawn. Show it now.
+        draw(live);
+      }
+      if (live.key !== undefined) joinSharers(live.key);
+      // Still to load: a first visit, or a load that was dropped or failed.
+      if (!canSave) load();
     },
 
     /**

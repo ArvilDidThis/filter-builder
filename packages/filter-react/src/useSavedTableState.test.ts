@@ -12,8 +12,8 @@ import {
   type StatePart,
   type StateStore,
 } from "@arvilmena/filter-core";
-import { act, renderHook } from "@testing-library/react";
-import { createElement, StrictMode } from "react";
+import { act, render, renderHook } from "@testing-library/react";
+import { Activity, createElement, StrictMode } from "react";
 import { renderToString } from "react-dom/server";
 import {
   afterEach,
@@ -307,12 +307,13 @@ describe("useSavedTableState", () => {
       expect(new Set(seen).size).toBe(1);
     });
 
-    it("should load once in strict mode and still save", () => {
+    it("should load a store that answers at once only once in strict mode, and still save", () => {
       const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
       const { result } = renderHook(
         () => useSavedTableState({ id: "orders", parts: PARTS, store }),
         { wrapper: StrictMode },
       );
+      expect(store.load).toHaveBeenCalledOnce();
       expect(result.current.values.sort).toEqual(NAME_SORT);
       act(() => result.current.set.sort(PRICE_SORT));
       act(() => vi.advanceTimersByTime(300));
@@ -320,6 +321,107 @@ describe("useSavedTableState", () => {
       expect(store.items.get("orders")).toMatchObject({
         parts: { sort: PRICE_SORT },
       });
+    });
+  });
+
+  describe("when React runs the load again", () => {
+    it("should load a store that answers later twice in strict mode, and ignore the first answer", async () => {
+      // Strict mode (development only) starts every effect, stops it and starts it again.
+      const answers = [deferred<unknown>(), deferred<unknown>()];
+      const load = vi.fn(
+        (_key: string) => answers[load.mock.calls.length - 1]?.promise,
+      );
+      const store = { ...memoryStore(), load };
+      const { result } = renderHook(
+        () => useSavedTableState({ id: "orders", parts: PARTS, store }),
+        { wrapper: StrictMode },
+      );
+      expect(load).toHaveBeenCalledTimes(2);
+
+      answers[0]?.resolve(savedWith({ sort: NAME_SORT }));
+      await settle();
+      expect(result.current.status).toBe("loading");
+      expect(result.current.values.sort).toBeNull();
+
+      answers[1]?.resolve(savedWith({ sort: PRICE_SORT }));
+      await settle();
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(store.save).not.toHaveBeenCalled();
+    });
+
+    /** Draws the hook inside a part of the page that React can hide and show again. */
+    const renderHideable = (store: StateStore) => {
+      const seen: { current?: SavedTableState<Values> } = {};
+      const page = (mode: "visible" | "hidden") =>
+        createElement(Activity, {
+          mode,
+          // biome-ignore lint/correctness/noChildrenProp: the types of `Activity` require `children` among the props.
+          children: createElement(HideableTable, { store, seen }),
+        });
+      const { rerender } = render(page("visible"));
+      const current = () => seen.current as SavedTableState<Values>;
+      return {
+        current,
+        hide: () => rerender(page("hidden")),
+        show: () => rerender(page("visible")),
+      };
+    };
+
+    it("should not bring back older state when a hidden table is shown again", async () => {
+      const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const table = renderHideable(store);
+      act(() => table.current().set.sort(PRICE_SORT));
+      // Hiding saves the change. The store has not answered, so it still holds the old sort.
+      table.hide();
+      expect(store.save).toHaveBeenCalledOnce();
+      table.show();
+      expect(table.current().values.sort).toEqual(PRICE_SORT);
+      expect(table.current().status).toBe("ready");
+      expect(store.load).toHaveBeenCalledOnce();
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(table.current().values.sort).toEqual(PRICE_SORT);
+      // Saving still works after the table is back.
+      act(() => table.current().set.sort(null));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.save).toHaveBeenCalledTimes(2);
+    });
+
+    it("should keep a change made while loading when a hidden table is shown again", async () => {
+      const answers = [deferred<unknown>(), deferred<unknown>()];
+      const load = vi.fn(
+        (_key: string) => answers[load.mock.calls.length - 1]?.promise,
+      );
+      const store = { ...memoryStore(), load };
+      const table = renderHideable(store);
+      act(() => table.current().set.sort(PRICE_SORT));
+      table.hide();
+      table.show();
+      expect(table.current().values.sort).toEqual(PRICE_SORT);
+
+      answers[1]?.resolve(savedWith({ sort: NAME_SORT }));
+      await settle();
+      expect(table.current().status).toBe("ready");
+      expect(table.current().values.sort).toEqual(PRICE_SORT);
+    });
+
+    it("should load a key again only after the saves on their way to it", async () => {
+      const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
+      const { result, rerender } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      // Leaving the key saves the change. Coming back before the store has answered must
+      // not read the state from before that save.
+      rerender({ id: "archive", store });
+      rerender({ id: "orders", store });
+      expect(result.current.status).toBe("loading");
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toEqual(PRICE_SORT);
     });
   });
 
@@ -1418,6 +1520,19 @@ describe("useSavedTableState", () => {
     });
   });
 });
+
+/** A table that hands its saved state to the test, for the tests that hide and show it. */
+function HideableTable(props: {
+  store: StateStore;
+  seen: { current?: SavedTableState<Values> };
+}) {
+  props.seen.current = useSavedTableState({
+    id: "orders",
+    parts: PARTS,
+    store: props.store,
+  });
+  return null;
+}
 
 /** A page that draws the status and the sort, for the server tests. */
 function ServerTable(props: Options & { drawn?: SavedTableState<Values>[] }) {
