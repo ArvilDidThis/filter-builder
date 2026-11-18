@@ -24,6 +24,9 @@ SearchBuilder's JSON shape and matching rules.
   using an API from memory.
 - **Vitest** with `@effect/vitest` for tests.
 - **Biome** for linting and formatting.
+- **Vitest browser mode with Playwright** for the tests that need a real browser
+  (`packages/filter-react/browser`). Run them with `pnpm test:browser`. They are not part of
+  `pnpm verify`. See "Browser tests" in the README.
 - **`jq`** for the tests of the review workflow's script (`.github/scripts`).
 
 Run `pnpm verify` before you push. It runs the linter, type checks, tests and build. It also

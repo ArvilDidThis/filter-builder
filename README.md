@@ -27,9 +27,11 @@ Use Node.js 26 or later and pnpm 12.
 
 ```sh
 pnpm install
-pnpm verify   # lint, type checks, tests, build, the entry-point check and script tests
+pnpm verify         # lint, type checks, tests, build, the entry-point check and script tests
 pnpm test
 pnpm lint:fix
+pnpm test:browser   # the tests that need a real browser: see "Browser tests" below
+pnpm test:react18   # the tests of filter-react again, against React 18
 ```
 
 ## Automated checks
@@ -37,11 +39,68 @@ pnpm lint:fix
 | Workflow                 | What it does                                                             |
 | ------------------------ | ------------------------------------------------------------------------ |
 | `ci.yml`                 | Runs `pnpm verify` on every pull request and on pushes to `main`         |
+| `browser-tests.yml`      | Runs the browser tests and the React 18 tests on the same events         |
 | `claude-code-review.yml` | Reviews each pull request against AGENTS.md and tracks findings          |
 | `claude.yml`             | Answers `@claude` mentions in issues and pull requests                   |
 | `zizmor.yml`             | Audits the workflows themselves for security problems                    |
 | `dependency-audit.yml`   | Scans `pnpm-lock.yaml` for known vulnerable or malicious packages, daily |
 | `release.yml`            | Publishes both packages to npm when a version tag is pushed              |
+
+## Browser tests
+
+`pnpm verify` runs its tests in a simulated page, which has no layout, no real pointer and no
+real shadow tree. A second suite runs the column picker and saved table state in Chromium,
+Firefox and WebKit, with real mouse, touch and key input. It lives in
+`packages/filter-react/browser` and is not part of `pnpm verify`.
+
+Install the browsers once, and again after the `playwright` package changes version:
+
+```sh
+pnpm --filter @arvilmena/filter-react exec playwright install chromium firefox webkit
+```
+
+On Linux, add `--with-deps` to install the system libraries the browsers need.
+
+Then run the suite. It needs no build first:
+
+```sh
+pnpm test:browser
+pnpm --filter @arvilmena/filter-react run test:browser --project firefox   # one browser
+```
+
+A failed test leaves a screenshot of the page in `packages/filter-react/.vitest`. In CI, the
+failed run offers that folder for download as `browser-test-failures`.
+
+### Screenshots
+
+Two tests compare the open picker, on a light page and on a dark page, with stored
+screenshots. Text is drawn differently on each system, so each system has its own stored
+screenshots, in `packages/filter-react/browser/__screenshots__/<system>/<browser>/`.
+
+- **Linux** screenshots are the ones CI compares. Only they are kept in the repository.
+- **Other systems:** your own screenshots stay on your machine, and git ignores them. Where
+  none is stored, the test compares nothing, says so, and passes.
+
+To check a change to the look on your own machine:
+
+1. Before the change, store screenshots: `pnpm test:browser:update`.
+2. Make the change.
+3. Run `pnpm test:browser`. A difference fails the test and is saved under `.vitest`.
+
+To update the Linux screenshots after a change to the look that you intend:
+
+1. Push the branch.
+2. On GitHub, open **Actions**, choose **Browser tests**, and press **Run workflow**. Pick the
+   branch and tick **update-screenshots**.
+3. Download `linux-screenshots` from the finished run, and unpack it into
+   `packages/filter-react/browser/__screenshots__/linux/`.
+4. Look at each picture, then commit them.
+
+### React 18
+
+`@arvilmena/filter-react` supports React from version 18, and its own tests run against the
+newest React. `pnpm test:react18` runs the same tests against React 18. The package in
+`tests/react-18` holds that copy of React. It is private and never published.
 
 ## Data types
 
