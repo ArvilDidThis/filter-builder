@@ -100,7 +100,144 @@ settings = resetColumnSettings(columns, settings);
 | `orderedColumns`          | Every column in order, each with whether it is shown |
 | `visibleColumns`          | The shown columns in order, as the app's own objects |
 
-For a builder screen and a column picker, see `@arvilmena/filter-react`. The full guide is in the
+## Saved table state
+
+A table can remember its filter, its column settings and anything else an app adds, such as
+the sort. The pieces are plain functions, so an app without React can use them too.
+
+```ts
+import {
+  columnStatePart,
+  createSavedState,
+  filterStatePart,
+  localStorageStore,
+  readSavedState,
+} from "@arvilmena/filter-core";
+
+// Each part has a default, and a `parse` that checks the saved value.
+const parts = {
+  filter: filterStatePart(),
+  columns: columnStatePart(columns),
+  pageSize: {
+    defaultValue: 25,
+    parse: (saved: unknown) => (typeof saved === "number" ? saved : undefined),
+  },
+};
+
+const store = localStorageStore();
+
+// Typed from the parts: { filter: FilterDefinition, columns: ColumnSettings, pageSize: number }
+const state = readSavedState(await store.load("orders"), parts);
+
+await store.save("orders", createSavedState({ ...state, pageSize: 50 }));
+```
+
+### The key
+
+`resolveStateKey({ name, id, location })` picks the key the state is saved under. The first of
+these that is given wins:
+
+1. `name`, a name the app chooses. Use it when the same table appears on several pages, or
+   when several tables share an id.
+2. `id`, the table's id.
+3. The path of the page, without the query string and the hash. `location` is the page's
+   address, and defaults to the address of the page the code runs on.
+
+An empty `name` or `id` counts as not given. The result is `undefined` when nothing is given and
+there is no page, as on a server.
+
+```ts
+resolveStateKey({ name: "archive", id: "orders" }); // "archive"
+resolveStateKey({ id: "orders" }); // "orders"
+resolveStateKey({ location: "https://example.com/orders/?page=2#top" }); // "/orders/"
+```
+
+### The saved format
+
+The saved value is plain JSON: `{ "version": 1, "parts": { "filter": …, "columns": … } }`.
+
+A saved value is untrusted input, because a person can edit it and an older version of the app
+may have written it. `readSavedState` therefore never throws:
+
+- A part that is missing gets its default.
+- A part whose `parse` returns `undefined` or throws gets its default. The other parts are
+  still used.
+- A value that is not a saved state at all gives every part its default.
+
+`filterStatePart` reads a filter as loosely as matching does, so a saved filter keeps returning
+the same rows. `columnStatePart` fits the saved settings to the column list with
+`reconcileColumnSettings`.
+
+When the shape of a part changes, raise `version` and pass `migrate`. It gets the saved parts
+and the version that wrote them, and returns the parts in today's shape. Without `migrate`, a
+value saved under another version is not used.
+
+```ts
+const state = readSavedState(saved, parts, {
+  version: 2,
+  // Version 1 kept the page size under "rows".
+  migrate: (saved, fromVersion) =>
+    fromVersion === 1 ? { ...saved, pageSize: saved.rows } : saved,
+});
+```
+
+### The stores
+
+A store keeps one JSON value per key. Three are built in. Each one is safe to make on a
+server, and a store an app does not use is left out of its bundle.
+
+**Local storage** keeps the state in the browser, on one device. Where there is no local
+storage, it loads nothing and saves nothing.
+
+```ts
+const store = localStorageStore({ prefix: "my-app." }); // The prefix defaults to "table-state.".
+```
+
+**A cookie** lets the app's server read the state and draw the page with it. A cookie holds
+about 4 KB. `save` throws a `CookieTooLargeError` for a larger value and writes nothing, so the
+value saved before stays as it was.
+
+```ts
+const store = cookieStore({ maxAgeDays: 30, path: "/", sameSite: "lax" });
+
+// On the server, from the request's Cookie header:
+const saved = readCookieState(request.headers.get("cookie") ?? "", "orders");
+const state = readSavedState(saved, parts);
+```
+
+**Fetch** keeps the state on the app's own server. It sends a GET to load, a PUT with a JSON
+body to save and a DELETE to remove. A 404 on load means nothing is saved, and any other
+failure rejects with a `FetchStoreError`.
+
+```ts
+const store = fetchStore({
+  // Text gets the key as a query parameter: "/api/table-state?key=orders".
+  // A function builds the address itself: (key) => `/api/table-state/${key}`.
+  url: "/api/table-state",
+  // Called for every request, so it can hand out a fresh token.
+  headers: () => ({ authorization: `Bearer ${token()}` }),
+  // Passed to `fetch` as they are. `keepalive` lets a save finish while the page closes.
+  init: { credentials: "include", keepalive: true },
+});
+```
+
+The fetch store sends a request only to the address you give, and adds no credentials of its
+own. What the browser sends by itself, such as same-site cookies, is set with `init`.
+
+**Your own store** is an object with `load`, `save` and `remove`. Each may answer at once or
+with a promise. `load` answers `undefined` or `null` when nothing is saved.
+
+```ts
+import type { StateStore } from "@arvilmena/filter-core";
+
+const sessionStore: StateStore = {
+  load: (key) => JSON.parse(sessionStorage.getItem(key) ?? "null"),
+  save: (key, value) => sessionStorage.setItem(key, JSON.stringify(value)),
+  remove: (key) => sessionStorage.removeItem(key),
+};
+```
+
+For a builder screen, a column picker and a hook that saves the state, see `@arvilmena/filter-react`. The full guide is in the
 [repository](https://github.com/ArvilDidThis/filter-builder#readme).
 
 This project is not affiliated with or endorsed by SpryMedia Ltd or DataTables.
