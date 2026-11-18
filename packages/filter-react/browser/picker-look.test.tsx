@@ -101,7 +101,7 @@ describe("an accessibility scan of the picker (item 15)", () => {
   );
 
   test.each(SCHEMES)(
-    "finds nothing wrong once every button and box has been used, on a %s page",
+    "finds nothing wrong with every column shown and a handle focused, on a %s page",
     async (scheme) => {
       const picker = await openOnStage(scheme);
       // "Show all" becomes unavailable and "Reset" available, the reverse of the start.
