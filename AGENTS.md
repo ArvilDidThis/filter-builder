@@ -11,10 +11,10 @@ SearchBuilder's JSON shape and matching rules.
 
 | Package                   | Holds                                                                  |
 | ------------------------- | ---------------------------------------------------------------------- |
-| `@arvilmena/filter-core`  | Filter types, matching rules, builder actions and the summary          |
+| `@arvilmena/filter-core`  | Filter types, matching rules, builder actions, the summary and columns |
 | `…/filter-core/schema`    | Validation with Effect Schema. The only entry point that loads Effect. |
-| `@arvilmena/filter-react` | Builder state and actions as a React hook. No markup and no styling.   |
-| `…/filter-react/ui`       | Ready-made builder components, styled by `…/filter-react/styles.css`.  |
+| `@arvilmena/filter-react` | Builder and column state as React hooks. No markup and no styling.     |
+| `…/filter-react/ui`       | Ready-made builder and column picker, styled by `…/styles.css`.        |
 
 ## Tools
 
