@@ -1826,6 +1826,89 @@ describe("useSavedTableState", () => {
       }
     });
   });
+
+  describe("two hooks on one key, in one store", () => {
+    /** One hook that saves the sort and one that saves the filter, under the same key. */
+    const renderPair = (store: StateStore) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const sort = renderHook(() =>
+        useSavedTableState({ id: "pair", store, parts: { sort: sortPart } }),
+      );
+      const filter = renderHook(() =>
+        useSavedTableState({
+          id: "pair",
+          store,
+          parts: { filter: filterStatePart() },
+        }),
+      );
+      return { sort, filter };
+    };
+
+    it("should not pass on a part the store turned down", async () => {
+      const store = slowStore();
+      const { sort, filter } = renderPair(store);
+      act(() => sort.result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => store.requests[0]?.fail(new Error("offline")));
+      await settle();
+
+      // The store never took the sort, so the other hook must not write it back as saved.
+      act(() => filter.result.current.set.filter(priceFilter("10")));
+      act(() => vi.advanceTimersByTime(300));
+      expect(store.save).toHaveBeenLastCalledWith(
+        "pair",
+        savedWith({ filter: priceFilter("10") }),
+      );
+    });
+
+    it("should send their saves one at a time, each with the other's newest part", async () => {
+      const store = slowStore();
+      const { sort, filter } = renderPair(store);
+      act(() => sort.result.current.set.sort(PRICE_SORT));
+      act(() => filter.result.current.set.filter(priceFilter("10")));
+      act(() => vi.advanceTimersByTime(300));
+      // The sort's save has not been answered, so the filter's save waits.
+      expect(store.save).toHaveBeenCalledOnce();
+
+      act(() => store.requests[0]?.answer());
+      await settle();
+      expect(store.save).toHaveBeenCalledTimes(2);
+      expect(store.save).toHaveBeenLastCalledWith(
+        "pair",
+        savedWith({ sort: PRICE_SORT, filter: priceFilter("10") }),
+      );
+    });
+  });
+
+  describe("a save still on its way", () => {
+    it("should not hold up the load of another key", () => {
+      const store = slowStore({ archive: savedWith({ sort: NAME_SORT }) });
+      const { result, rerender } = renderSaved({ store });
+      act(() => result.current.set.sort(PRICE_SORT));
+      rerender({ id: "archive", store });
+      // The save to "orders" has not been answered. It cannot change what "archive" holds.
+      expect(store.requests).toHaveLength(1);
+      expect(store.load).toHaveBeenLastCalledWith("archive");
+      expect(result.current.status).toBe("ready");
+      expect(result.current.values.sort).toEqual(NAME_SORT);
+    });
+
+    it("should go to the store it was made for, not to one given later", async () => {
+      const first = slowStore();
+      const second = memoryStore();
+      const { result, rerender } = renderSaved({ store: first });
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => vi.advanceTimersByTime(300));
+      act(() => result.current.set.sort(NAME_SORT));
+      act(() => void result.current.flush());
+      rerender({ store: second });
+
+      act(() => first.requests[0]?.answer());
+      await settle();
+      expect(second.save).not.toHaveBeenCalled();
+      expect(first.save).toHaveBeenCalledTimes(2);
+    });
+  });
 });
 
 /** A table that hands its saved state to the test, for the tests that hide and show it. */

@@ -6,11 +6,19 @@ import {
   readSavedParts,
   readSavedState,
   resolveStateKey,
-  type SavedState,
   type StateParts,
   type StateStore,
 } from "@arvilmena/filter-core";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  isPromiseLike,
+  joinChannel,
+  leaveChannel,
+  type SavedParts,
+  type StateChannel,
+  type Write,
+  type WriteOutcome,
+} from "./savedStateChannel";
 import { useEarlyEffect } from "./useEarlyEffect";
 
 /** How long the hook waits after the last change before it saves, in milliseconds. */
@@ -195,7 +203,7 @@ export function useSavedTableState<Values>(
   const completed = withMissingParts(
     shown.values,
     options,
-    controller.unownedParts(),
+    controller.savedParts(),
   );
   if (completed !== shown.values) {
     shown = { ...shown, values: completed };
@@ -295,27 +303,25 @@ function startSnapshot<Values>(
 function withMissingParts<Values>(
   values: Values,
   options: UseSavedTableStateOptions<Values>,
-  unowned: Readonly<Record<string, unknown>>,
+  saved: SavedParts,
 ): Values {
   const missing = (Object.keys(options.parts) as (keyof Values)[]).filter(
     (name) => !Object.hasOwn(values as object, name),
   );
   if (missing.length === 0) return values;
   const version = options.version ?? DEFAULT_STATE_VERSION;
-  const read = readSavedState(
-    createSavedState(unowned, version),
-    options.parts,
-    { version },
-  );
+  const read = readSavedState(createSavedState(saved, version), options.parts, {
+    version,
+  });
   const completed = { ...values };
   for (const name of missing) completed[name] = read[name];
   return completed;
 }
 
-/** The state of the first render, and the saved parts the hook does not own. */
+/** The state of the first render, and the saved parts a server read for it, if any. */
 interface FirstState<Values> {
   snapshot: Snapshot<Values>;
-  unowned: Record<string, unknown>;
+  serverParts: SavedParts | undefined;
 }
 
 /**
@@ -327,54 +333,25 @@ function firstState<Values>(
   options: UseSavedTableStateOptions<Values>,
 ): FirstState<Values> {
   if (options.initialSaved === undefined) {
-    return { snapshot: startSnapshot(key, options.parts), unowned: {} };
+    return {
+      snapshot: startSnapshot(key, options.parts),
+      serverParts: undefined,
+    };
   }
   const loaded = readLoadedState(options.initialSaved, options);
   return {
     snapshot: { key, values: loaded.values, ...READY },
-    unowned: loaded.unowned,
+    serverParts: loaded.savedParts,
   };
 }
 
-// Made on first use, so an app that passes its own store never makes this one.
-let defaultStore: StateStore | undefined;
-
-/** What a hook hears from another hook that saves under the same key, in the same store. */
-interface KeySharer {
-  /** The other hook saved these parts. */
-  saved(parts: Readonly<Record<string, unknown>>): void;
-  /** The other hook removed everything saved under the key. */
-  removed(): void;
-}
-
 /**
- * The hooks on screen, by store and key. One hook call per key is the rule. When an app breaks
- * it, the hooks tell each other what they save, so that neither drops the other's parts.
- */
-const sharersByStore = new WeakMap<StateStore, Map<string, Set<KeySharer>>>();
-
-/** The keys already warned about, so each is named once. */
-const warnedKeys = new Set<string>();
-
-// Bundlers put the build mode in place of `process.env.NODE_ENV`. Where there is no bundler
-// and no `process`, as in a plain browser page, nothing is warned about.
-declare const process: { env: { NODE_ENV?: string } } | undefined;
-
-/** Tells a developer, once per key, that two tables on screen save under the same key. */
-function warnAboutSharedKey(key: string): void {
-  if (typeof process === "undefined") return;
-  if (process.env.NODE_ENV === "production" || warnedKeys.has(key)) return;
-  warnedKeys.add(key);
-  console.warn(
-    `useSavedTableState: two tables on screen save their state under the key "${key}". ` +
-      "Parts of the same name overwrite each other. Give each table its own `id` or `name`.",
-  );
-}
-
-/**
- * Holds the state between renders and talks to the store. It lives outside React's render so
- * that the setters can stay the same functions, and so that a save always carries the key its
- * values were loaded for.
+ * Holds one hook's state between renders. It lives outside React's render so that the setters
+ * can stay the same functions, and so that a save always carries the key its values were
+ * loaded for.
+ *
+ * It does not talk to the store's `save` and `remove` itself. It hands every write to the
+ * channel of its store and key, which all hooks on that key share.
  */
 function createController<Values>(
   first: FirstState<Values>,
@@ -391,42 +368,34 @@ function createController<Values>(
    */
   let canSave = live.status === "ready" && live.key !== undefined;
   /**
-   * The parts saved under `live.key` that this hook does not own: another hook's, or ones the
-   * app no longer has. They are written back with every save, so that saving drops nothing.
+   * The channel of `live.key` in the hook's store. The hook keeps it after the table leaves
+   * the screen, so that a table shown again finds what it knew about the store.
    */
-  let unowned = first.unowned;
-  /** The store and key this hook is listed under in `sharersByStore`, while on screen. */
-  let listed: { store: StateStore; key: string } | undefined;
+  let channel: StateChannel | undefined;
+  /** Whether the hook counts among the hooks on `channel`. Only while the table is on screen. */
+  let isJoined = false;
+  /** The saved parts a server read, until the first channel takes them over. */
+  let serverParts = first.serverParts;
   /** The parts a person changed while saving was off: during the load, or after it failed. */
   const touched = new Set<keyof Values>();
   /** Goes up whenever a load is started or dropped. A load that answers late sees it moved. */
   let loadRun = 0;
 
   /** The change waiting out the delay, with the key it belongs to. */
-  let pending: { key: string; values: Values } | undefined;
+  let pending: Change<Values> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  /** The text of the newest save made. The same text is not saved twice. */
-  let written: { key: string; json: string } | undefined;
-  /**
-   * The saves and removes not yet handed to the store, oldest first. They go one at a time:
-   * each waits for the store's answer to the one before it. The store therefore ends with the
-   * newest state, however slowly it answers.
-   */
-  const queue: StoreJob[] = [];
-  /** How many saves and removes the store has not answered yet. */
-  let sending = 0;
-  /** Goes up with every save handed to the store. Only the newest save may clear an error. */
+  /** Marks this hook's saves in a channel, so a newer one can replace one that still waits. */
+  const owner = {};
+  /** Goes up with every save handed to a channel. Only the newest save may clear an error. */
   let saveRun = 0;
   /** Goes up with every failed save or remove. `flush` reads it to tell how its saves went. */
   let failures = 0;
-  /** Called once the store has answered everything. `flush` and a load wait here. */
-  const whenIdle: (() => void)[] = [];
-
-  const store = (): StateStore => {
-    if (latest.current.store) return latest.current.store;
-    defaultStore ??= localStorageStore();
-    return defaultStore;
-  };
+  /** How many of this hook's saves and removes have not ended yet. */
+  let unanswered = 0;
+  /** Called once all of this hook's saves and removes have ended. `flush` waits here. */
+  const whenAnswered: (() => void)[] = [];
+  /** The channels that still hold a write of this hook. A closing page sends them all. */
+  const busyChannels = new Set<StateChannel>();
 
   const publish = (next: Snapshot<Values>): void => {
     live = next;
@@ -445,151 +414,89 @@ function createController<Values>(
     latest.current.onError?.(error, action);
   };
 
-  const isOwnPart = (name: string): boolean =>
-    Object.hasOwn(latest.current.parts, name);
-
-  const sharer: KeySharer = {
-    saved(parts) {
-      for (const [name, value] of Object.entries(parts)) {
-        if (!isOwnPart(name)) unowned[name] = value;
-      }
-    },
-    removed() {
-      unowned = {};
-    },
+  const leave = (): void => {
+    if (isJoined && channel) leaveChannel(channel);
+    isJoined = false;
   };
 
-  /** The other hooks on screen that use this store and key. */
-  const othersOn = (place: StateStore, key: string): KeySharer[] =>
-    [...(sharersByStore.get(place)?.get(key) ?? [])].filter(
-      (other) => other !== sharer,
-    );
-
-  /** Lists this hook under its store and key, and warns when another hook is there already. */
-  const joinSharers = (key: string): void => {
-    const place = store();
-    let byKey = sharersByStore.get(place);
-    if (byKey === undefined) {
-      byKey = new Map();
-      sharersByStore.set(place, byKey);
+  /** Joins the channel of a store and key, and warns when another hook is on it already. */
+  const join = (store: StateStore, key: string): void => {
+    if (isJoined && channel?.store === store && channel.key === key) return;
+    leave();
+    channel = joinChannel(store, key, channel);
+    isJoined = true;
+    if (serverParts !== undefined) {
+      // Only when nothing was written yet: a write is newer than what the server read.
+      channel.noteRead(serverParts, 0);
+      serverParts = undefined;
     }
-    const sharers = byKey.get(key) ?? new Set();
-    byKey.set(key, sharers);
-    sharers.add(sharer);
-    listed = { store: place, key };
-    if (sharers.size > 1) warnAboutSharedKey(key);
+    if (channel.hookCount() > 1) warnAboutSharedKey(key);
   };
 
-  const leaveSharers = (): void => {
-    if (listed === undefined) return;
-    const byKey = sharersByStore.get(listed.store);
-    const sharers = byKey?.get(listed.key);
-    sharers?.delete(sharer);
-    if (sharers?.size === 0) byKey?.delete(listed.key);
-    listed = undefined;
-  };
-
-  /** Hands one save or remove to the store, and deals with its answer. */
-  const send = (job: StoreJob): void => {
-    saveRun += job.kind === "save" ? 1 : 0;
-    const run = saveRun;
-
-    const settle = (failure?: { error: unknown }): void => {
-      if (failure) {
-        // Forget the text, so the next change tries again.
-        if (job.kind === "save" && written === job.record) written = undefined;
-        report(failure.error, job.kind, job.key);
-      } else if (
-        job.kind === "save" &&
-        run === saveRun &&
-        live.key === job.key &&
-        live.status === "error" &&
-        canSave
-      ) {
-        // An earlier save had failed, and this one went through.
-        publish({ ...live, ...READY });
-      }
+  /** Hands a save or a remove to a channel, and counts it until it has ended. */
+  const send = (target: StateChannel, write: Write): void => {
+    unanswered += 1;
+    busyChannels.add(target);
+    const done = (outcome: WriteOutcome): void => {
+      write.done(outcome);
+      unanswered -= 1;
+      if (target.isIdle()) busyChannels.delete(target);
+      if (unanswered > 0) return;
+      for (const tell of whenAnswered.splice(0)) tell();
     };
-
-    try {
-      const place = store();
-      for (const other of othersOn(place, job.key)) {
-        if (job.kind === "save") other.saved(job.saved.parts);
-        else other.removed();
-      }
-      const answer =
-        job.kind === "save"
-          ? place.save(job.key, job.saved)
-          : place.remove(job.key);
-      if (!isPromiseLike(answer)) {
-        settle();
-        return;
-      }
-      sending += 1;
-      answer.then(
-        () => {
-          sending -= 1;
-          settle();
-          sendNext();
-        },
-        (error: unknown) => {
-          sending -= 1;
-          settle({ error });
-          sendNext();
-        },
-      );
-    } catch (error) {
-      settle({ error });
-    }
+    target.write({ ...write, done });
   };
 
-  /** Sends what is in the queue, for as long as the store has answered everything before it. */
-  const sendNext = (): void => {
-    while (sending === 0) {
-      const job = queue.shift();
-      if (job === undefined) break;
-      send(job);
+  /** Deals with the end of a save of `change`. `run` is the save's number. */
+  const saveEnded = (
+    change: Change<Values>,
+    run: number,
+    outcome: WriteOutcome,
+  ): void => {
+    if (outcome.status === "failed") {
+      report(outcome.error, "save", change.key);
+      return;
     }
-    if (sending > 0 || queue.length > 0) return;
-    for (const tell of whenIdle.splice(0)) tell();
+    const clearsError =
+      outcome.status === "accepted" &&
+      run === saveRun &&
+      live.key === change.key &&
+      live.status === "error" &&
+      canSave;
+    // An earlier save had failed, and this one went through.
+    if (clearsError) publish({ ...live, ...READY });
   };
 
-  /** Moves the waiting change into the queue, without waiting out the rest of the delay. */
+  /** Hands the waiting change to its channel, without waiting out the rest of the delay. */
   const queuePending = (): void => {
     clearTimeout(timer);
     timer = undefined;
-    const job = pending;
-    if (job === undefined) return;
+    const change = pending;
+    // `channel` still belongs to the change's key: a change of key queues the waiting change
+    // before it joins the new key's channel.
+    if (change === undefined || channel === undefined) return;
     pending = undefined;
-
-    // `unowned` still belongs to the job's key: a change of key queues the waiting change
-    // before it loads the new key.
-    const saved = createSavedState(
-      { ...unowned, ...job.values },
-      latest.current.version,
-    );
-    let json: string;
-    try {
-      json = JSON.stringify(saved);
-    } catch (error) {
-      report(error, "save", job.key);
-      return;
-    }
-    if (written?.key === job.key && written.json === json) return;
-    written = { key: job.key, json };
-    // A save still in the queue is out of date now. Only the newest state needs to be sent.
-    const last = queue.at(-1);
-    if (last?.kind === "save" && last.key === job.key) queue.pop();
-    queue.push({ kind: "save", key: job.key, saved, record: written });
+    saveRun += 1;
+    const run = saveRun;
+    send(channel, {
+      kind: "save",
+      owner,
+      build: (stored) =>
+        createSavedState(
+          withOtherParts(stored, change.values as object),
+          latest.current.version,
+        ),
+      done: (outcome) => saveEnded(change, run, outcome),
+    });
   };
 
   const scheduleSave = (key: string): void => {
     pending = { key, values: live.values };
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      queuePending();
-      sendNext();
-    }, latest.current.saveDelayMs ?? DEFAULT_SAVE_DELAY_MS);
+    timer = setTimeout(
+      queuePending,
+      latest.current.saveDelayMs ?? DEFAULT_SAVE_DELAY_MS,
+    );
   };
 
   /** Reads the state saved under `live.key`, and puts it on screen when the store answers. */
@@ -597,13 +504,14 @@ function createController<Values>(
     loadRun += 1;
     const run = loadRun;
     const { key } = live;
+    const source = channel;
 
     const fail = (error: unknown): void => {
       // The key changed or the table left the screen while the store was answering.
       if (run !== loadRun) return;
       report(error, "load", key);
     };
-    if (key === undefined) {
+    if (key === undefined || source === undefined) {
       fail(
         new Error(
           "There is no key to save the table state under. Pass `name` or `id`.",
@@ -611,6 +519,7 @@ function createController<Values>(
       );
       return;
     }
+    let writesAtRead = 0;
     const finish = (saved: unknown): void => {
       if (run !== loadRun) return;
       // With nothing saved the values on screen are already right. Keeping them, and not a
@@ -618,8 +527,8 @@ function createController<Values>(
       let values = live.values;
       if (saved !== null && saved !== undefined) {
         const loaded = readLoadedState(saved, latest.current);
+        source.noteRead(loaded.savedParts, writesAtRead);
         values = loaded.values;
-        unowned = loaded.unowned;
         // A part changed while loading keeps the change.
         for (const part of touched) values[part] = live.values[part];
       }
@@ -630,8 +539,9 @@ function createController<Values>(
     };
     const read = (): void => {
       if (run !== loadRun) return;
+      writesAtRead = source.writeCount();
       try {
-        const answer = store().load(key);
+        const answer = source.store.load(key);
         if (isPromiseLike(answer)) answer.then(finish, fail);
         else finish(answer);
       } catch (error) {
@@ -639,10 +549,9 @@ function createController<Values>(
       }
     };
 
-    // A load asked for while a save is on its way could be answered with the state from before
-    // that save. So it waits until the store has answered everything sent to it.
-    if (sending > 0 || queue.length > 0) whenIdle.push(read);
-    else read();
+    // A read made while a write to this key is on its way could be answered with the state
+    // from before that write. So it waits for the writes to this key, and for no others.
+    source.whenIdle(read);
   };
 
   return {
@@ -656,35 +565,43 @@ function createController<Values>(
      */
     begin(start: Snapshot<Values>): void {
       active = true;
-      if (start.key !== live.key) {
+      const isNewKey = start.key !== live.key;
+      if (isNewKey) {
         live = start;
         canSave = false;
-        unowned = {};
         touched.clear();
       } else if (live !== start) {
         // The state moved on while nothing could be drawn. Show it now.
         draw(live);
       }
-      if (live.key !== undefined) joinSharers(live.key);
+      if (live.key !== undefined) {
+        const keepsStore = !isNewKey && channel !== undefined;
+        join(
+          keepsStore && channel ? channel.store : storeOf(latest.current),
+          live.key,
+        );
+      }
       // Still to load: a first visit, or a load that was dropped or failed.
       if (!canSave) load();
     },
 
     /**
      * Drops a load on its way and saves a waiting change, under the key it belongs to. The save
-     * waits its turn: the queue keeps going after the table has left the screen.
+     * waits its turn: the channel keeps going after the table has left the screen.
      */
     stop(): void {
       loadRun += 1;
       active = false;
-      leaveSharers();
       queuePending();
-      sendNext();
+      leave();
     },
 
-    /** The saved parts the hook does not own. A part added later may find its value here. */
-    unownedParts(): Readonly<Record<string, unknown>> {
-      return unowned;
+    /**
+     * The parts saved under the key, the hook's own and others. A part added later may find
+     * its value here.
+     */
+    savedParts(): SavedParts {
+      return channel?.storedParts() ?? serverParts ?? {};
     },
 
     /**
@@ -727,32 +644,25 @@ function createController<Values>(
           errorAction: undefined,
         });
       }
-      sendNext();
       load();
     },
 
     flush(): Promise<boolean> {
       const failuresBefore = failures;
       queuePending();
-      sendNext();
       // A change made before the load has finished, or after it failed, is not saved.
       const isAllSaved = (): boolean =>
         failures === failuresBefore && touched.size === 0;
-      if (sending === 0 && queue.length === 0) {
-        return Promise.resolve(isAllSaved());
-      }
+      if (unanswered === 0) return Promise.resolve(isAllSaved());
       return new Promise((resolve) => {
-        whenIdle.push(() => resolve(isAllSaved()));
+        whenAnswered.push(() => resolve(isAllSaved()));
       });
     },
 
-    /**
-     * Sends every waiting save and remove at once, in order, without waiting for the store's
-     * answers. For a closing page only: the answers may come back in another order.
-     */
+    /** Sends every waiting save and remove of this hook at once. For a closing page only. */
     flushWithoutWaiting(): void {
       queuePending();
-      for (const job of queue.splice(0)) send(job);
+      for (const busy of busyChannels) busy.sendAllNow();
     },
 
     clear(): void {
@@ -761,64 +671,97 @@ function createController<Values>(
       clearTimeout(timer);
       timer = undefined;
       pending = undefined;
-      written = undefined;
-      unowned = {};
       touched.clear();
       const { key } = live;
       const values = readSavedState(undefined, latest.current.parts);
-      if (key === undefined) {
+      if (key === undefined || channel === undefined) {
         publish({ ...live, values });
         return;
       }
       // The stored state is gone on purpose, so saving is safe even after a failed load.
       canSave = true;
       publish({ key, values, ...READY });
-      // Through the same queue as the saves. A save made before this cannot land after the
+      // Through the same channel as the saves. A save made before this cannot land after the
       // remove, and a save made after this cannot be deleted by it.
-      queue.push({ kind: "remove", key });
-      sendNext();
+      send(channel, {
+        kind: "remove",
+        done: (outcome) => {
+          if (outcome.status === "failed") report(outcome.error, "remove", key);
+        },
+      });
     },
   };
 }
 
+/** A set of values to save, with the key they belong to. */
+interface Change<Values> {
+  key: string;
+  values: Values;
+}
+
+// Made on first use, so an app that passes its own store never makes this one.
+let defaultStore: StateStore | undefined;
+
+/** The store the app asks for now: its own, or the browser's local storage. */
+function storeOf(options: { store?: StateStore }): StateStore {
+  if (options.store) return options.store;
+  defaultStore ??= localStorageStore();
+  return defaultStore;
+}
+
 /**
- * Reads what a store handed back: each of the hook's parts, checked, and the saved parts the
- * hook does not own, as they are.
+ * The parts to save: the stored parts the hook does not own, as they are, and then its own
+ * values. This way a save drops nothing that another hook, or an older version of the app,
+ * saved under the key.
+ */
+function withOtherParts(
+  stored: SavedParts,
+  own: object,
+): Record<string, unknown> {
+  const parts: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(stored)) {
+    if (!Object.hasOwn(own, name)) parts[name] = value;
+  }
+  return Object.assign(parts, own);
+}
+
+/**
+ * Reads what a store handed back: each of the hook's parts, checked, and all the saved parts
+ * as they are, in today's shape.
  */
 function readLoadedState<Values>(
   saved: unknown,
   options: UseSavedTableStateOptions<Values>,
-): { values: Values; unowned: Record<string, unknown> } {
+): { values: Values; savedParts: SavedParts } {
   const version = options.version ?? DEFAULT_STATE_VERSION;
   // Upgraded once here. Wrapped in today's version below, so they are not upgraded again.
   const savedParts = readSavedParts(saved, options);
-  const unowned: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(savedParts ?? {})) {
-    if (!Object.hasOwn(options.parts, name)) unowned[name] = value;
-  }
   const values = readSavedState(
     savedParts && createSavedState(savedParts, version),
     options.parts,
     { version },
   );
-  return { values, unowned };
+  return { values, savedParts: savedParts ?? {} };
 }
 
-/** A save or a remove on its way to the store. */
-type StoreJob =
-  | {
-      kind: "save";
-      key: string;
-      saved: SavedState;
-      /** The entry in `written` this save made, to forget it when the save fails. */
-      record: { key: string; json: string };
-    }
-  | { kind: "remove"; key: string };
+/** The keys already warned about, so each is named once. */
+const warnedKeys = new Set<string>();
 
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { then?: unknown }).then === "function"
+// Bundlers put the build mode in place of `process.env.NODE_ENV`. Where there is no bundler
+// and no `process`, as in a plain browser page, nothing is warned about.
+declare const process: { env: { NODE_ENV?: string } } | undefined;
+
+/**
+ * Tells a developer, once per key, that two tables on screen save under the same key. One
+ * hook call per key is the rule. When an app breaks it, the shared channel still keeps every
+ * hook's parts, but parts of the same name overwrite each other.
+ */
+function warnAboutSharedKey(key: string): void {
+  if (typeof process === "undefined") return;
+  if (process.env.NODE_ENV === "production" || warnedKeys.has(key)) return;
+  warnedKeys.add(key);
+  console.warn(
+    `useSavedTableState: two tables on screen save their state under the key "${key}". ` +
+      "Parts of the same name overwrite each other. Give each table its own `id` or `name`.",
   );
 }
