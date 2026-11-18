@@ -47,10 +47,14 @@ export interface StateChannel {
    */
   write(write: Write): void;
   /**
-   * Sends everything that waits at once, in order, without waiting for answers. For a closing
-   * page only: the answers may come back in another order.
+   * Sends what waits now, as one request, without waiting for the answer to a write already
+   * on its way. For a closing page only.
+   *
+   * The one request holds the state the waiting writes would have left in the store, so the
+   * writes that waited cannot arrive in the wrong order. A write already on its way is another
+   * matter: it may reach the store after this request, or not at all.
    */
-  sendAllNow(): void;
+  sendNewestNow(): void;
   /** Whether nothing waits and the store has answered everything. */
   isIdle(): boolean;
   /** Calls `then` once the channel is idle: at once when it already is. */
@@ -206,13 +210,19 @@ function createChannel(
    * The parts stay as they were. The parts of other owners were the same in the write that
    * failed, so they are right whichever state the store holds.
    */
-  const fail = (write: Write, error: unknown): void => {
+  const fail = (done: Write["done"], error: unknown): void => {
     stored = { ...stored, text: undefined };
-    write.done({ status: "failed", error });
+    done({ status: "failed", error });
   };
 
-  /** Hands one write to the store, and deals with its answer. */
-  const send = (write: Write): void => {
+  /**
+   * Hands one state to the store, and deals with its answer. `wanted` makes the state from the
+   * parts the store holds: a state to save, or `undefined` to remove what is saved.
+   */
+  const send = (
+    wanted: (base: SavedParts) => SavedState | undefined,
+    done: Write["done"],
+  ): void => {
     // The write takes its turn before any code of the app or the store runs. Such code may
     // ask for another save in the middle of this one. That save then waits, and builds on
     // what this one leaves in the store.
@@ -220,15 +230,15 @@ function createChannel(
     let after: StateAfterWrite;
     let answer: unknown;
     try {
-      if (write.kind === "save") {
-        // The base is the newest state sent, so that saves sent without waiting (on a
-        // closing page) still build on each other.
-        const saved = write.build(onItsWay ?? stored.parts);
+      // The base is the newest state sent: a closing page sends without waiting, and its
+      // save must build on the one still on its way.
+      const saved = wanted(onItsWay ?? stored.parts);
+      if (saved !== undefined) {
         const text = JSON.stringify(saved);
         // The store holds exactly this already. Only this write is counted in `unanswered`.
         if (unanswered === 1 && text === stored.text) {
           unanswered -= 1;
-          write.done(ACCEPTED);
+          done(ACCEPTED);
           return;
         }
         writeCount += 1;
@@ -241,14 +251,14 @@ function createChannel(
       }
     } catch (error) {
       unanswered -= 1;
-      fail(write, error);
+      fail(done, error);
       return;
     }
 
     if (!isPromiseLike(answer)) {
       accept(after);
       unanswered -= 1;
-      write.done(ACCEPTED);
+      done(ACCEPTED);
       return;
     }
     onItsWay = after.parts;
@@ -262,9 +272,9 @@ function createChannel(
       () =>
         answered(() => {
           accept(after);
-          write.done(ACCEPTED);
+          done(ACCEPTED);
         }),
-      (error: unknown) => answered(() => fail(write, error)),
+      (error: unknown) => answered(() => fail(done, error)),
     );
   };
 
@@ -273,7 +283,7 @@ function createChannel(
     while (unanswered === 0) {
       const write = queue.shift();
       if (write === undefined) break;
-      send(write);
+      send((base) => stateOf(write, base), write.done);
     }
     if (!isIdle()) return;
     for (const tell of idleWaiters.splice(0)) tell();
@@ -312,9 +322,27 @@ function createChannel(
       sendNext();
     },
 
-    sendAllNow() {
-      for (const write of queue.splice(0)) send(write);
-      // A write asked for in the middle of the ones above waits in the queue.
+    sendNewestNow() {
+      const waiting = queue.splice(0);
+      if (waiting.length > 0) {
+        send(
+          // Each waiting write is worked out on top of the one before it, and only the last
+          // result is sent. A remove empties the parts, as it would in the store.
+          (base) => {
+            let saved: SavedState | undefined;
+            let parts = base;
+            for (const write of waiting) {
+              saved = stateOf(write, parts);
+              parts = saved?.parts ?? {};
+            }
+            return saved;
+          },
+          (outcome) => {
+            for (const write of waiting) write.done(outcome);
+          },
+        );
+      }
+      // A write asked for in the middle of the one above waits in the queue.
       sendNext();
     },
 
@@ -329,6 +357,11 @@ function createChannel(
     },
   };
   return channel;
+}
+
+/** The state a write leaves in the store, given the parts there before. `undefined` for none. */
+function stateOf(write: Write, base: SavedParts): SavedState | undefined {
+  return write.kind === "save" ? write.build(base) : undefined;
 }
 
 /** A value read from a store, as the text a save of it would send. `undefined` for none. */

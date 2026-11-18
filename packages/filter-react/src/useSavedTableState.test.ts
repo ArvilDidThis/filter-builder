@@ -1072,6 +1072,57 @@ describe("useSavedTableState", () => {
       });
     });
 
+    it("should send one request for the final state when the page is closed", async () => {
+      const store = slowStore({ orders: savedWith({ pageSize: 50 }) });
+      const { result } = renderSaved({ store });
+      // One save is on its way. A second save and a remove wait behind it, and a third
+      // change still waits out the delay.
+      act(() => result.current.set.sort(PRICE_SORT));
+      act(() => void result.current.flush());
+      act(() => result.current.set.sort(NAME_SORT));
+      act(() => void result.current.flush());
+      act(() => result.current.clear());
+      act(() => result.current.set.filter(priceFilter("10")));
+      expect(store.requests).toHaveLength(1);
+
+      act(() => window.dispatchEvent(new Event("pagehide")));
+      // One request beside the one on its way, so the store has no order to get wrong.
+      expect(store.requests.map((request) => request.kind)).toEqual([
+        "save",
+        "save",
+      ]);
+
+      act(() => store.requests[0]?.answer());
+      act(() => store.requests[1]?.answer());
+      await settle();
+      // What the queue would have left: the state from after the remove, and nothing older.
+      expect(store.items.get("orders")).toEqual(
+        savedWith({
+          filter: priceFilter("10"),
+          columns: COLUMN_DEFAULTS,
+          sort: null,
+        }),
+      );
+      expect(store.requests).toHaveLength(2);
+      await expect(result.current.flush()).resolves.toBe(true);
+    });
+
+    it("should end with nothing stored when the last waiting write is a remove", async () => {
+      const { store, result } = withSaveOnItsWay();
+      act(() => void result.current.flush());
+      act(() => result.current.clear());
+
+      act(() => window.dispatchEvent(new Event("pagehide")));
+      expect(store.requests.map((request) => request.kind)).toEqual([
+        "save",
+        "remove",
+      ]);
+      act(() => store.requests[0]?.answer());
+      act(() => store.requests[1]?.answer());
+      await settle();
+      expect(store.items.has("orders")).toBe(false);
+    });
+
     it("should send only the newest of the saves that waited", async () => {
       const { store, result } = withSaveOnItsWay();
       act(() => void result.current.flush());

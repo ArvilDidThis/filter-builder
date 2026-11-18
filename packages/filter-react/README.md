@@ -429,8 +429,11 @@ What the hook guarantees:
   another page itself should wait for `flush()` first: see
   [Waiting for a save](#waiting-for-a-save).
 - **Saves reach the store in order.** Each save or remove waits for the store's answer to the
-  one before it, so a slow answer cannot leave an older state in the store. Only a closing
-  page sends without waiting.
+  one before it, so a slow answer cannot leave an older state in the store.
+- **A closing page sends once, without waiting.** It sends the newest state in one request,
+  whatever still waits. A save already on its way then may reach the store after that
+  request, or not at all, so the store can end with the older state. Wait for `flush()`
+  where the app decides when to leave.
 - **Parts the hook does not own are kept.** A save writes back the other parts found under the
   key. `clear()` removes them too.
 - **A saved value is checked before use.** A broken part falls back to its default alone.

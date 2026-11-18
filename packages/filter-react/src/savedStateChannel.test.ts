@@ -225,6 +225,70 @@ describe("the channel of a store and key", () => {
     expect(store.save).toHaveBeenCalledTimes(2);
   });
 
+  describe("on a closing page", () => {
+    /** A store with one save on its way, which holds what it was sent, in the order sent. */
+    const storeWithSaveOnItsWay = () => {
+      const store = slowStore();
+      const held: { current: unknown } = { current: undefined };
+      vi.mocked(store.save).mockImplementation((_key, value) => {
+        held.current = value;
+        return new Promise<void>(() => {});
+      });
+      vi.mocked(store.remove).mockImplementation(() => {
+        held.current = undefined;
+      });
+      const channel = joinChannel(store, "orders");
+      save(channel, { sort: "price" });
+      return { store, channel, held };
+    };
+
+    it("should send the waiting saves as one save of the newest state", () => {
+      const { store, channel, held } = storeWithSaveOnItsWay();
+      const older = save(channel, { pageSize: 25 });
+      const newer = save(channel, { filter: "cheap" });
+      expect(store.save).toHaveBeenCalledOnce();
+
+      channel.sendNewestNow();
+      expect(store.save).toHaveBeenCalledTimes(2);
+      expect(held.current).toEqual(
+        savedWith({ sort: "price", pageSize: 25, filter: "cheap" }),
+      );
+      expect(older).not.toHaveBeenCalled();
+      expect(newer).not.toHaveBeenCalled();
+    });
+
+    it("should send a waiting save and a later remove as one remove", () => {
+      const { store, channel, held } = storeWithSaveOnItsWay();
+      save(channel, { pageSize: 25 });
+      const removed = vi.fn();
+      channel.write({ kind: "remove", done: removed });
+
+      channel.sendNewestNow();
+      expect(store.save).toHaveBeenCalledOnce();
+      expect(store.remove).toHaveBeenCalledOnce();
+      expect(held.current).toBeUndefined();
+      expect(removed).toHaveBeenCalledExactlyOnceWith({ status: "accepted" });
+    });
+
+    it("should send a waiting remove and a later save as one save without the older parts", () => {
+      const { store, channel, held } = storeWithSaveOnItsWay();
+      channel.write({ kind: "remove", done: vi.fn() });
+      save(channel, { pageSize: 25 });
+
+      channel.sendNewestNow();
+      expect(store.remove).not.toHaveBeenCalled();
+      expect(store.save).toHaveBeenCalledTimes(2);
+      expect(held.current).toEqual(savedWith({ pageSize: 25 }));
+    });
+
+    it("should send nothing when nothing waits", () => {
+      const { store, channel } = storeWithSaveOnItsWay();
+      channel.sendNewestNow();
+      expect(store.save).toHaveBeenCalledOnce();
+      expect(store.remove).not.toHaveBeenCalled();
+    });
+  });
+
   describe("when its last hook leaves", () => {
     it("should be forgotten, so the next to join starts a new one", () => {
       const store = quickStore();

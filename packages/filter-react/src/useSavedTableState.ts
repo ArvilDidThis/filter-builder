@@ -168,8 +168,9 @@ export interface SavedTableState<Values> {
  * - A load still on its way when the table leaves the screen, or when its key changes, is not
  *   cancelled. Its answer is ignored.
  * - Saves and removes reach the store one at a time, in the order they were made, so a slow
- *   answer cannot leave an older state in the store. Only a closing page does not wait for the
- *   answer before it sends the next one.
+ *   answer cannot leave an older state in the store. Only a closing page does not wait: it
+ *   sends the newest state at once, in one request. A save still on its way then may reach
+ *   the store after that request, or not at all.
  *
  * @example
  * const saved = useSavedTableState({
@@ -738,10 +739,13 @@ function createController<Values>(
       });
     },
 
-    /** Sends every waiting save and remove of this hook at once. For a closing page only. */
+    /**
+     * Sends what waits now, as one request per key, without waiting for the store to answer
+     * a write already on its way. For a closing page only.
+     */
     flushWithoutWaiting(): void {
       queuePending();
-      for (const busy of busyChannels) busy.sendAllNow();
+      for (const busy of busyChannels) busy.sendNewestNow();
     },
 
     clear(): void {
