@@ -22,7 +22,7 @@ import {
 import { useColumnSettings } from "../useColumnSettings";
 import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
 import { pressInOpenTree, stopPressesAt } from "./shadowPress.testing";
-import { placeFromSlot, slotAt } from "./useColumnDrag";
+import { placeFromSlot, slotAt, useColumnDrag } from "./useColumnDrag";
 import { shiftToFit } from "./useKeepOnScreen";
 
 const COLUMNS: readonly ColumnDefinition[] = [
@@ -2706,6 +2706,75 @@ describe("ColumnPicker", () => {
       fireEvent.pointerMove(document, pointer(210));
       expect(drawn.mock.calls).toEqual([["c3"], ["c3"], ["c4"]]);
     });
+  });
+});
+
+/** Counts the drops `ReplacedList` is told of. */
+const dropped = vi.fn();
+/** The rows of `ReplacedList`. */
+const KEYS: readonly string[] = ["a", "b", "c"];
+
+/**
+ * A list that stays open, and can be replaced by a new element while a row is held. The
+ * picker never does this: its list leaves the page only by closing, which ends the drag
+ * first. So the picker cannot show what a release does once its list is gone.
+ */
+function ReplacedList() {
+  const [version, setVersion] = useState(0);
+  const listRef = useRef<HTMLUListElement>(null);
+  const drag = useColumnDrag({
+    listRef,
+    keys: KEYS,
+    active: true,
+    onDrop: dropped,
+  });
+  return (
+    <>
+      <ul key={version} ref={listRef}>
+        {KEYS.map((key) => (
+          <li key={key}>
+            <button
+              onPointerDown={(event) => drag.start(event, key)}
+              type="button"
+            >
+              Hold {key}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <button onClick={() => setVersion((was) => was + 1)} type="button">
+        Replace the list
+      </button>
+    </>
+  );
+}
+
+describe("useColumnDrag", () => {
+  const hold = (key: string) =>
+    screen.getByRole("button", { name: `Hold ${key}` });
+
+  it("should drop a row in the list it was picked up in", () => {
+    dropped.mockClear();
+    render(<ReplacedList />);
+    layOutList();
+    fireEvent.pointerDown(hold("a"), pointer(115));
+    fireEvent.pointerMove(document, pointer(180));
+    fireEvent.pointerUp(document, pointer(180));
+    expect(dropped.mock.calls).toEqual([["a", 2]]);
+  });
+
+  it("should ignore a release once the list it was aimed at is gone", () => {
+    dropped.mockClear();
+    render(<ReplacedList />);
+    layOutList();
+    fireEvent.pointerDown(hold("a"), pointer(115));
+    fireEvent.pointerMove(document, pointer(180));
+    const before = screen.getByRole("list");
+    fireEvent.click(screen.getByRole("button", { name: "Replace the list" }));
+    expect(screen.getByRole("list")).not.toBe(before);
+    // The same release as in the test above. It was aimed at a list that has left the page.
+    fireEvent.pointerUp(document, pointer(180));
+    expect(dropped).not.toHaveBeenCalled();
   });
 });
 

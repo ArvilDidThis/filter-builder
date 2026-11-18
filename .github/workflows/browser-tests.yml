@@ -1,0 +1,134 @@
+name: Browser tests
+
+# Runs the column picker and saved table state in real browsers (Chromium, Firefox and WebKit),
+# and the quick tests of filter-react a second time against React 18.
+# Kept separate from ci.yml so the quick checks stay quick, and so an outage in one never
+# blocks the other.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Run by hand to store new Linux screenshots: see "Browser tests" in the README
+  workflow_dispatch:
+    inputs:
+      update-screenshots:
+        description: "Store new Linux screenshots for download, instead of comparing"
+        type: boolean
+        default: false
+
+# A newer push to the same branch or PR cancels the run still in progress
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: jobs can only read the repo
+permissions:
+  contents: read
+
+# Jobs run on GitHub's own machines. Each job gets a fresh, empty machine, so code from a pull
+# request never runs on a machine that is kept.
+jobs:
+  browsers:
+    name: Chromium, Firefox & WebKit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The tests run inside Playwright's own container (a small Linux system that holds the
+    # browsers and the system libraries they need). Nothing is downloaded and installed on
+    # each run, which once took longer than this job's time limit. It is the same container
+    # that `browser/store-linux-screenshots.sh` uses, so the stored screenshots match.
+    #
+    # The image is pinned to its digest (a fingerprint of its exact content), so a moved tag
+    # can't change what runs here. Its version must equal the `playwright` version in
+    # `packages/filter-react/package.json`; a step below checks that. To move to a newer
+    # Playwright, change the version there, the tag and digest here, and the tag in the
+    # script, then store new screenshots.
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      # Chromium needs more shared memory than a container gets by default
+      options: --ipc=host
+    env:
+      # GitHub gives a container another home folder, where Firefox refuses to start as the
+      # container's own user
+      HOME: /root
+    steps:
+      # Actions are pinned to a full commit (with the version in a comment) so a moved tag
+      # can't change what runs here
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Reads the pnpm version from package.json ("packageManager")
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - run: pnpm install --frozen-lockfile
+
+      # The container's browsers suit one Playwright version only. With another version
+      # installed, the tests would look for browsers that are not there.
+      - name: Check that the container matches the installed Playwright
+        env:
+          # Keep equal to the version in the container's tag above
+          CONTAINER_PLAYWRIGHT: "1.65.1"
+        run: |
+          installed=$(node -p "require('./packages/filter-react/package.json').devDependencies.playwright")
+          if [ "$installed" != "$CONTAINER_PLAYWRIGHT" ]; then
+            echo "::error::package.json names Playwright $installed, but the container holds $CONTAINER_PLAYWRIGHT"
+            exit 1
+          fi
+
+      - name: Run the browser tests
+        if: ${{ !inputs.update-screenshots }}
+        run: pnpm test:browser
+
+      # Only when the workflow is run by hand with "update-screenshots" ticked
+      - name: Store new screenshots
+        if: ${{ inputs.update-screenshots }}
+        run: pnpm test:browser:update
+
+      - name: Offer the new screenshots for download
+        if: ${{ inputs.update-screenshots }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-screenshots
+          path: packages/filter-react/browser/__screenshots__/linux/
+          if-no-files-found: error
+          retention-days: 7
+
+      # The evidence of a failure: a screenshot of the page when each test failed, and for a
+      # screenshot comparison the new picture and its difference from the stored one
+      - name: Keep the evidence of a failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-test-failures
+          path: packages/filter-react/.vitest/
+          # The folder starts with a dot, which the upload leaves out unless told otherwise
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+  react-18:
+    name: Tests against React 18
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Reads the pnpm version from package.json ("packageManager")
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - run: pnpm install --frozen-lockfile
+
+      # Builds filter-core first, which the tests load, then runs filter-react's tests with
+      # React 18 in place of the newest React
+      - run: pnpm test:react18

@@ -50,7 +50,11 @@ const gate: {
 
 /** Cannot be drawn while the price column is hidden, until the gate opens. */
 function Blocker({ hidden }: { hidden: readonly string[] }) {
-  if (!gate.isOpen && hidden.includes("price")) use(gate.opened);
+  if (!gate.isOpen && hidden.includes("price")) {
+    if (typeof use === "function") use(gate.opened);
+    // React 18 has no `use`. There a component waits by throwing the promise it waits for.
+    else throw gate.opened;
+  }
   return null;
 }
 

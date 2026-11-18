@@ -355,6 +355,13 @@ describe("useSavedTableState", () => {
       expect(store.save).not.toHaveBeenCalled();
     });
 
+    /**
+     * Whether this React has `Activity`, the part of the page that React can hide and show
+     * again. The tests of a hidden table need a React version that exports it. React 18
+     * does not, so they are skipped in the React 18 run.
+     */
+    const HAS_ACTIVITY = Activity !== undefined;
+
     /** Draws the hook inside a part of the page that React can hide and show again. */
     const renderHideable = (store: StateStore) => {
       const seen: { current?: SavedTableState<Values> } = {};
@@ -373,44 +380,50 @@ describe("useSavedTableState", () => {
       };
     };
 
-    it("should not bring back older state when a hidden table is shown again", async () => {
-      const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
-      const table = renderHideable(store);
-      act(() => table.current().set.sort(PRICE_SORT));
-      // Hiding saves the change. The store has not answered, so it still holds the old sort.
-      table.hide();
-      expect(store.save).toHaveBeenCalledOnce();
-      table.show();
-      expect(table.current().values.sort).toEqual(PRICE_SORT);
-      expect(table.current().status).toBe("ready");
-      expect(store.load).toHaveBeenCalledOnce();
+    it.runIf(HAS_ACTIVITY)(
+      "should not bring back older state when a hidden table is shown again",
+      async () => {
+        const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });
+        const table = renderHideable(store);
+        act(() => table.current().set.sort(PRICE_SORT));
+        // Hiding saves the change. The store has not answered, so it still holds the old sort.
+        table.hide();
+        expect(store.save).toHaveBeenCalledOnce();
+        table.show();
+        expect(table.current().values.sort).toEqual(PRICE_SORT);
+        expect(table.current().status).toBe("ready");
+        expect(store.load).toHaveBeenCalledOnce();
 
-      act(() => store.requests[0]?.answer());
-      await settle();
-      expect(table.current().values.sort).toEqual(PRICE_SORT);
-      // Saving still works after the table is back.
-      act(() => table.current().set.sort(null));
-      act(() => vi.advanceTimersByTime(300));
-      expect(store.save).toHaveBeenCalledTimes(2);
-    });
+        act(() => store.requests[0]?.answer());
+        await settle();
+        expect(table.current().values.sort).toEqual(PRICE_SORT);
+        // Saving still works after the table is back.
+        act(() => table.current().set.sort(null));
+        act(() => vi.advanceTimersByTime(300));
+        expect(store.save).toHaveBeenCalledTimes(2);
+      },
+    );
 
-    it("should keep a change made while loading when a hidden table is shown again", async () => {
-      const answers = [deferred<unknown>(), deferred<unknown>()];
-      const load = vi.fn(
-        (_key: string) => answers[load.mock.calls.length - 1]?.promise,
-      );
-      const store = { ...memoryStore(), load };
-      const table = renderHideable(store);
-      act(() => table.current().set.sort(PRICE_SORT));
-      table.hide();
-      table.show();
-      expect(table.current().values.sort).toEqual(PRICE_SORT);
+    it.runIf(HAS_ACTIVITY)(
+      "should keep a change made while loading when a hidden table is shown again",
+      async () => {
+        const answers = [deferred<unknown>(), deferred<unknown>()];
+        const load = vi.fn(
+          (_key: string) => answers[load.mock.calls.length - 1]?.promise,
+        );
+        const store = { ...memoryStore(), load };
+        const table = renderHideable(store);
+        act(() => table.current().set.sort(PRICE_SORT));
+        table.hide();
+        table.show();
+        expect(table.current().values.sort).toEqual(PRICE_SORT);
 
-      answers[1]?.resolve(savedWith({ sort: NAME_SORT }));
-      await settle();
-      expect(table.current().status).toBe("ready");
-      expect(table.current().values.sort).toEqual(PRICE_SORT);
-    });
+        answers[1]?.resolve(savedWith({ sort: NAME_SORT }));
+        await settle();
+        expect(table.current().status).toBe("ready");
+        expect(table.current().values.sort).toEqual(PRICE_SORT);
+      },
+    );
 
     /** Mounts another table on "orders" that saves a page size of its own, and leaves. */
     const saveFromAnotherTable = (store: StateStore) => {
@@ -425,46 +438,52 @@ describe("useSavedTableState", () => {
       other.unmount();
     };
 
-    it("should read the store again when another table saved under the key meanwhile", () => {
-      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
-      const table = renderHideable(store);
-      table.hide();
-      saveFromAnotherTable(store);
-      expect(store.load).toHaveBeenCalledTimes(2);
+    it.runIf(HAS_ACTIVITY)(
+      "should read the store again when another table saved under the key meanwhile",
+      () => {
+        const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+        const table = renderHideable(store);
+        table.hide();
+        saveFromAnotherTable(store);
+        expect(store.load).toHaveBeenCalledTimes(2);
 
-      // What the hidden table knew about the store is out of date, so it reads again.
-      table.show();
-      expect(store.load).toHaveBeenCalledTimes(3);
-      expect(table.current().status).toBe("ready");
-      act(() => table.current().set.sort(PRICE_SORT));
-      act(() => vi.advanceTimersByTime(300));
-      // Its save keeps the part saved meanwhile.
-      expect(store.items.get("orders")).toMatchObject({
-        parts: { sort: PRICE_SORT, pageSize: 50 },
-      });
-    });
+        // What the hidden table knew about the store is out of date, so it reads again.
+        table.show();
+        expect(store.load).toHaveBeenCalledTimes(3);
+        expect(table.current().status).toBe("ready");
+        act(() => table.current().set.sort(PRICE_SORT));
+        act(() => vi.advanceTimersByTime(300));
+        // Its save keeps the part saved meanwhile.
+        expect(store.items.get("orders")).toMatchObject({
+          parts: { sort: PRICE_SORT, pageSize: 50 },
+        });
+      },
+    );
 
-    it("should not save from a hidden table over what another table saved meanwhile", () => {
-      const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
-      const table = renderHideable(store);
-      table.hide();
-      saveFromAnotherTable(store);
+    it.runIf(HAS_ACTIVITY)(
+      "should not save from a hidden table over what another table saved meanwhile",
+      () => {
+        const store = memoryStore({ orders: savedWith({ sort: NAME_SORT }) });
+        const table = renderHideable(store);
+        table.hide();
+        saveFromAnotherTable(store);
 
-      // A change made while hidden waits: the hidden table no longer knows the other parts.
-      act(() => table.current().set.sort(PRICE_SORT));
-      act(() => vi.advanceTimersByTime(300));
-      expect(store.items.get("orders")).toMatchObject({
-        parts: { sort: NAME_SORT, pageSize: 50 },
-      });
+        // A change made while hidden waits: the hidden table no longer knows the other parts.
+        act(() => table.current().set.sort(PRICE_SORT));
+        act(() => vi.advanceTimersByTime(300));
+        expect(store.items.get("orders")).toMatchObject({
+          parts: { sort: NAME_SORT, pageSize: 50 },
+        });
 
-      // Shown again, it reads the store first and then saves the change with those parts.
-      table.show();
-      expect(table.current().values.sort).toEqual(PRICE_SORT);
-      act(() => vi.advanceTimersByTime(300));
-      expect(store.items.get("orders")).toMatchObject({
-        parts: { sort: PRICE_SORT, pageSize: 50 },
-      });
-    });
+        // Shown again, it reads the store first and then saves the change with those parts.
+        table.show();
+        expect(table.current().values.sort).toEqual(PRICE_SORT);
+        act(() => vi.advanceTimersByTime(300));
+        expect(store.items.get("orders")).toMatchObject({
+          parts: { sort: PRICE_SORT, pageSize: 50 },
+        });
+      },
+    );
 
     it("should load a key again only after the saves on their way to it", async () => {
       const store = slowStore({ orders: savedWith({ sort: NAME_SORT }) });

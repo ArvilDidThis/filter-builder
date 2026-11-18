@@ -12,3 +12,12 @@ coverage/
 
 # Claude Code: each person's own skills, hooks and settings
 .claude/
+
+# What a failed browser test leaves behind: screenshots and their differences
+.vitest/
+
+# Stored screenshots for the browser tests. Only the ones made on Linux, where CI runs, are
+# kept in the repository. A screenshot made on another system is for that machine only: text
+# is drawn differently on each system, and even from one version of a system to the next.
+packages/filter-react/browser/__screenshots__/*
+!packages/filter-react/browser/__screenshots__/linux/
