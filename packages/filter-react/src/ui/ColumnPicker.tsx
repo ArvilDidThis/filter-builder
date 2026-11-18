@@ -18,6 +18,7 @@ import {
 } from "react";
 import type { ColumnSettingsState } from "../useColumnSettings";
 import { useEarlyEffect } from "../useEarlyEffect";
+import { isDrawnInside } from "./shadowTrees";
 import { useColumnDrag } from "./useColumnDrag";
 import { useKeepOnScreen } from "./useKeepOnScreen";
 import { useOutsidePointerDown } from "./useOutsidePointerDown";
@@ -436,9 +437,11 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       onBlur={(event) => {
         if (!open) return;
         const next = event.relatedTarget;
+        const root = rootRef.current;
         // No next element is named when the focus goes nowhere, or to another page.
         if (next === null) closeIfFocusLeftPage();
-        else if (!rootRef.current?.contains(next)) close(false);
+        // A control that an app's own row shows through a slot is inside the picker too.
+        else if (root === null || !isDrawnInside(root, next)) close(false);
       }}
       onFocus={() => {
         // The focus is in the picker, so the last Tab press did not take it away.

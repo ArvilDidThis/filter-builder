@@ -1980,6 +1980,47 @@ describe("ColumnPicker", () => {
     });
 
     it.each(["open", "closed"] as const)(
+      "should stay open when the focus moves to a control the app slots into a row in a %s shadow tree",
+      (mode) => {
+        // A click on a button gives it the focus. The slotted button is a child of the host,
+        // so on the page it is outside the picker, though it is drawn in a row.
+        const host = document.createElement("div");
+        document.body.append(host);
+        const container = document.createElement("div");
+        const besideSlot = document.createElement("slot");
+        besideSlot.name = "beside";
+        host.attachShadow({ mode }).append(container, besideSlot);
+        const inRow = host.appendChild(document.createElement("button"));
+        inRow.slot = "price";
+        const beside = host.appendChild(document.createElement("button"));
+        beside.slot = "beside";
+        const { unmount } = render(
+          <App
+            extra={{
+              renderRow: (row) => (
+                <>
+                  <input {...row.checkboxProps} />
+                  <button {...row.handleProps}>grip</button>
+                  <slot name={row.column.key} />
+                </>
+              ),
+            }}
+          />,
+          { container },
+        );
+        const inside = within(container);
+        fireEvent.click(inside.getByRole("button", { name: /^Columns/ }));
+        fireEvent.blur(inside.getByRole("dialog"), { relatedTarget: inRow });
+        expect(inside.queryByRole("dialog")).not.toBeNull();
+        // Shown inside the same tree, but outside the picker.
+        fireEvent.blur(inside.getByRole("dialog"), { relatedTarget: beside });
+        expect(inside.queryByRole("dialog")).toBeNull();
+        unmount();
+        host.remove();
+      },
+    );
+
+    it.each(["open", "closed"] as const)(
       "should close on a press on the bare host of the %s shadow tree it is drawn in",
       (mode) => {
         const host = document.createElement("div");

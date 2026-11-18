@@ -38,3 +38,21 @@ export function shadowTreesAround(element: Element): ShadowRoot[] {
   }
   return trees;
 }
+
+/**
+ * Whether `node` is drawn inside `root`: it is inside it on the page, or it is shown through
+ * a slot inside it. An app's own row may hold a slot, and the element it shows is kept
+ * outside the tree, as a child of the tree's host. On the page that element is not inside
+ * the root, though a person sees it there.
+ *
+ * It asks each slot what it shows, which a slot tells even in a closed tree.
+ */
+export function isDrawnInside(root: Element, node: Node): boolean {
+  if (root.contains(node)) return true;
+  for (const slot of root.querySelectorAll("slot")) {
+    // Flattened: a slot may show another slot, and then shows what that one shows.
+    const shown = slot.assignedElements({ flatten: true });
+    if (shown.some((element) => element.contains(node))) return true;
+  }
+  return false;
+}
