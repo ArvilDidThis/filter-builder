@@ -72,12 +72,6 @@ function ReplacingApp({
   return <PickerApp changed={changed} picker={{ renderRow }} />;
 }
 
-/** Resolves once the browser has drawn two more screen frames. */
-const twoFrames = (): Promise<void> =>
-  new Promise((done) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => done()));
-  });
-
 /**
  * Sends the page one of the events a finger would cause, at a real place on the screen. The
  * browser knows of no such finger, so it gives the handle no pointer capture (the browser
@@ -258,13 +252,40 @@ describe("a drag that reaches the list's edge (item 2)", () => {
   test("leaves the list still while the pointer is away from its edges", async () => {
     const picker = await mountOpenPicker({ columns: manyColumns(40) });
     const list = picker.list();
-    await pressOn(picker.handle("Column 0"));
-    await moveTo(pointOn(list));
-    await expect
-      .poll(() => picker.rows().some((row) => row.dataset.drop))
-      .toBe(true);
-    await twoFrames();
-    expect(list.scrollTop).toBe(0);
+    // The list starts part of the way down, so it has room to scroll either way. At its
+    // top, a list that wrongly tried to scroll up would look the same as one that kept still.
+    const scrolled = new Promise((done) => {
+      list.addEventListener("scroll", done, { once: true });
+    });
+    list.scrollTop = 200;
+    await scrolled;
+    const start = list.scrollTop;
+    // Counts every scroll of the list from here to the drop. So nothing depends on looking
+    // at the right moment: a list that moved at any time is found out.
+    let scrolls = 0;
+    list.addEventListener("scroll", () => {
+      scrolls += 1;
+    });
+
+    // The first row that is wholly in view, and two places near the list's middle.
+    const top = list.getBoundingClientRect().top;
+    const held = picker
+      .rows()
+      .find((row) => row.getBoundingClientRect().top >= top) as HTMLElement;
+    const order = picker.listed();
+    await pressOn(held.querySelector("[data-fb-column-handle]") as Element);
+    for (const down of [0.4, 0.6]) {
+      const before = picker.rows().findIndex((row) => row.dataset.drop);
+      await moveTo(pointOn(list, 0.5, down));
+      await expect
+        .poll(() => picker.rows().findIndex((row) => row.dataset.drop))
+        .toBeGreaterThan(before);
+    }
+    await release();
+    // The drop is done once the list shows a new order.
+    await expect.poll(picker.listed).not.toEqual(order);
+    expect(scrolls).toBe(0);
+    expect(list.scrollTop).toBe(start);
   });
 });
 
