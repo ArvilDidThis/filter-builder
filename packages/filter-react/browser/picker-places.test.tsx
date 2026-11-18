@@ -3,7 +3,7 @@ import type {
   FieldDefinition,
   FilterDefinition,
 } from "@arvilmena/filter-core";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { describe, expect, test } from "vitest";
 import { commands, page, userEvent } from "vitest/browser";
 import { ColumnPicker } from "../src/ui/ColumnPicker";
@@ -13,6 +13,7 @@ import styles from "../styles.css?inline";
 import {
   COLUMNS,
   type Counter,
+  manyColumns,
   openPicker,
   PickerApp,
   type PickerParts,
@@ -26,6 +27,7 @@ import {
   pressOn,
   release,
 } from "./support/pointer";
+import { VIEWPORT } from "./viewport";
 
 // The picker in the places an app may put it: a closed shadow tree, a frame, a phone-sized
 // screen and the filter builder.
@@ -54,16 +56,45 @@ const LONG: readonly ColumnDefinition[] = [
 ];
 const PHONE = { width: 320, height: 568 };
 
+/** The gap the picker keeps between its popover and the edge of the screen, in pixels. */
+const MARGIN = 8;
+
+/**
+ * Whether the popover lies inside the visible part of its own page, sideways, with the margin
+ * kept on both sides. A browser may round a place by part of a pixel, so half a pixel is let
+ * through.
+ */
+function isInsideScreen(popover: HTMLElement | null): boolean {
+  if (popover === null) return false;
+  const box = popover.getBoundingClientRect();
+  const screenWidth = popover.ownerDocument.documentElement.clientWidth;
+  return box.left >= MARGIN - 0.5 && box.right <= screenWidth - MARGIN + 0.5;
+}
+
+/** Whether the page can be scrolled sideways, as it can when something runs past its edge. */
+function scrollsSideways(page: Document = document): boolean {
+  return page.documentElement.scrollWidth > page.documentElement.clientWidth;
+}
+
+/** Changes the size of the test page's window, and waits until the page has that size. */
+async function resizeTo(size: { width: number; height: number }) {
+  await page.viewport(size.width, size.height);
+  await expect.poll(() => window.innerWidth).toBe(size.width);
+  await expect.poll(() => window.innerHeight).toBe(size.height);
+}
+
 /** A page header with the picker at one end, as an app's toolbar has it. */
 function Toolbar({
   align,
   place = align === "end" ? "flex-end" : "flex-start",
+  columns = LONG,
 }: {
   align: "start" | "end";
   /** Where in the header the picker's button sits. Defaults to the end it lines up with. */
   place?: "flex-start" | "center" | "flex-end";
+  columns?: readonly ColumnDefinition[];
 }) {
-  const state = useColumnSettings({ columns: LONG });
+  const state = useColumnSettings({ columns });
   return (
     <div style={{ display: "flex", justifyContent: place }}>
       <ColumnPicker align={align} state={state} />
@@ -200,7 +231,11 @@ describe("the picker inside an embedded page (item 6)", () => {
    * Draws the app into a frame (a page within the page) from the outer page, as an app does
    * that draws into a preview pane. The frame has a document of its own.
    */
-  async function openInFrame(changed?: Counter): Promise<{
+  async function openInFrame(
+    changed?: Counter,
+    /** Drawn in the frame in place of the usual app around the picker. */
+    app?: ReactNode,
+  ): Promise<{
     picker: PickerParts;
     frame: HTMLIFrameElement;
     inner: Document;
@@ -225,7 +260,7 @@ describe("the picker inside an embedded page (item 6)", () => {
     const inner = frame.contentDocument as Document;
     addStyles(inner.head);
     mount(
-      <PickerApp changed={changed} />,
+      app ?? <PickerApp changed={changed} />,
       inner.body.appendChild(inner.createElement("div")),
     );
     return { picker: await openPicker(inner), frame, inner, outside };
@@ -283,14 +318,52 @@ describe("the picker inside an embedded page (item 6)", () => {
     await expect.poll(picker.popover).toBeNull();
     expect(inner.activeElement).toBe(picker.trigger());
   });
+
+  test("keeps the popover inside the frame's own screen, as the frame changes size", async () => {
+    // The button is at the frame's right edge, and the popover lines up with the button's
+    // left edge. So the popover would run past the right edge of the frame.
+    const { picker, frame, inner } = await openInFrame(
+      undefined,
+      <Toolbar align="start" place="flex-end" />,
+    );
+    // The frame is far narrower than the test page, which has room to spare on the right.
+    // Only a popover measured against the frame's own screen is moved.
+    expect(inner.documentElement.clientWidth).toBeLessThan(
+      document.documentElement.clientWidth / 2,
+    );
+    expect(isInsideScreen(picker.popover())).toBe(true);
+    expect(scrollsSideways(inner)).toBe(false);
+
+    // The frame's window changes size, and the test page's window does not.
+    frame.style.width = "330px";
+    await expect.poll(() => inner.documentElement.clientWidth).toBe(330);
+    await expect.poll(() => isInsideScreen(picker.popover())).toBe(true);
+    expect(scrollsSideways(inner)).toBe(false);
+  });
+});
+
+describe("the picker's popover in a closed shadow tree (item 6)", () => {
+  test("stays inside the screen", async () => {
+    await resizeTo(PHONE);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const shadow = host.attachShadow({ mode: "closed" });
+    addStyles(shadow);
+    mount(
+      <Toolbar align="start" place="center" />,
+      shadow.appendChild(document.createElement("div")),
+    );
+    const picker = await openPicker(shadow);
+    expect(isInsideScreen(picker.popover())).toBe(true);
+    expect(scrollsSideways()).toBe(false);
+  });
 });
 
 describe("the picker on a phone-sized screen (item 7)", () => {
   test.each(["start", "end"] as const)(
     "keeps the popover inside the screen, lined up with the %s of its button",
     async (align) => {
-      await page.viewport(PHONE.width, PHONE.height);
-      await expect.poll(() => window.innerWidth).toBe(PHONE.width);
+      await resizeTo(PHONE);
       mount(<Toolbar align={align} />);
       const picker = await openPicker();
 
@@ -328,13 +401,12 @@ describe("the picker on a phone-sized screen (item 7)", () => {
     },
   );
 
-  // This test fails today. With the button in the middle of the screen, a popover with long
-  // names is wider than the room on either side of the button, and nothing moves it back in.
+  // With the button in the middle of the screen, a popover with long names is wider than the
+  // room on either side of the button. So the picker moves it back inside the screen.
   test.each(["start", "end"] as const)(
     "keeps the popover inside the screen when its button is in the middle (align %s)",
     async (align) => {
-      await page.viewport(PHONE.width, PHONE.height);
-      await expect.poll(() => window.innerWidth).toBe(PHONE.width);
+      await resizeTo(PHONE);
       mount(<Toolbar align={align} place="center" />);
       const picker = await openPicker();
 
@@ -345,8 +417,112 @@ describe("the picker on a phone-sized screen (item 7)", () => {
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
         screenWidth,
       );
+      expect(isInsideScreen(picker.popover())).toBe(true);
+
+      // A tick makes the button wider ("1 hidden"), which moves the button's edges. The
+      // popover is still inside the screen afterwards.
+      const before = picker.trigger().getBoundingClientRect().width;
+      await commands.tap(pointOn(picker.checkbox(LONG[1]?.label as string)));
+      await expect
+        .poll(() => picker.trigger().getBoundingClientRect().width)
+        .toBeGreaterThan(before);
+      expect(isInsideScreen(picker.popover())).toBe(true);
+      expect(scrollsSideways()).toBe(false);
     },
   );
+
+  // The side `align` names is the wrong one for where the button is: the popover would open
+  // away from the screen.
+  test.each([
+    { align: "start", place: "flex-end", where: "far right" },
+    { align: "end", place: "flex-start", where: "far left" },
+  ] as const)(
+    "keeps the popover inside the screen with its button at the $where and align $align",
+    async ({ align, place }) => {
+      await resizeTo(PHONE);
+      mount(<Toolbar align={align} place={place} />);
+      const picker = await openPicker();
+      expect(isInsideScreen(picker.popover())).toBe(true);
+      expect(scrollsSideways()).toBe(false);
+
+      // It still works where it was moved to: a tap ticks a column, and a drag moves one.
+      await commands.tap(pointOn(picker.checkbox(LONG[1]?.label as string)));
+      await expect
+        .poll(() => picker.checkbox(LONG[1]?.label as string).checked)
+        .toBe(false);
+      await pressOn(
+        picker.rows()[0]?.querySelector("[data-fb-column-handle]") as Element,
+      );
+      await moveTo(lowerHalf(picker.rows()[2] as Element));
+      await release();
+      await expect
+        .poll(() => picker.rows()[2]?.textContent)
+        .toContain("Name of the product");
+      expect(isInsideScreen(picker.popover())).toBe(true);
+    },
+  );
+
+  test.each(["start", "end"] as const)(
+    "moves the popover only as far as it must (align %s)",
+    async (align) => {
+      // On the usual wide screen there is room on the side `align` names.
+      mount(<Toolbar align={align} place="center" />);
+      const picker = await openPicker();
+      const edge = align === "start" ? "left" : "right";
+      // How far the popover's edge is from the button's edge. A browser may round a place
+      // by part of a pixel, so under half a pixel counts as lined up.
+      const isLinedUp = (): boolean =>
+        Math.abs(
+          (picker.popover() as HTMLElement).getBoundingClientRect()[edge] -
+            picker.trigger().getBoundingClientRect()[edge],
+        ) < 0.5;
+      // The popover's edge is on the button's edge: it was not moved.
+      expect(isLinedUp()).toBe(true);
+
+      // The window is made narrow while the picker is open.
+      await resizeTo(PHONE);
+      await expect.poll(() => isInsideScreen(picker.popover())).toBe(true);
+      expect(scrollsSideways()).toBe(false);
+      // It moved towards the middle, and stopped at the margin: no further than needed.
+      const box = (picker.popover() as HTMLElement).getBoundingClientRect();
+      const gap =
+        align === "start"
+          ? document.documentElement.clientWidth - box.right
+          : box.left;
+      expect(Math.abs(gap - MARGIN)).toBeLessThanOrEqual(0.5);
+      expect(picker.popover()).not.toBeNull();
+
+      // Wide again: the popover goes back to the button's edge.
+      await resizeTo(VIEWPORT);
+      await expect.poll(isLinedUp).toBe(true);
+    },
+  );
+
+  test("keeps the buttons below a long list in reach on a short screen", async () => {
+    await resizeTo({ width: 480, height: 260 });
+    mount(<Toolbar align="start" columns={manyColumns(40)} />);
+    const picker = await openPicker();
+
+    const screenHeight = document.documentElement.clientHeight;
+    const popover = picker.popover() as HTMLElement;
+    expect(popover.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      screenHeight,
+    );
+    expect(picker.reset().getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      screenHeight,
+    );
+    // The list gave up the height, and scrolls to its other rows.
+    const list = picker.list();
+    expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+    expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(
+      screenHeight,
+    );
+
+    // A taller window gives the list its usual height back, while the picker is open.
+    const short = list.clientHeight;
+    await resizeTo({ width: 480, height: 700 });
+    await expect.poll(() => list.clientHeight).toBeGreaterThan(short);
+  });
 });
 
 describe("the picker inside the filter builder (item 8)", () => {
