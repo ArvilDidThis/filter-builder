@@ -109,23 +109,44 @@ const hasBaseline: BrowserCommand<[name: string]> = (context, name) =>
     }),
   );
 
+/** One thing to do in a visited tab: click an element, or wait for one to hold a text. */
+export type VisitStep =
+  | { click: string }
+  | { waitFor: string; toHoldText: string };
+
+/** What a browser holds for a page: its local storage entries and its cookies, as text. */
+export interface Held {
+  local: Record<string, string>;
+  cookie: string;
+}
+
 /**
  * Opens a page in a tab of its own, waits until it says it is ready, runs `steps` in it, and
- * then leaves it: by closing the tab, or by going to another address.
+ * then leaves it: by closing the tab, or by going to another address. Gives back what the
+ * browser held for the page just before it was left.
  */
 const visitAndLeave: BrowserCommand<
-  [
-    path: string,
-    steps: readonly { click: string }[],
-    leave: "close" | "navigate",
-  ]
-> = async (context, path, steps, leave) => {
+  [path: string, steps: readonly VisitStep[], leave: "close" | "navigate"]
+> = async (context, path, steps, leave): Promise<Held> => {
   const origin = new URL(context.page.url()).origin;
   const tab = await context.context.newPage();
   try {
     await tab.goto(origin + path);
     await tab.locator("[data-ready]").waitFor();
-    for (const step of steps) await tab.locator(step.click).click();
+    for (const step of steps) {
+      if ("click" in step) {
+        await tab.locator(step.click).click();
+      } else {
+        await tab.waitForFunction(
+          ([selector, text]) =>
+            document.querySelector(selector)?.textContent === text,
+          [step.waitFor, step.toHoldText] as const,
+        );
+      }
+    }
+    const heldBeforeLeaving = await tab.evaluate(
+      (): Held => ({ local: { ...localStorage }, cookie: document.cookie }),
+    );
     if (leave === "navigate") {
       await tab.goto(`${origin}/__fixtures__/blank`);
     } else {
@@ -133,6 +154,7 @@ const visitAndLeave: BrowserCommand<
       await tab.close({ runBeforeUnload: true });
       if (!tab.isClosed()) await tab.waitForEvent("close");
     }
+    return heldBeforeLeaving;
   } finally {
     if (!tab.isClosed()) await tab.close();
   }
@@ -161,8 +183,8 @@ declare module "vitest/browser" {
     hasBaseline: (name: string) => Promise<boolean>;
     visitAndLeave: (
       path: string,
-      steps: readonly { click: string }[],
+      steps: readonly VisitStep[],
       leave: "close" | "navigate",
-    ) => Promise<void>;
+    ) => Promise<Held>;
   }
 }

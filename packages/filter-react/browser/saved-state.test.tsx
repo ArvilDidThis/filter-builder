@@ -1,15 +1,23 @@
 import { describe, expect, test } from "vitest";
 import { commands, server } from "vitest/browser";
+import type { Held } from "./commands";
 import { openTablePage, tablePagePath } from "./support/fixture-page";
 import { clickOn } from "./support/pointer";
 
 // Saved table state in a whole page of its own: loaded again, closed, and drawn by a server.
 // Local storage and cookies are the browser's real ones.
 
-/** What the browser holds for a table, as text: its local storage entry, or its cookie. */
-function stored(store: "local" | "cookie", id: string): string {
-  if (store === "local") return localStorage.getItem(`table-state.${id}`) ?? "";
-  const cookie = document.cookie
+/**
+ * What the browser holds for a table, as text: its local storage entry, or its cookie.
+ * Without `held` it is read from the browser now.
+ */
+function stored(
+  store: "local" | "cookie",
+  id: string,
+  held: Held = { local: { ...localStorage }, cookie: document.cookie },
+): string {
+  if (store === "local") return held.local[`table-state.${id}`] ?? "";
+  const cookie = held.cookie
     .split("; ")
     .find((entry) => entry.startsWith(`table-state.${id}=`));
   return cookie === undefined
@@ -107,11 +115,18 @@ describe.each(["local", "cookie"] as const)("state saved in %s", (store) => {
   test.each(waysToLeave)(
     "writes a waiting save when its tab is left by %s (item 11)",
     async (leave) => {
-      await commands.visitAndLeave(
+      const heldBeforeLeaving = await commands.visitAndLeave(
         tablePagePath(`store=${store}&tables=orders&delay=${NEVER}`),
-        [{ click: '[data-action="hide-price"]' }],
+        [
+          { click: '[data-action="hide-price"]' },
+          // The change is on screen before the tab is left.
+          { waitFor: "[data-shown]", toHoldText: "name stock" },
+        ],
         leave,
       );
+      // And it was still waiting then: nothing had been written. So the save below was made
+      // as the tab was left, not before.
+      expect(stored(store, "orders", heldBeforeLeaving)).toBe("");
       // The tab shares this page's local storage and cookies.
       await expect.poll(() => stored(store, "orders")).toContain(PRICE_HIDDEN);
     },
