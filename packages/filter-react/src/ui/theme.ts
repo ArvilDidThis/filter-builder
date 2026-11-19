@@ -25,6 +25,8 @@ export const FILTER_THEME_VARIABLES = [
   "--fb-backdrop",
   "--fb-dialog-column-width",
   "--fb-selected-bg",
+  "--fb-locked-opacity",
+  "--fb-select-ring",
   "--fb-sticky-top",
 ] as const;
 

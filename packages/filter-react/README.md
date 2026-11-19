@@ -289,9 +289,11 @@ from left to right; a page that reads from right to left is not tested.
 Moving a block of columns one by one is slow. The "Group drag" button, above the list, lets a
 person move several columns together. While it is on:
 
-- The boxes that show and hide columns are turned off. They still say which columns are shown.
-- Each column that can move gets a second box, which selects it. A click on the column's name
-  ticks that box. A pinned column cannot be selected.
+- The boxes that show and hide columns are turned off and dimmed. They still say which columns
+  are shown.
+- Each column that can move gets a second box, which selects it. It stands first in the row,
+  with a ring around it, so it is not taken for the dimmed box beside it. A click on the
+  column's name ticks it. A pinned column cannot be selected, and has a gap in that place.
 - Dragging the handle of any selected column moves every selected column. They land together
   at the drop place, in the order they had among themselves.
 - The arrow keys, Home and End on the handle of a selected column move the whole selection.
@@ -476,9 +478,9 @@ Three more values say whether a button has anything to do:
 | Value        | True when                                   | So this would change nothing |
 | ------------ | ------------------------------------------- | ---------------------------- |
 | `allVisible` | Every column is shown                       | `actions.showAll`            |
+| `allHidden`  | Every column that may be hidden is hidden   | `actions.hideAll`            |
 | `isDefault`  | The settings are the column list's defaults | `actions.reset`              |
 
-| `allHidden`  | Every column that may be hidden is hidden   | `actions.hideAll`            |
 The example marks such a button with `aria-disabled`, not `disabled`. A button that turns itself
 `disabled` while it holds the keyboard focus loses that focus. The click needs no check of its
 own, because an action that has nothing to do changes nothing.
@@ -541,11 +543,11 @@ function ProductColumns() {
       >
         Show all
       </button>
-      <button type="button" aria-disabled={isDefault} onClick={actions.reset}>
-        Reset
       <button type="button" aria-disabled={allHidden} onClick={actions.hideAll}>
         Hide all
       </button>
+      <button type="button" aria-disabled={isDefault} onClick={actions.reset}>
+        Reset
       </button>
       <p>Showing: {visibleColumns.map((column) => column.label).join(", ")}</p>
     </>
@@ -665,6 +667,8 @@ variables, so TypeScript suggests their names and needs no cast.
 | `--fb-backdrop`            | The dimmed page around the column picker's dialog   | `rgb(0 0 0 / 0.45)`                   |
 | `--fb-dialog-column-width` | The least width of a grid column in that dialog     | `14rem`                               |
 | `--fb-selected-bg`         | Behind a row selected for a group drag              | 20% of `--fb-focus`                   |
+| `--fb-locked-opacity`      | How faint a locked checkbox is                      | `0.4`                                 |
+| `--fb-select-ring`         | The ring around a row's selection box in group drag | `--fb-focus`                          |
 | `--fb-sticky-top`          | How far below the top a group's "And" or "Or" stays | `0.5rem`                              |
 
 The same names are exported as `FILTER_THEME_VARIABLES` from `@arvilmena/filter-react/ui`.

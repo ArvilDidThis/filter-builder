@@ -1,6 +1,7 @@
 import type { ColumnDefinition } from "@arvilmena/filter-core";
 import { describe, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
+import { addAppCss } from "./support/app-css";
 import {
   type Counter,
   manyColumns,
@@ -38,6 +39,131 @@ async function select(picker: PickerParts, ...labels: string[]) {
   for (const label of labels) await clickOn(picker.selectBox(label));
   await expect.poll(picker.selected).toEqual(labels);
 }
+
+/**
+ * What an app's style sheet may do to every checkbox: draw it itself. The browser's own
+ * look is then gone, and with it the grey of a box that is turned off.
+ */
+const REDRAWN_CHECKBOXES = `
+  input[type="checkbox"] {
+    appearance: none;
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border: 1px solid gray;
+    background-color: white;
+  }
+`;
+
+/**
+ * The left edge of each part of every row, rounded: the box that selects (or the gap a pinned
+ * row has there), the box that shows and hides, the handle (or the pin), and the name.
+ */
+function partLefts(picker: PickerParts): Record<string, Set<number>> {
+  const parts = {
+    select: ".fb-columns-select",
+    checkbox: "input:not(.fb-columns-select)",
+    handle: ".fb-columns-handle, .fb-columns-pin",
+    label: ".fb-columns-label",
+  };
+  // Within one grid column of the dialog, so that every row has the same start.
+  const [first] = picker.rows();
+  const start = Math.round((first as Element).getBoundingClientRect().left);
+  const rows = picker
+    .rows()
+    .filter((row) => Math.round(row.getBoundingClientRect().left) === start);
+  return Object.fromEntries(
+    Object.entries(parts).map(([name, selector]) => [
+      name,
+      new Set(
+        rows.map((row) =>
+          Math.round(
+            (row.querySelector(selector) as Element).getBoundingClientRect()
+              .left,
+          ),
+        ),
+      ),
+    ]),
+  );
+}
+
+describe("how group drag looks", () => {
+  test.each(["popover", "dialog"] as const)(
+    "keeps the boxes, handles and names of every row lined up in the %s, the pinned row too",
+    async (view) => {
+      addAppCss(REDRAWN_CHECKBOXES);
+      const open = view === "dialog" ? mountOpenDialog : mountOpenPicker;
+      const picker = await open({ columns: COLUMNS });
+      await clickOn(picker.groupDrag());
+      await expect.poll(() => picker.selectBox("Company")).not.toBeNull();
+      const lefts = partLefts(picker);
+      for (const [part, places] of Object.entries(lefts)) {
+        expect([part, places.size]).toEqual([part, 1]);
+      }
+      // The parts stand in this order, each clear of the one before it.
+      const at = (part: string) =>
+        [...(lefts[part] as Set<number>)][0] as number;
+      expect(at("checkbox")).toBeGreaterThanOrEqual(at("select") + 16);
+      expect(at("handle")).toBeGreaterThanOrEqual(at("checkbox") + 16);
+      expect(at("label")).toBeGreaterThanOrEqual(at("handle") + 16);
+      // The gap of the pinned row is as wide as the box of the others.
+      const gap = picker.row("Symbol").querySelector(".fb-columns-select");
+      expect(gap?.getBoundingClientRect().width).toBe(
+        picker.selectBox("Company").getBoundingClientRect().width,
+      );
+    },
+  );
+
+  test.each([
+    ["the browser draws the checkboxes", ""],
+    ["an app's style sheet draws the checkboxes", REDRAWN_CHECKBOXES],
+  ])(
+    "dims the locked boxes and rings the box that selects, when %s",
+    async (_, css) => {
+      if (css !== "") addAppCss(css);
+      const picker = await mountOpenPicker({ columns: COLUMNS });
+      const opacity = (box: Element) => Number(getComputedStyle(box).opacity);
+      const ring = (box: Element) => getComputedStyle(box).outlineStyle;
+      // Before group drag: only the box of a column that must stay shown is locked.
+      expect(opacity(picker.checkbox("Company"))).toBe(1);
+      expect(opacity(picker.checkbox("Symbol"))).toBeLessThan(0.6);
+
+      await clickOn(picker.groupDrag());
+      await expect.poll(() => picker.checkbox("Company").disabled).toBe(true);
+      // Every show/hide box is locked now, and clearly fainter than the box that selects.
+      for (const label of ["Symbol", "Company", "Beta"]) {
+        expect(opacity(picker.checkbox(label))).toBeLessThan(0.6);
+        expect(ring(picker.checkbox(label))).toBe("none");
+      }
+      const select = picker.selectBox("Company");
+      expect(opacity(select)).toBe(1);
+      expect(ring(select)).toBe("solid");
+      expect(getComputedStyle(select).outlineWidth).toBe("2px");
+      // The ring stays when the box is ticked.
+      await clickOn(select);
+      await expect.poll(picker.selected).toEqual(["Company"]);
+      expect(ring(select)).toBe("solid");
+
+      // Turned off again, the boxes are as bright as before.
+      await clickOn(picker.groupDrag());
+      await expect.poll(() => picker.checkbox("Company").disabled).toBe(false);
+      expect(opacity(picker.checkbox("Company"))).toBe(1);
+    },
+  );
+
+  test("lets an app set how faint a locked box is, and the colour of the ring", async () => {
+    addAppCss(
+      ":root { --fb-locked-opacity: 0.25; --fb-select-ring: rgb(1, 2, 3); }",
+    );
+    const picker = await mountOpenPicker({ columns: COLUMNS });
+    await clickOn(picker.groupDrag());
+    await expect.poll(() => picker.checkbox("Company").disabled).toBe(true);
+    expect(getComputedStyle(picker.checkbox("Company")).opacity).toBe("0.25");
+    expect(getComputedStyle(picker.selectBox("Company")).outlineColor).toBe(
+      "rgb(1, 2, 3)",
+    );
+  });
+});
 
 describe("group drag in the popover", () => {
   test("turns the show and hide boxes off, and gives movable rows a box to select them", async () => {
