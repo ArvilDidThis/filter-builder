@@ -151,6 +151,21 @@ describe("useColumnSettings", () => {
     expect(shape(result.current)).toBe("name price stock (notes)");
   });
 
+  it("should hide every column that may be hidden, and show them all again", () => {
+    const { result, onChange } = renderUncontrolled();
+    act(() => result.current.actions.move("stock", 0));
+    act(() => result.current.actions.hideAll());
+    // "Name" must stay shown, and the order is kept.
+    expect(shape(result.current)).toBe("(stock) name (price) (notes)");
+    expect(visibleKeys(result.current)).toBe("name");
+    expect(onChange).toHaveBeenLastCalledWith({
+      order: ["stock", "name", "price", "notes"],
+      hidden: ["notes", "stock", "price"],
+    });
+    act(() => result.current.actions.showAll());
+    expect(shape(result.current)).toBe("stock name price notes");
+  });
+
   it("should not report an action that changes nothing", () => {
     const { result, onChange } = renderUncontrolled();
     const before = result.current;
@@ -508,7 +523,7 @@ describe("useColumnSettings", () => {
     expect(result.current.visibleColumns).toBe(before);
   });
 
-  describe("whether Show all and Reset have anything to do", () => {
+  describe("whether Show all, Hide all and Reset have anything to do", () => {
     it("should start with the defaults, and not all shown while a column starts hidden", () => {
       const { result } = renderUncontrolled();
       expect(result.current.isDefault).toBe(true);
@@ -533,6 +548,27 @@ describe("useColumnSettings", () => {
       act(() => result.current.actions.reset());
       expect(result.current.isDefault).toBe(true);
       expect(result.current.allVisible).toBe(false);
+    });
+
+    it("should say all are hidden only once nothing more can be hidden", () => {
+      const { result, onChange } = renderUncontrolled();
+      expect(result.current.allHidden).toBe(false);
+      act(() => result.current.actions.hideAll());
+      expect(result.current.allHidden).toBe(true);
+      expect(result.current.allVisible).toBe(false);
+      // Pressed again, it has nothing to do and reports no change.
+      act(() => result.current.actions.hideAll());
+      expect(onChange).toHaveBeenCalledTimes(1);
+      act(() => result.current.actions.toggle("price"));
+      expect(result.current.allHidden).toBe(false);
+    });
+
+    it("should say all are hidden when every column must stay shown", () => {
+      const { result } = renderHook(() =>
+        useColumnSettings({ columns: COLUMNS.slice(0, 1) }),
+      );
+      expect(result.current.allHidden).toBe(true);
+      expect(result.current.allVisible).toBe(true);
     });
 
     it("should not be the defaults once a column is only moved", () => {
@@ -611,6 +647,7 @@ describe("useColumnSettings", () => {
       rerender();
       expect(result.current.isDefault).toBe(before.isDefault);
       expect(result.current.allVisible).toBe(before.allVisible);
+      expect(result.current.allHidden).toBe(before.allHidden);
       expect(result.current.orderedColumns).toBe(before.orderedColumns);
       expect(result.current.visibleColumns).toBe(before.visibleColumns);
       expect(result.current.actions).toBe(before.actions);

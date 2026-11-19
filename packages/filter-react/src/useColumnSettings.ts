@@ -1,6 +1,7 @@
 import {
   type ColumnDefinition,
   type ColumnSettings,
+  hideAllColumns,
   isDefaultColumnSettings,
   moveColumnAroundPinned,
   moveColumnGroupAroundPinned,
@@ -77,6 +78,11 @@ export interface ColumnSettingsActions<Key extends string = string> {
   moveGroup: (keys: readonly Key[], toIndex: number) => void;
   /** Shows every column, keeping the order. */
   showAll: () => void;
+  /**
+   * Hides every column that may be hidden, keeping the order. A column with
+   * `hideable: false` stays shown.
+   */
+  hideAll: () => void;
   /** Puts back the list's own order and starting visibility. */
   reset: () => void;
 }
@@ -108,6 +114,12 @@ export interface ColumnSettingsState<
    */
   allVisible: boolean;
   /**
+   * Whether every column that may be hidden is hidden, so that `actions.hideAll` would change
+   * nothing. A picker uses it to turn its "hide all" button off. It is also true for a table
+   * whose columns must all stay shown.
+   */
+  allHidden: boolean;
+  /**
    * Whether the settings are the column list's own order and starting visibility, so that
    * `actions.reset` would change nothing. A picker uses it to turn its "reset" button off.
    */
@@ -129,7 +141,8 @@ export interface ColumnSettingsState<
  * const table = useColumnSettings({ columns });
  * // table.visibleColumns: draw these as the table's columns.
  * // table.actions.toggle("price"), table.actions.move("price", 0)
- * // table.allVisible, table.isDefault: whether "show all" and "reset" have anything to do.
+ * // table.allVisible, table.allHidden, table.isDefault: whether "show all", "hide all" and
+ * // "reset" have anything to do.
  */
 export function useColumnSettings<Column extends ColumnDefinition>(
   options: UseColumnSettingsOptions<Column>,
@@ -239,6 +252,7 @@ export function useColumnSettings<Column extends ColumnDefinition>(
           moveColumnGroupAroundPinned(list, before, keys, toIndex),
         ),
       showAll: () => apply((_list, before) => showAllColumns(before)),
+      hideAll: () => apply(hideAllColumns),
       reset: () => apply(resetColumnSettings),
     };
   }, [apply]);
@@ -252,10 +266,14 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     Object.is,
   );
 
-  // Both ask the action itself, so each says "nothing to do" exactly when its action would do
+  // Each asks the action itself, so it says "nothing to do" exactly when its action would do
   // nothing. `showAllColumns` hands back the same settings when no column is hidden. That
-  // check is one quick read, so only the second one is kept between renders.
+  // check is one quick read, so only the other two are kept between renders.
   const allVisible = showAllColumns(settings) === settings;
+  const allHidden = useMemo(
+    () => hideAllColumns(columns, settings) === settings,
+    [columns, settings],
+  );
   const isDefault = useMemo(
     () => isDefaultColumnSettings(columns, settings),
     [columns, settings],
@@ -266,6 +284,7 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     orderedColumns: ordered,
     visibleColumns: visible,
     allVisible,
+    allHidden,
     isDefault,
     actions,
   };
