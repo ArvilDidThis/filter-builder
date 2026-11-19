@@ -181,6 +181,25 @@ describe("ColumnPicker group drag", () => {
     expect(announced()).toBe("3 columns moved to positions 2 to 4 of 8.");
   });
 
+  it("should not gather a group that a handle was only pressed on", () => {
+    renderPicker();
+    select("Cap", "Beta");
+    layOutGrid(100);
+    // A click on the handle, with a wobble smaller than a drag.
+    fireEvent.pointerDown(handle("Cap"), pointer(10, 3 * ROW + 15));
+    fireEvent.pointerMove(document, pointer(11, 3 * ROW + 17));
+    expect(rows().some((row) => row.hasAttribute("data-drop"))).toBe(false);
+    fireEvent.pointerUp(document, pointer(11, 3 * ROW + 17));
+    expect(changed).not.toHaveBeenCalled();
+    expect(selectedRows()).toEqual(["Cap", "Beta"]);
+    // Once it has gone far enough it is a drag, even back where it began.
+    fireEvent.pointerDown(handle("Cap"), pointer(10, 3 * ROW + 15));
+    fireEvent.pointerMove(document, pointer(10, ROW + 5));
+    fireEvent.pointerMove(document, pointer(10, 3 * ROW + 15));
+    fireEvent.pointerUp(document, pointer(10, 3 * ROW + 15));
+    expect(order()).toBe("symbol company industry cap beta return age release");
+  });
+
   it("should empty the selection after a drop, and stay on", () => {
     renderPicker();
     select("Cap", "Beta");

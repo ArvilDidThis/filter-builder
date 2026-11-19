@@ -49,6 +49,12 @@ export interface ColumnDrag {
 const SCROLL_EDGE = 28;
 /** How far the list scrolls on each screen frame while the pointer is at an edge, in pixels. */
 const SCROLL_STEP = 10;
+/**
+ * How far the pointer must travel over the list before a drop counts, in pixels. A handle let
+ * go where it was pressed, as in a click, moves nothing. That matters for a group: its rows
+ * may stand apart, and a drop in place would still gather them.
+ */
+const DRAG_THRESHOLD = 4;
 
 /** One drag, from the press on a handle to the drop. */
 interface DragSession {
@@ -64,6 +70,10 @@ interface DragSession {
   /** The pointer's last known place on the screen. */
   clientX: number;
   clientY: number;
+  /** Where the press was, on the list's whole content. */
+  pressedAt: { x: number; y: number };
+  /** Whether the pointer has gone `DRAG_THRESHOLD` from the press. Once it has, it is a drag. */
+  hasLeftPress: boolean;
   /** Where each row stands, measured from the corner of the list's whole content. */
   grid: readonly GridColumn[];
   /** The screen frame waiting to scroll the list, if any. */
@@ -156,15 +166,19 @@ export function useColumnDrag({
     const drag = session.current;
     const list = listRef.current;
     if (drag === null || list === null) return;
-    // One read of the list's place per pointer move. The rows were measured already, so no
-    // row is measured here. They are measured again only when one of them changes size.
+    // One read of the list's place per pointer move, and a second one only until the pointer
+    // leaves the press. The rows were measured already, so no row is measured here. They are
+    // measured again only when one of them changes size.
     const { slot, after } = dropSlot(
       drag.grid,
       list,
       drag,
       latest.current.free,
     );
-    const shown = staysPut(drag.places, slot) ? null : slot;
+    const shown =
+      isStillPressed(drag, list, drag) || staysPut(drag.places, slot)
+        ? null
+        : slot;
     // The pointer moves many times a second, so the state changes only when the slot does.
     setHeld((was) =>
       was.slot === shown && (shown === null || was.after === after)
@@ -257,6 +271,9 @@ export function useColumnDrag({
         end();
         // A drop means nothing once the list it was aimed at has left the page.
         if (listRef.current !== list) return;
+        // Let go where it was pressed. The release's own place counts too, as a pointer can
+        // travel and let go with no move reported in between.
+        if (isStillPressed(drag, list, released)) return;
         // The place is worked out here, from where the pointer was let go and the list as it
         // is now. The last move heard may be out of date: a pointer can travel and let go
         // with no move reported in between, and the list can change under a still pointer.
@@ -373,6 +390,8 @@ export function useColumnDrag({
         places: placesOf(moving, order),
         clientX: event.clientX,
         clientY: event.clientY,
+        pressedAt: pointOnList(list, event),
+        hasLeftPress: false,
         // Every row is measured once, here, and not again while the list stays as it is.
         grid: measureGrid(list),
         frame: null,
@@ -469,6 +488,38 @@ export function groupPlaceFromSlot(
   slot: number,
 ): number {
   return slot - places.filter((place) => place < slot).length;
+}
+
+/**
+ * Whether the pointer is still within `DRAG_THRESHOLD` of the press, and has never left it.
+ * Once it has left, it is a drag, even back where it began.
+ */
+function isStillPressed(
+  drag: DragSession,
+  list: HTMLElement,
+  pointer: { clientX: number; clientY: number },
+): boolean {
+  if (drag.hasLeftPress) return false;
+  const now = pointOnList(list, pointer);
+  const { x, y } = drag.pressedAt;
+  if (Math.hypot(now.x - x, now.y - y) < DRAG_THRESHOLD) return true;
+  drag.hasLeftPress = true;
+  return false;
+}
+
+/**
+ * The pointer's place on the list's whole content. It stays the same when the list or the
+ * page scrolls under a still pointer, which is a way to drag too.
+ */
+function pointOnList(
+  list: HTMLElement,
+  pointer: { clientX: number; clientY: number },
+): { x: number; y: number } {
+  const box = list.getBoundingClientRect();
+  return {
+    x: pointer.clientX - box.left + list.scrollLeft,
+    y: pointer.clientY - box.top + list.scrollTop,
+  };
 }
 
 /** Whether a drop into `slot` leaves the rows at `places` where they are, side by side. */
