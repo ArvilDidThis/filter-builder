@@ -1,6 +1,7 @@
 import {
   type ColumnDefinition,
   moveColumnAroundPinned,
+  moveColumnGroupAroundPinned,
   type OrderedColumn,
   searchColumns,
   unpinnedRange,
@@ -20,6 +21,7 @@ import {
 } from "react";
 import type { ColumnSettingsState } from "../useColumnSettings";
 import { useEarlyEffect } from "../useEarlyEffect";
+import { measureGrid, placeBeside } from "./columnGrid";
 import { isDrawnInside } from "./shadowTrees";
 import type { FilterThemeStyle } from "./theme";
 import { useColumnDrag } from "./useColumnDrag";
@@ -29,6 +31,10 @@ import { useOutsidePointerDown } from "./useOutsidePointerDown";
 // A ready-made column picker with default styling: a button that opens a list of every column.
 // Each row has a checkbox that shows or hides the column, and a handle that moves it. A pinned
 // column has no handle: it stays at its end of the list. A long list has a search box above it.
+//
+// The list opens in a small popover below the button. Its "Dialog view" button opens the same
+// list in a dialog in the middle of the screen, laid out in grid columns, for a long list.
+// Its "Group drag" button lets a person select several rows and move them together.
 //
 // It uses plain HTML controls and the class names in `styles.css`, so it needs no UI kit. An app
 // that wants a different design draws its own picker from `useColumnSettings`.
@@ -69,6 +75,26 @@ export interface ColumnPickerLabels {
   showAllDone: string;
   /** Read out once the "reset" button has put the starting settings back. */
   resetDone: string;
+  /** The button in the popover that opens the list in a dialog. */
+  dialogView: string;
+  /** The button that closes the dialog. */
+  closeDialog: string;
+  /**
+   * Read out after a handle's name in the dialog, in place of `moveHint`. The dialog lays
+   * the columns out in grid columns, so the left and right arrow keys move a column too.
+   */
+  dialogMoveHint: string;
+  /** The button that turns group drag on and off. */
+  groupDrag: string;
+  /** Read out after a handle's name while group drag is on, after the hint above. */
+  groupDragHint: string;
+  /** The name of the checkbox that selects a row for moving, read out by a screen reader. */
+  select: (label: string) => string;
+  /**
+   * Read out after several columns moved together. `position` is the place of the first of
+   * them, and counts from 1.
+   */
+  movedGroup: (count: number, position: number, total: number) => string;
 }
 
 /** The picker's wording in English. Pass `labels` to replace any of it. */
@@ -90,6 +116,16 @@ export const COLUMN_PICKER_LABELS: ColumnPickerLabels = {
   searchMoveHint: "Clear the search to move columns.",
   showAllDone: "All columns are shown.",
   resetDone: "The columns are back in their starting order and visibility.",
+  dialogView: "Dialog view",
+  closeDialog: "Close",
+  dialogMoveHint:
+    "Press the up or down arrow key to move the column by one place, the left or right arrow key to move it by one grid column, or Home or End to move it to either end.",
+  groupDrag: "Group drag",
+  groupDragHint:
+    "Group drag is on. Moving a selected column moves every selected column with it.",
+  select: (label) => `Select ${label} to move`,
+  movedGroup: (count, position, total) =>
+    `${count} columns moved to positions ${position} to ${position + count - 1} of ${total}.`,
 };
 
 /** The picker's own wording, with each piece the app gave put in its place. */
@@ -128,8 +164,15 @@ export interface ColumnPickerRow<
 > extends OrderedColumn<Column> {
   /** The row's place in the list, from 0. */
   index: number;
-  /** Whether this row is the one being dragged. */
+  /** Whether this row is being dragged: the row held, or one of the group that moves with it. */
   isDragging: boolean;
+  /**
+   * Whether group drag is on. Draw the `selectProps` checkbox then, so a person can select
+   * the row. `checkboxProps` is turned off for as long as it is on.
+   */
+  grouping: boolean;
+  /** Whether the row is selected, and so moves with the other selected rows. */
+  selected: boolean;
   /**
    * Whether a person may move the column now. It is false for a pinned column, and for every
    * column while a search narrows the list. Draw a handle only for a row that is movable, or
@@ -146,7 +189,26 @@ export interface ColumnPickerRow<
     id: string;
     checked: boolean;
     disabled: boolean;
+    /**
+     * The column's name, while group drag is on. The row's `<label>` then belongs to the
+     * `selectProps` checkbox, and this one would otherwise have no name.
+     */
+    "aria-label": string | undefined;
     "aria-describedby": string | undefined;
+    onChange: () => void;
+  };
+  /**
+   * For the `<input>` that selects the row for moving. Draw it while `grouping` is true, and
+   * point the column's `<label>` at its `id` then, so a click on the name selects the row.
+   *
+   * `disabled` is true on a row that is not movable. A pinned column is never selected.
+   */
+  selectProps: {
+    type: "checkbox";
+    id: string;
+    checked: boolean;
+    disabled: boolean;
+    "aria-label": string;
     onChange: () => void;
   };
   /**
@@ -175,6 +237,9 @@ export interface ColumnPickerRow<
  * have to scroll to find a column.
  */
 export const COLUMN_PICKER_SEARCH_THRESHOLD = 10;
+
+/** Where the picker shows its list: in a popover below its button, or in a dialog. */
+export type ColumnPickerView = "popover" | "dialog";
 
 /** What the column picker needs from the app. */
 export interface ColumnPickerProps<
@@ -215,6 +280,29 @@ export interface ColumnPickerProps<
    * "Show all" and "Reset" still act on every column.
    */
   search?: boolean | "auto";
+  /**
+   * Whether the popover has a "Dialog view" button, which opens the list in a dialog in the
+   * middle of the screen. The dialog lays the columns out in grid columns, read down each one
+   * and then across, so a long list needs far less scrolling. Defaults to true.
+   */
+  dialogView?: boolean;
+  /**
+   * Where the picker's button opens the list: in the `"popover"` below the button, which is
+   * the default, or straight in the `"dialog"`.
+   *
+   * `dialogView={false}` only takes the "Dialog view" button off the popover. So with
+   * `defaultView="dialog"` the list still opens in the dialog.
+   */
+  defaultView?: ColumnPickerView;
+  /**
+   * Whether the list has a "Group drag" button. While it is on, a person selects rows with a
+   * second checkbox and moves them together, and the show/hide checkboxes are turned off.
+   * Defaults to true.
+   *
+   * A row drawn by `renderRow` must draw the `selectProps` checkbox while `grouping` is
+   * true. Pass `false` here if it does not.
+   */
+  groupDrag?: boolean;
   /** Added to the picker's own class, for an app's extra styling. */
   className?: string;
   /**
@@ -232,6 +320,10 @@ export interface ColumnPickerProps<
  * The other columns move between the pinned ones.
  *
  * A long list has a search box that narrows it by column name (see `search`).
+ *
+ * "Dialog view" opens the list in a dialog in the middle of the screen, laid out in grid
+ * columns (see `dialogView` and `defaultView`). "Group drag" lets a person select several
+ * columns and move them together (see `groupDrag`).
  *
  * Load its style sheet once in the app: `import "@arvilmena/filter-react/styles.css"`.
  *
@@ -251,11 +343,22 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   renderTrigger,
   renderRow,
   search: searchMode = "auto",
+  dialogView: hasDialogView = true,
+  defaultView = "popover",
+  groupDrag: hasGroupDrag = true,
   className,
   style,
 }: ColumnPickerProps<Column>) {
   const { orderedColumns, allVisible, isDefault, actions } = state;
   const [open, setOpen] = useState(false);
+  // Which of the two the open list is shown in.
+  const [view, setView] = useState<ColumnPickerView>(defaultView);
+  const isDialog = view === "dialog";
+  // Whether group drag is on. It stays on until its button is pressed again.
+  const [isGroupDragOn, setGroupDragOn] = useState(false);
+  const grouping = hasGroupDrag && isGroupDragOn;
+  // The keys of the rows a person selected for moving. It is emptied when the picker closes.
+  const [selected, setSelected] = useState(NONE_SELECTED);
   // What a screen reader is told. `count` goes up with every message, so that the same text
   // said twice is still a new message.
   const [announcement, setAnnouncement] = useState({ text: "", count: 0 });
@@ -265,11 +368,13 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const popoverId = useId();
   const hintId = useId();
   const pinnedHintId = useId();
   const searchHintId = useId();
+  const titleId = useId();
 
   // What a person typed in the search box. It starts empty each time the picker opens.
   const [typed, setTyped] = useState("");
@@ -302,14 +407,18 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const close = (returnFocus: boolean) => {
     setOpen(false);
     setTyped("");
+    setSelected(NONE_SELECTED);
     pendingMove.current = null;
     pendingButton.current = null;
     if (returnFocus) triggerRef.current?.focus();
   };
-  useOutsidePointerDown(rootRef, open, () => close(false));
+  // The dialog is modal (nothing else on the page can be pressed while it is open), so there
+  // is no press outside it to hear, and it is placed by the style sheet alone.
+  const isPopoverOpen = open && !isDialog;
+  useOutsidePointerDown(rootRef, isPopoverOpen, () => close(false));
   // The list lines up with the side of the button that `align` names. On a narrow screen that
   // may leave it too little room, so it is moved back inside the screen.
-  useKeepOnScreen(popoverRef, open);
+  useKeepOnScreen(popoverRef, isPopoverOpen);
 
   // Whether Tab was the last key pressed in the picker, with no focus arriving in it since.
   // A blur that names no next element is then Tab's doing, and may have left the page.
@@ -346,8 +455,23 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   // Opening moves the keyboard focus into the list, so that Tab reaches its first control and
   // a screen reader reads out the list's name.
   useEffect(() => {
-    if (open) popoverRef.current?.focus();
-  }, [open]);
+    if (!open) return;
+    if (!isDialog) {
+      popoverRef.current?.focus();
+      return;
+    }
+    const dialog = dialogRef.current;
+    if (dialog === null) return;
+    // Shown as a modal dialog: the browser keeps the focus inside it, and Escape closes it.
+    // A page that cannot do that, such as a simulated one, shows it as a plain dialog.
+    if (!dialog.open) {
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    }
+    // The browser puts the focus on the first control. It goes to the box itself, as in the
+    // popover, so that a screen reader reads out the dialog's name first.
+    dialog.focus();
+  }, [open, isDialog]);
 
   const keys = useMemo(
     () => orderedColumns.map((entry) => entry.column.key),
@@ -390,6 +514,10 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     before: readonly string[];
     /** The order of the keys that the move would give. */
     after: readonly string[];
+    /** The keys of the columns that move, in the order they have. */
+    group: readonly string[];
+    /** Whether the selection is emptied once the move has happened, as after a drop. */
+    clearsSelection: boolean;
   } | null>(null);
   // Whether the column's handle holds the keyboard focus just before the rows change place.
   // It is asked here, while this draw is worked out and the page still shows the old order.
@@ -425,10 +553,18 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     if (heldFocusBeforeMove && isFocusLost) handle?.focus();
     // React may instead move the other rows around a handle that kept the focus. Nothing
     // scrolls then, so a long list could leave the moved row out of sight.
+    // Sideways too, as the dialog's grid needs: the browser takes the nearest way there
+    // unless told otherwise.
     if (holdsFocus(handle)) handle?.scrollIntoView({ block: "nearest" });
-    announce(
-      labels.moved(entry.column.label, pending.to + 1, orderedColumns.length),
-    );
+    const total = orderedColumns.length;
+    if (pending.group.length === 1) {
+      announce(labels.moved(entry.column.label, pending.to + 1, total));
+    } else {
+      // The group stands side by side, so its first column's place says where it all is.
+      const first = keys.indexOf(pending.group[0] as string);
+      announce(labels.movedGroup(pending.group.length, first + 1, total));
+    }
+    if (pending.clearsSelection) setSelected(NONE_SELECTED);
   });
 
   // The "show all" or "reset" press that is still to be read out. Like a move, it waits here
@@ -479,23 +615,47 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   // copy. A plain effect would run later, and the move below would be checked against the
   // order before.
   const latestColumns = useRef(orderedColumns);
+  // The selected rows that may move now, which is what a group move takes with it. A column
+  // that the app has pinned or taken away since it was selected is left out.
+  const group = useMemo(() => {
+    if (!grouping || selected.size === 0) return NONE_SELECTED;
+    const movable = new Set<string>();
+    for (let place = free.first; place <= free.last; place++) {
+      const key = keys[place] as string;
+      if (selected.has(key)) movable.add(key);
+    }
+    return movable;
+  }, [grouping, selected, keys, free]);
+  const latestGroup = useRef(group);
   useEarlyEffect(() => {
     latestColumns.current = orderedColumns;
+    latestGroup.current = group;
   });
 
-  // A column is named by its key, not its place: the list may have changed since the row that
-  // asks for the move was drawn or picked up.
+  // Columns are named by their keys, not their places: the list may have changed since the
+  // row that asks for the move was drawn or picked up.
+  /**
+   * Asks for the columns in `moved` to go together to the place `to`. `held` is the key of
+   * the row whose handle asked, which keeps the keyboard focus through the move.
+   */
   const moveTo = useCallback(
-    (key: string, to: number) => {
+    (
+      moved: readonly string[],
+      to: number,
+      held: string,
+      clearsSelection: boolean,
+    ) => {
       const columns = latestColumns.current.map((item) => item.column);
       const before = columns.map((column) => column.key);
+      const settings = { order: before, hidden: [] };
+      const [only] = moved;
+      const isOne = moved.length === 1 && only !== undefined;
       // The move itself says what it would do, so the picker holds no copy of its rules. It
       // is the hook's own move, which leaves pinned columns in place.
-      const after = moveColumnAroundPinned(
-        columns,
-        { order: before, hidden: [] },
-        key,
-        to,
+      const after = (
+        isOne
+          ? moveColumnAroundPinned(columns, settings, only, to)
+          : moveColumnGroupAroundPinned(columns, settings, moved, to)
       ).order;
       // The same list back means the move changes nothing.
       if (after === before) return;
@@ -503,12 +663,15 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       // this move's doing, and the press must not be read out for it.
       pendingButton.current = null;
       pendingMove.current = {
-        from: before.indexOf(key),
-        to: after.indexOf(key),
+        from: before.indexOf(held),
+        to: after.indexOf(held),
         before,
         after,
+        group: moved,
+        clearsSelection,
       };
-      actions.move(key, to);
+      if (isOne) actions.move(only, to);
+      else actions.moveGroup(moved, to);
     },
     [actions],
   );
@@ -518,8 +681,64 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     // The rows on the page are not the whole list while a search is on, so nothing is dragged.
     active: open && !isSearching,
     free,
-    onDrop: moveTo,
+    selected: group,
+    onDrop: (key, to) => moveTo([key], to, key, false),
+    // A group that was dropped has done its work, so its rows are no longer selected.
+    onDropGroup: (moved, to, held) => moveTo(moved, to, held, true),
   });
+
+  // A key press on the handle of the row with this key. The arrow keys move the row, or the
+  // whole group when the row is one of the selected ones.
+  const moveByKey = useCallback(
+    (event: KeyboardEvent<HTMLElement>, key: string) => {
+      const order = latestColumns.current.map((item) => item.column.key);
+      const index = order.indexOf(key);
+      if (index === -1) return;
+      const selection = latestGroup.current;
+      const moved = selection.has(key)
+        ? order.filter((other) => selection.has(other))
+        : [key];
+      // The places of the first and the last of the columns that move.
+      const first = order.indexOf(moved[0] as string);
+      const last = order.indexOf(moved[moved.length - 1] as string);
+      // How many places the columns go: up the list when it is below 0, and down otherwise.
+      let step: number;
+      if (event.key === "ArrowUp") step = -1;
+      else if (event.key === "ArrowDown") step = 1;
+      else if (event.key === "Home") step = -order.length;
+      else if (event.key === "End") step = order.length;
+      else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        const list = listRef.current;
+        if (list === null) return;
+        // The rows are measured once per key press, to find the row beside this one.
+        const beside = placeBeside(
+          measureGrid(list),
+          index,
+          event.key === "ArrowLeft" ? -1 : 1,
+        );
+        // The popover's list has one grid column, so these two keys are not the picker's.
+        if (beside === undefined) return;
+        step = beside - index;
+      } else return;
+      // The arrow keys would otherwise scroll the list.
+      event.preventDefault();
+      if (step === 0) return;
+      // Going up, the group's first column leads. Going down, its last one does, and the
+      // place asked for is the first column's, which stands that many places before it.
+      const to = step < 0 ? first + step : last + step - (moved.length - 1);
+      moveTo(moved, to, key, false);
+    },
+    [moveTo],
+  );
+
+  // Selects a row for moving, or takes it out of the selection.
+  const toggleSelected = useCallback((key: string) => {
+    setSelected((was) => {
+      const next = new Set(was);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }, []);
 
   // Ticks or unticks a row's checkbox. As with a move, a button press still waiting gives up,
   // so that it is not read out for what this tick did.
@@ -545,8 +764,126 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     "aria-expanded": open,
     "aria-haspopup": "dialog",
     "aria-controls": open ? popoverId : undefined,
-    onClick: () => (open ? close(false) : setOpen(true)),
+    onClick: () => {
+      if (open) {
+        close(false);
+        return;
+      }
+      setView(defaultView);
+      setOpen(true);
+    },
   };
+
+  const groupDragButton = hasGroupDrag && (
+    <button
+      aria-pressed={grouping}
+      className="fb-button fb-columns-tool"
+      onClick={() => {
+        // Turning it off lets the selection go, so that it is not found again later.
+        if (grouping) setSelected(NONE_SELECTED);
+        setGroupDragOn(!grouping);
+      }}
+      type="button"
+    >
+      {labels.groupDrag}
+    </button>
+  );
+
+  // What the popover and the dialog both hold: the search box, the list and the buttons.
+  const content = (
+    <>
+      {hasSearch && (
+        <div className="fb-columns-search">
+          <input
+            aria-describedby={isSearching ? searchHintId : undefined}
+            aria-label={labels.search}
+            autoComplete="off"
+            className="fb-control fb-columns-search-input"
+            enterKeyHint="search"
+            onChange={(event) => {
+              if (!isSearching) {
+                setWidthAtSearch(
+                  popoverRef.current?.getBoundingClientRect().width,
+                );
+              }
+              setTyped(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              // Escape first clears a search. Pressed again, it closes the picker.
+              if (event.key !== "Escape" || typed === "") return;
+              event.preventDefault();
+              event.stopPropagation();
+              setTyped("");
+            }}
+            placeholder={labels.search}
+            spellCheck={false}
+            type="search"
+            value={typed}
+          />
+          {isSearching && (
+            <p className="fb-columns-search-status">
+              {searchStatus}{" "}
+              <span id={searchHintId}>{labels.searchMoveHint}</span>
+            </p>
+          )}
+        </div>
+      )}
+      {/* Read out after a handle's name. It is hidden, but a handle can still point at it. */}
+      <span hidden id={hintId}>
+        {isDialog ? labels.dialogMoveHint : labels.moveHint}
+        {grouping && ` ${labels.groupDragHint}`}
+      </span>
+      <span hidden id={pinnedHintId}>
+        {labels.pinnedHint}
+      </span>
+      {/* The style sheet takes the bullets off, and Safari then stops telling a screen
+          reader that this is a list, and how many columns it holds. Naming the role
+          keeps both. */}
+      <ul
+        className="fb-columns-list"
+        data-dragging={drag.key === null ? undefined : ""}
+        data-grouping={grouping ? "" : undefined}
+        ref={listRef}
+        // biome-ignore lint/a11y/noRedundantRoles: see the lines above the list
+        role="list"
+      >
+        {listedColumns.map((entry, listedIndex) => {
+          const { key, label } = entry.column;
+          const index = placeByKey?.get(key) ?? listedIndex;
+          return (
+            <Row
+              drop={dropMark(drag, index)}
+              entry={entry}
+              grouping={grouping}
+              hintId={hintId}
+              index={index}
+              isDragging={drag.moving.has(key)}
+              isSearching={isSearching}
+              isSelected={group.has(key)}
+              key={key}
+              moveLabel={labels.move(label)}
+              onDragStart={drag.start}
+              onMoveKey={moveByKey}
+              onSelect={toggleSelected}
+              onToggle={toggle}
+              pinnedHintId={pinnedHintId}
+              renderRow={renderRow}
+              // Only worked out while it is drawn.
+              selectLabel={grouping ? labels.select(label) : ""}
+            />
+          );
+        })}
+      </ul>
+      <div className="fb-columns-footer">
+        <FooterButton onPress={() => press("showAll")} unavailable={allVisible}>
+          {labels.showAll}
+        </FooterButton>
+        <FooterButton onPress={() => press("reset")} unavailable={isDefault}>
+          {labels.reset}
+        </FooterButton>
+      </div>
+    </>
+  );
 
   return (
     // It only hears the keys, the focus and the blur of the controls inside it. A person never
@@ -557,7 +894,8 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       // Tab moves the focus on past the list, which would otherwise stay open over the page.
       // A click on something that takes no focus is left to the outside-click check above.
       onBlur={(event) => {
-        if (!open) return;
+        // The dialog keeps the focus inside it, so there it never moves on past the list.
+        if (!isPopoverOpen) return;
         const next = event.relatedTarget;
         const root = rootRef.current;
         // No next element is named when the focus goes nowhere, or to another page.
@@ -593,7 +931,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
         </button>
       )}
 
-      {open && (
+      {isPopoverOpen && (
         <div
           aria-label={labels.title}
           className="fb-columns-popover"
@@ -604,96 +942,69 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           style={isSearching ? { minWidth: widthAtSearch } : undefined}
           tabIndex={-1}
         >
-          {hasSearch && (
-            <div className="fb-columns-search">
-              <input
-                aria-describedby={isSearching ? searchHintId : undefined}
-                aria-label={labels.search}
-                autoComplete="off"
-                className="fb-control fb-columns-search-input"
-                enterKeyHint="search"
-                onChange={(event) => {
-                  if (!isSearching) {
-                    setWidthAtSearch(
-                      popoverRef.current?.getBoundingClientRect().width,
-                    );
-                  }
-                  setTyped(event.target.value);
-                }}
-                onKeyDown={(event) => {
-                  // Escape first clears a search. Pressed again, it closes the picker.
-                  if (event.key !== "Escape" || typed === "") return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setTyped("");
-                }}
-                placeholder={labels.search}
-                spellCheck={false}
-                type="search"
-                value={typed}
-              />
-              {isSearching && (
-                <p className="fb-columns-search-status">
-                  {searchStatus}{" "}
-                  <span id={searchHintId}>{labels.searchMoveHint}</span>
-                </p>
+          {(hasGroupDrag || hasDialogView) && (
+            <div className="fb-columns-tools">
+              {groupDragButton}
+              {hasDialogView && (
+                <button
+                  className="fb-button fb-columns-tool"
+                  onClick={() => setView("dialog")}
+                  type="button"
+                >
+                  {labels.dialogView}
+                </button>
               )}
             </div>
           )}
-          {/* Read out after a handle's name. It is hidden, but a handle can still point at it. */}
-          <span hidden id={hintId}>
-            {labels.moveHint}
-          </span>
-          <span hidden id={pinnedHintId}>
-            {labels.pinnedHint}
-          </span>
-          {/* The style sheet takes the bullets off, and Safari then stops telling a screen
-              reader that this is a list, and how many columns it holds. Naming the role
-              keeps both. */}
-          <ul
-            className="fb-columns-list"
-            data-dragging={drag.key === null ? undefined : ""}
-            ref={listRef}
-            // biome-ignore lint/a11y/noRedundantRoles: see the lines above the list
-            role="list"
-          >
-            {listedColumns.map((entry, listedIndex) => {
-              const index = placeByKey?.get(entry.column.key) ?? listedIndex;
-              return (
-                <Row
-                  drop={dropMark(drag.slot, index, orderedColumns.length)}
-                  entry={entry}
-                  hintId={hintId}
-                  index={index}
-                  count={orderedColumns.length}
-                  isDragging={drag.key === entry.column.key}
-                  isSearching={isSearching}
-                  key={entry.column.key}
-                  moveLabel={labels.move(entry.column.label)}
-                  onDragStart={drag.start}
-                  onMove={moveTo}
-                  onToggle={toggle}
-                  pinnedHintId={pinnedHintId}
-                  renderRow={renderRow}
-                />
-              );
-            })}
-          </ul>
-          <div className="fb-columns-footer">
-            <FooterButton
-              onPress={() => press("showAll")}
-              unavailable={allVisible}
-            >
-              {labels.showAll}
-            </FooterButton>
-            <FooterButton
-              onPress={() => press("reset")}
-              unavailable={isDefault}
-            >
-              {labels.reset}
-            </FooterButton>
-          </div>
+          {content}
         </div>
+      )}
+
+      {open && isDialog && (
+        // The browser's own dialog element. Shown as a modal, it keeps the focus inside it
+        // and stands in the middle of the screen, over everything else on the page.
+        <dialog
+          aria-labelledby={titleId}
+          className="fb-columns-dialog"
+          id={popoverId}
+          // The browser asks to close the dialog, as for the back button of a phone. The
+          // picker closes it itself, so that its own state follows.
+          onCancel={(event) => {
+            event.preventDefault();
+            close(true);
+          }}
+          // The browser closed the dialog all the same, which it may do when asked twice.
+          onClose={() => close(true)}
+          // A press on the dimmed page around the dialog closes it. Such a press lands on
+          // the dialog element itself, outside the box it draws.
+          onPointerDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            const box = event.currentTarget.getBoundingClientRect();
+            const isOnBox =
+              event.clientX >= box.left &&
+              event.clientX <= box.right &&
+              event.clientY >= box.top &&
+              event.clientY <= box.bottom;
+            if (!isOnBox) close(true);
+          }}
+          ref={dialogRef}
+          tabIndex={-1}
+        >
+          <div className="fb-columns-tools">
+            <p className="fb-columns-title" id={titleId}>
+              {labels.title}
+            </p>
+            {groupDragButton}
+            <button
+              className="fb-button fb-columns-tool"
+              onClick={() => close(true)}
+              type="button"
+            >
+              {labels.closeDialog}
+            </button>
+          </div>
+          {content}
+        </dialog>
       )}
 
       {/* Always on the page, so a screen reader hears each new message put into it. */}
@@ -759,21 +1070,35 @@ function isSameOrder(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((key, index) => key === b[index]);
 }
 
+/** No row is selected. One empty set for every picker, so that it never counts as a change. */
+const NONE_SELECTED: ReadonlySet<string> = new Set<string>();
+
 /** Where the line that marks a drop is drawn on a row: above it, below it, or not at all. */
 type DropMark = "before" | "after" | undefined;
 
-/** The drop line of the row at `index`. A drop after the last row is drawn below that row. */
-function dropMark(slot: number | null, index: number, count: number): DropMark {
-  if (slot === index) return "before";
-  return slot === count && index === count - 1 ? "after" : undefined;
+/**
+ * The drop line of the row at `index`. It is drawn above the row the drop lands before. At
+ * the foot of a grid column, and after the last row, it is drawn below the row before that.
+ */
+function dropMark(
+  { slot, after }: { slot: number | null; after: boolean },
+  index: number,
+): DropMark {
+  if (slot === null) return undefined;
+  if (after) return index === slot - 1 ? "after" : undefined;
+  return index === slot ? "before" : undefined;
 }
 
 interface RowProps<Column extends ColumnDefinition> {
   entry: OrderedColumn<Column>;
   index: number;
-  /** How many rows the list has. */
-  count: number;
   isDragging: boolean;
+  /** Whether group drag is on. */
+  grouping: boolean;
+  /** Whether the row is selected for moving. */
+  isSelected: boolean;
+  /** The name of the row's selection checkbox, as finished text like `moveLabel`. */
+  selectLabel: string;
   /** Whether a search narrows the list. No row can be moved then. */
   isSearching: boolean;
   drop: DropMark;
@@ -786,7 +1111,9 @@ interface RowProps<Column extends ColumnDefinition> {
   /** Points at the text that says a pinned column cannot be moved. */
   pinnedHintId: string;
   onDragStart: (event: PointerEvent<HTMLElement>, key: string) => void;
-  onMove: (key: string, to: number) => void;
+  /** A key was pressed on the row's handle. */
+  onMoveKey: (event: KeyboardEvent<HTMLElement>, key: string) => void;
+  onSelect: (key: string) => void;
   onToggle: (key: Column["key"]) => void;
   renderRow: ColumnPickerProps<Column>["renderRow"];
 }
@@ -798,20 +1125,24 @@ interface RowProps<Column extends ColumnDefinition> {
 const Row = memo(function Row<Column extends ColumnDefinition>({
   entry,
   index,
-  count,
   isDragging,
+  grouping,
+  isSelected,
+  selectLabel,
   isSearching,
   drop,
   moveLabel,
   hintId,
   pinnedHintId,
   onDragStart,
-  onMove,
+  onMoveKey,
+  onSelect,
   onToggle,
   renderRow,
 }: RowProps<Column>) {
   const { column, visible, hideable, pinned } = entry;
   const checkboxId = useId();
+  const selectId = useId();
   const movable = pinned === undefined && !isSearching;
 
   const row: ColumnPickerRow<Column> = {
@@ -821,14 +1152,28 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
     pinned,
     index,
     isDragging,
+    grouping,
+    selected: isSelected,
     movable,
     checkboxProps: {
       type: "checkbox",
       id: checkboxId,
       checked: visible,
-      disabled: !hideable,
+      // While group drag is on, the box only shows whether the column is shown.
+      disabled: !hideable || grouping,
+      "aria-label": grouping ? column.label : undefined,
       "aria-describedby": pinned === undefined ? undefined : pinnedHintId,
       onChange: () => onToggle(column.key),
+    },
+    selectProps: {
+      type: "checkbox",
+      id: selectId,
+      checked: isSelected,
+      disabled: !movable,
+      "aria-label": selectLabel,
+      onChange: () => {
+        if (movable) onSelect(column.key);
+      },
     },
     handleProps: {
       type: "button",
@@ -842,11 +1187,7 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
         if (movable) onDragStart(event, column.key);
       },
       onKeyDown: (event) => {
-        const to = movable ? keyTarget(event.key, index, count) : undefined;
-        if (to === undefined) return;
-        // The arrow keys would otherwise scroll the list.
-        event.preventDefault();
-        onMove(column.key, to);
+        if (movable) onMoveKey(event, column.key);
       },
     },
   };
@@ -858,11 +1199,23 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
       data-drop={drop}
       data-fixed={hideable ? undefined : ""}
       data-pinned={pinned}
+      data-selected={isSelected ? "" : undefined}
     >
       {renderRow ? (
         renderRow(row)
       ) : (
         <>
+          {/* The box that selects the row comes first: it is the one in use while group
+              drag is on. A pinned column has a gap there, so the names line up. */}
+          {grouping &&
+            (pinned === undefined ? (
+              <input
+                className="fb-columns-checkbox fb-columns-select"
+                {...row.selectProps}
+              />
+            ) : (
+              <span className="fb-columns-select" />
+            ))}
           <input className="fb-columns-checkbox" {...row.checkboxProps} />
           {pinned === undefined ? (
             <button className="fb-columns-handle" {...row.handleProps}>
@@ -874,7 +1227,11 @@ const Row = memo(function Row<Column extends ColumnDefinition>({
               <PinIcon />
             </span>
           )}
-          <label className="fb-columns-label" htmlFor={checkboxId}>
+          <label
+            className="fb-columns-label"
+            // A click on the name works the box that is in use.
+            htmlFor={grouping && pinned === undefined ? selectId : checkboxId}
+          >
             {column.label}
           </label>
         </>
@@ -908,19 +1265,3 @@ function PinIcon() {
  * the handle itself, not only in the style sheet, so that a row an app draws has it too.
  */
 const HANDLE_STYLE = { touchAction: "none" } as const;
-
-/**
- * The place a key press on a handle moves its row to, or `undefined` for a key that moves
- * nothing. A place past either end is turned down by the move itself.
- */
-function keyTarget(
-  key: string,
-  index: number,
-  count: number,
-): number | undefined {
-  if (key === "ArrowUp") return index - 1;
-  if (key === "ArrowDown") return index + 1;
-  if (key === "Home") return 0;
-  if (key === "End") return count - 1;
-  return undefined;
-}

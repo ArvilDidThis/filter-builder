@@ -70,6 +70,17 @@
   --_fb-gap: 0.5rem;
   /* The widest a value box grows, so a short number does not sit in a very long box. */
   --_fb-value-width: 12rem;
+  /* The dimmed page around the column picker's dialog. */
+  --_fb-backdrop: rgb(0 0 0 / 0.45);
+  /* The narrowest a grid column of the column picker's dialog may be. The dialog fits as
+     many as its width holds, and shares the width left over among them. */
+  --_fb-dialog-column-width: 14rem;
+  /* Behind a row that is selected for a group drag, and behind the button that is on. */
+  --_fb-selected-bg: color-mix(
+    in srgb,
+    var(--fb-focus, var(--_fb-focus)) 20%,
+    transparent
+  );
 
   font-size: 0.875rem;
   line-height: 1.25rem;
@@ -388,7 +399,8 @@
 .fb-bar-remove:focus-visible,
 .fb-columns-handle:focus-visible,
 .fb-columns-checkbox:focus-visible,
-.fb-columns-popover:focus-visible {
+.fb-columns-popover:focus-visible,
+.fb-columns-dialog:focus-visible {
   /* Written as separate properties. The simulated page of the unit tests cannot read the
      short form `outline` when its colour is a variable with a fallback. */
   outline-width: 2px;
@@ -511,8 +523,82 @@
 /* The box takes the focus when it opens, so that Tab starts from it. It is not a control, so
    a click that opens it shows no focus ring. Opened from the keyboard, it keeps the ring of
    the rule above, so a person can see where the focus went. */
-.fb-columns-popover:focus:not(:focus-visible) {
+.fb-columns-popover:focus:not(:focus-visible),
+.fb-columns-dialog:focus:not(:focus-visible) {
   outline: none;
+}
+
+/* The same list in a dialog in the middle of the screen, for a long list. The picker shows
+   it as a modal dialog, so the browser draws it over everything else on the page.
+   It is a flex box only while it is open: a closed dialog must stay hidden. */
+.fb-columns-dialog[open] {
+  display: flex;
+}
+
+.fb-columns-dialog {
+  /* The browser centres a modal dialog this way already. It is spelled out for a browser
+     that shows the dialog without making it modal. */
+  position: fixed;
+  inset: 0;
+  flex-direction: column;
+  gap: var(--fb-gap, var(--_fb-gap));
+  /* The browser's own limits on a dialog's size are replaced by these. */
+  width: min(96rem, 94vw);
+  max-width: none;
+  height: 90vh;
+  /* Where the browser knows it, the height that is really in view on a phone, whose
+     address bar comes and goes. */
+  height: 90dvh;
+  max-height: none;
+  margin: auto;
+  padding: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--fb-border, var(--_fb-border));
+  border-radius: var(--fb-radius, var(--_fb-radius));
+  background: var(--fb-popover-bg, var(--_fb-popover-bg));
+  box-shadow: 0 8px 24px var(--fb-shadow, var(--_fb-shadow));
+  /* A browser gives a dialog its own text colour. The page's colour is kept, as the
+     colours above are worked out from it. */
+  color: inherit;
+}
+
+/* The dimmed page around the dialog. An older browser does not hand the variables on to
+   this part, and leaves the page undimmed. */
+.fb-columns-dialog::backdrop {
+  background: var(--fb-backdrop, var(--_fb-backdrop));
+}
+
+/* The buttons above the list: "Group drag", and "Dialog view" or "Close". In the dialog
+   its title stands before them. */
+.fb-columns-tools {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fb-gap, var(--_fb-gap));
+}
+
+.fb-columns-title {
+  /* Takes the room left over, so the buttons stand together at the far side. */
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Smaller than the buttons below the list, so two fit side by side in a narrow popover. */
+.fb-columns-tool {
+  height: auto;
+  min-height: 1.75rem;
+  padding: 0 0.5rem;
+  font-size: 0.8125rem;
+}
+
+/* The "Group drag" button while it is on. */
+.fb-columns-tool[aria-pressed="true"] {
+  border-color: var(--fb-focus, var(--_fb-focus));
+  background-color: var(--fb-selected-bg, var(--_fb-selected-bg));
 }
 
 /* The search box above the list, and the line below it that says how many columns match. */
@@ -552,6 +638,30 @@
   list-style: none;
 }
 
+/* In the dialog the list is a grid: the rows fill one grid column from top to bottom, and
+   then the next one beside it. The browser lays this out by itself (CSS multi-column), and
+   fits as many grid columns as the width holds. Only when the rows need more grid columns
+   than fit does the list scroll, sideways. */
+.fb-columns-dialog .fb-columns-list {
+  /* Takes the height the dialog has left, which is what the grid columns fill. */
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+  /* Room for the focus ring of a control in the first or the last row. */
+  padding: 0.25rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  column-width: var(--fb-dialog-column-width, var(--_fb-dialog-column-width));
+  column-gap: var(--fb-gap, var(--_fb-gap));
+  /* Fills each grid column to the foot before the next one starts. */
+  column-fill: auto;
+}
+
+/* A row is never cut in two between one grid column and the next. */
+.fb-columns-dialog .fb-columns-row {
+  break-inside: avoid;
+}
+
 /* While a row is dragged, the pointer must not select the names it passes over. */
 .fb-columns-list[data-dragging] {
   cursor: grabbing;
@@ -570,6 +680,12 @@
 
 .fb-columns-list:not([data-dragging]) > .fb-columns-row:hover {
   background: var(--fb-hover-bg, var(--_fb-hover-bg));
+}
+
+/* A row that is selected for a group drag, under the pointer or not. */
+.fb-columns-list > .fb-columns-row[data-selected],
+.fb-columns-list:not([data-dragging]) > .fb-columns-row[data-selected]:hover {
+  background: var(--fb-selected-bg, var(--_fb-selected-bg));
 }
 
 .fb-columns-row[data-dragging] {
@@ -601,6 +717,14 @@
   width: 1rem;
   height: 1rem;
   margin: 0;
+}
+
+/* The box that selects a row for a group drag. On a pinned column, which cannot be
+   selected, an empty gap of the same size stands in its place. */
+.fb-columns-select {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
 }
 
 /* The grip that moves a column. It is a button, so the keyboard can reach it. */
