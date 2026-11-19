@@ -5,6 +5,7 @@ import {
   columnMatchesSearch,
   columnPin,
   defaultColumnSettings,
+  hideAllColumns,
   isDefaultColumnSettings,
   moveColumn,
   moveColumnAroundPinned,
@@ -318,6 +319,53 @@ describe("showAllColumns", () => {
   it("should return the same settings when nothing is hidden", () => {
     const settings: ColumnSettings = { order: ["name"], hidden: [] };
     expect(showAllColumns(settings)).toBe(settings);
+  });
+});
+
+describe("hideAllColumns", () => {
+  it("should hide every column that may be hidden and keep the order", () => {
+    const moved = moveColumn(DEFAULTS, "notes", 0);
+    const hidden = hideAllColumns(COLUMNS, moved);
+    // "Name" must stay shown. "Notes" was hidden already, so it keeps its place in the list.
+    expect(hidden.hidden).toEqual(["notes", "price", "stock"]);
+    expect(hidden.order).toBe(moved.order);
+    expect(shape(COLUMNS, hidden)).toBe("(notes) name (price) (stock)");
+  });
+
+  it("should hide a pinned column that may be hidden", () => {
+    const columns: ColumnDefinition[] = [
+      { key: "id", label: "Id", pinned: "start" },
+      { key: "name", label: "Name", pinned: "end", hideable: false },
+      { key: "price", label: "Price" },
+    ];
+    const hidden = hideAllColumns(columns, defaultColumnSettings(columns));
+    expect(shape(columns, hidden)).toBe("(id) (price) name");
+  });
+
+  it("should return the same settings when nothing more can be hidden", () => {
+    const all = hideAllColumns(COLUMNS, DEFAULTS);
+    expect(hideAllColumns(COLUMNS, all)).toBe(all);
+    // A list whose only column must stay shown.
+    const settings: ColumnSettings = { order: ["name"], hidden: [] };
+    expect(hideAllColumns(COLUMNS, settings)).toBe(settings);
+  });
+
+  it("should skip a key that is no column of the list", () => {
+    const settings: ColumnSettings = { order: ["name", "gone"], hidden: [] };
+    expect(hideAllColumns(COLUMNS, settings)).toBe(settings);
+  });
+
+  it("should not change the settings it was given", () => {
+    hideAllColumns(COLUMNS, DEFAULTS);
+    expect(DEFAULTS.hidden).toEqual(["notes"]);
+  });
+
+  it("should be undone by showAllColumns", () => {
+    const hidden = hideAllColumns(COLUMNS, DEFAULTS);
+    expect(showAllColumns(hidden)).toEqual({
+      order: DEFAULTS.order,
+      hidden: [],
+    });
   });
 });
 

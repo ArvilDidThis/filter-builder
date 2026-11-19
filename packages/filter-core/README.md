@@ -44,8 +44,8 @@ both the column list and the settings takes the column list first.
 
 A function that takes settings and returns settings hands back the same object when nothing
 changed. Those are `setColumnVisible`, `moveColumn`, `moveColumnAroundPinned`,
-`moveColumnGroup`, `moveColumnGroupAroundPinned`, `showAllColumns`, `resetColumnSettings` and
-`reconcileColumnSettings`. The others, `visibleColumns`, `orderedColumns` and
+`moveColumnGroup`, `moveColumnGroupAroundPinned`, `showAllColumns`, `hideAllColumns`,
+`resetColumnSettings` and `reconcileColumnSettings`. The others, `visibleColumns`, `orderedColumns` and
 `defaultColumnSettings`, build a new result on each call. The React hook `useColumnSettings`
 memoises them (keeps the result until its inputs change).
 
@@ -111,6 +111,7 @@ settings = resetColumnSettings(columns, settings);
 | `unpinnedRange`               | The places of an order that a column may be moved to |
 | `columnPin`                   | The end a column is pinned to, if any                |
 | `showAllColumns`              | Shows every column, keeping the order                |
+| `hideAllColumns`              | Hides every column that may be hidden                |
 | `resetColumnSettings`         | Puts the defaults back                               |
 | `isDefaultColumnSettings`     | Whether the settings are the defaults                |
 | `orderedColumns`              | Every column in order, each with whether it is shown |

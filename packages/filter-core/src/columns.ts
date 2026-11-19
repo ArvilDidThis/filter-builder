@@ -363,6 +363,31 @@ export function showAllColumns(settings: ColumnSettings): ColumnSettings {
 }
 
 /**
+ * Hides every column that may be hidden, keeping the order. A column with `hideable: false`
+ * stays shown. A pinned column is hidden too, unless it must stay shown.
+ *
+ * The column list comes first, as in every function here that takes both it and the settings.
+ * The list tells which columns must stay shown.
+ */
+export function hideAllColumns(
+  columns: readonly ColumnDefinition[],
+  settings: ColumnSettings,
+): ColumnSettings {
+  const lookup = createColumnLookup(columns);
+  const isHidden = new Set(settings.hidden);
+  // The keys hidden already keep their places, and the newly hidden ones follow in the order.
+  const hidden = [...settings.hidden];
+  for (const key of settings.order) {
+    if (isHidden.has(key) || !isHideable(lookup.get(key))) continue;
+    isHidden.add(key);
+    hidden.push(key);
+  }
+  return hidden.length === settings.hidden.length
+    ? settings
+    : { order: settings.order, hidden };
+}
+
+/**
  * Puts back the list's own order and starting visibility.
  *
  * The column list comes first, as in every function here that takes both it and the settings.
