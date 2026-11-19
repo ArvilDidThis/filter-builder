@@ -215,17 +215,8 @@ export function moveColumnAroundPinned(
   key: string,
   toIndex: number,
 ): ColumnSettings {
-  const { order } = settings;
-  const { first, last } = unpinnedRange(columns, order);
-  // No column is pinned at either end, so there is nothing to keep in place.
-  if (first === 0 && last === order.length - 1) {
-    return moveColumn(settings, key, toIndex);
-  }
-  const from = order.indexOf(key);
-  // The column is one of the pinned ones.
-  if (from < first || from > last) return settings;
-  // A number that is not one stays so, and `moveColumn` turns it down.
-  return moveColumn(settings, key, Math.min(Math.max(toIndex, first), last));
+  // A group of one is one column, and the group's move already keeps to the free places.
+  return moveColumnGroupAroundPinned(columns, settings, [key], toIndex);
 }
 
 /**
