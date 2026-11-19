@@ -461,9 +461,10 @@ export interface CarryOverOptions {
   /**
    * Removes the state from the older place. Leave it out to keep the older place as it is.
    *
-   * It is called after the first save under the new key that follows a carry-over, and when
-   * the state is removed (`clear()` in the hook). A failure after a save is ignored: the state
-   * is safe under the new key by then, and the older place is not read again.
+   * It is called after the first save under the new key that follows a carry-over, once the
+   * store shows it holds that save, and when the state is removed (`clear()` in the hook). A
+   * failure after a save is ignored: the state is safe under the new key by then, and the
+   * older place is not read again.
    */
   remove?: (key: string) => void | Promise<void>;
   /**
@@ -526,14 +527,35 @@ export function carryOverStore(
     }
   };
 
-  /** Removes the older state once the store holds the state itself. A failure is ignored. */
-  const removeCarried = (key: string): void => {
-    if (options.remove === undefined || !carried.delete(key)) return;
+  /** Removes the older state, now that the store holds the state. A failure is ignored. */
+  const removeOld = (key: string, stored: unknown): void => {
+    // Nothing stored means the save did not stick, so the older state is all there is.
+    if (stored === undefined || stored === null || !carried.delete(key)) return;
     try {
-      const answer = options.remove(key);
+      const answer = options.remove?.(key);
       if (isPromiseLike(answer)) answer.then(undefined, () => undefined);
     } catch {
-      // The save went through, so the state is safe. The older place is not read again.
+      // The store holds the state, so it is safe. The older place is not read again.
+    }
+  };
+
+  /**
+   * After a save that follows a carry-over, removes the older state once the store shows it
+   * holds the state. A store can save nothing without failing: local storage that the browser
+   * blocks does so. Any failure keeps the older state, and the next save tries again.
+   */
+  const removeCarried = (key: string): void | Promise<void> => {
+    if (options.remove === undefined || !carried.has(key)) return;
+    try {
+      const stored = store.load(key);
+      // A promise goes back, so the save answers once this step is over.
+      if (!isPromiseLike(stored)) return removeOld(key, stored);
+      return Promise.resolve(stored).then(
+        (found) => removeOld(key, found),
+        () => undefined,
+      );
+    } catch {
+      // The store could not be read back, so the older state stays.
     }
   };
 

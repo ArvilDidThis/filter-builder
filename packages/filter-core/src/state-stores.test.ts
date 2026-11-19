@@ -753,6 +753,49 @@ describe("carryOverStore", () => {
       expect(remove).not.toHaveBeenCalled();
     });
 
+    it("should stay when the store saves nothing, as blocked local storage does", async () => {
+      const remove = vi.fn();
+      const inner = memoryStore();
+      inner.save.mockImplementation(() => undefined);
+      const store = carryOverStore(inner, { read: () => OLD, remove });
+      store.load("orders");
+      store.save("orders", STATE);
+      expect(remove).not.toHaveBeenCalled();
+
+      const later = laterStore();
+      later.save.mockImplementation(async () => undefined);
+      const laterRemove = vi.fn();
+      const carried = carryOverStore(later, {
+        read: () => OLD,
+        remove: laterRemove,
+      });
+      await carried.load("orders");
+      await carried.save("orders", STATE);
+      await vi.waitFor(() => expect(later.load).toHaveBeenCalledTimes(2));
+      expect(laterRemove).not.toHaveBeenCalled();
+    });
+
+    it("should be removed by a later save once the store holds the state", () => {
+      const remove = vi.fn();
+      const inner = memoryStore();
+      inner.save.mockImplementationOnce(() => undefined);
+      const store = carryOverStore(inner, { read: () => OLD, remove });
+      store.load("orders");
+      store.save("orders", STATE);
+      store.save("orders", STATE);
+      expect(remove).toHaveBeenCalledExactlyOnceWith("orders");
+    });
+
+    it("should be removed after a save to a store that answers later", async () => {
+      const remove = vi.fn();
+      const store = carryOverStore(laterStore(), { read: () => OLD, remove });
+      await store.load("orders");
+      await store.save("orders", STATE);
+      await vi.waitFor(() =>
+        expect(remove).toHaveBeenCalledExactlyOnceWith("orders"),
+      );
+    });
+
     it("should not fail a save when its removal fails", async () => {
       const store = carryOverStore(memoryStore(), {
         read: () => OLD,
@@ -835,7 +878,13 @@ describe("carryOverStore", () => {
       const inner = laterStore();
       let answerSave = () => {};
       inner.save.mockImplementation(
-        () => new Promise<void>((resolve) => (answerSave = resolve)),
+        (key, value) =>
+          new Promise<void>((resolve) => {
+            answerSave = () => {
+              inner.items.set(key, value);
+              resolve();
+            };
+          }),
       );
       const remove = vi.fn();
       const store = carryOverStore(inner, { read: () => OLD, remove });
