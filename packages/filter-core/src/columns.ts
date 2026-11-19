@@ -368,11 +368,15 @@ export function hideAllColumns(
   const isHidden = new Set(settings.hidden);
   // The keys hidden already keep their places, and the newly hidden ones follow in the order.
   const hidden = [...settings.hidden];
-  for (const key of settings.order) {
-    if (isHidden.has(key) || !isHideable(lookup.get(key))) continue;
+  const hide = (key: string) => {
+    if (isHidden.has(key) || !isHideable(lookup.get(key))) return;
     isHidden.add(key);
     hidden.push(key);
-  }
+  };
+  for (const key of settings.order) hide(key);
+  // A column the order does not name, such as one added after the settings were saved, is
+  // still shown by `visibleColumns`. So it is hidden too, after the ones the order names.
+  for (const key of lookup.keys()) hide(key);
   return hidden.length === settings.hidden.length
     ? settings
     : { order: settings.order, hidden };

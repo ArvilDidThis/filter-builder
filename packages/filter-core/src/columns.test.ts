@@ -346,13 +346,27 @@ describe("hideAllColumns", () => {
     const all = hideAllColumns(COLUMNS, DEFAULTS);
     expect(hideAllColumns(COLUMNS, all)).toBe(all);
     // A list whose only column must stay shown.
+    const onlyName = COLUMNS.slice(0, 1);
     const settings: ColumnSettings = { order: ["name"], hidden: [] };
-    expect(hideAllColumns(COLUMNS, settings)).toBe(settings);
+    expect(hideAllColumns(onlyName, settings)).toBe(settings);
   });
 
   it("should skip a key that is no column of the list", () => {
+    const onlyName = COLUMNS.slice(0, 1);
     const settings: ColumnSettings = { order: ["name", "gone"], hidden: [] };
-    expect(hideAllColumns(COLUMNS, settings)).toBe(settings);
+    expect(hideAllColumns(onlyName, settings)).toBe(settings);
+  });
+
+  it("should hide a column the order does not name", () => {
+    // Saved before "stock" and "notes" were added to the list.
+    const settings: ColumnSettings = { order: ["price", "name"], hidden: [] };
+    const hidden = hideAllColumns(COLUMNS, settings);
+    expect(hidden.hidden).toEqual(["price", "stock", "notes"]);
+    expect(hidden.order).toBe(settings.order);
+    expect(visibleColumns(COLUMNS, hidden).map(({ key }) => key)).toEqual([
+      "name",
+    ]);
+    expect(hideAllColumns(COLUMNS, hidden)).toBe(hidden);
   });
 
   it("should not change the settings it was given", () => {
