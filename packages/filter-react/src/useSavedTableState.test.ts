@@ -2962,8 +2962,12 @@ describe("useSavedTableState", () => {
         const read = deferred<unknown>();
         const inner = slowStore();
         const remove = vi.fn(async () => {});
+        // The first load waits for the test. Later ones read what the store holds.
+        const firstLoad = vi
+          .fn((key: string): unknown => inner.load(key))
+          .mockReturnValueOnce(load.promise);
         const store = carryOverStore(
-          { ...inner, load: () => load.promise },
+          { ...inner, load: firstLoad },
           { read: () => read.promise, remove },
         );
         const { result } = renderSaved({ store });
