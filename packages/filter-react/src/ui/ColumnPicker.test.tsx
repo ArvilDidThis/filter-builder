@@ -3216,10 +3216,16 @@ describe("ColumnPicker search", () => {
     // A key or a press that reaches a handle all the same moves nothing.
     layOutList();
     fireEvent.keyDown(grip, { key: "Home" });
+    const isDragging = () =>
+      rows().some((row) => row.hasAttribute("data-dragging"));
+    // No drag starts at all, not even one that lets go of the row on release.
     fireEvent.pointerDown(grip, pointer(115));
+    expect(isDragging()).toBe(false);
+    fireEvent.pointerMove(document, pointer(300));
+    expect(isDragging()).toBe(false);
     fireEvent.pointerUp(document, pointer(300));
     expect(changed).not.toHaveBeenCalled();
-    expect(rows().some((row) => row.hasAttribute("data-dragging"))).toBe(false);
+    expect(isDragging()).toBe(false);
 
     type("");
     expect(searchBox().hasAttribute("aria-describedby")).toBe(false);
