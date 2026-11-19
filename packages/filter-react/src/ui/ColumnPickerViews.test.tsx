@@ -375,6 +375,22 @@ describe("ColumnPicker dialog view", () => {
     expect(trigger().getAttribute("aria-controls")).toBe(dialog()?.id);
   });
 
+  it("should keep the messages for a screen reader inside the dialog", () => {
+    // A modal dialog hides the rest of the page from a screen reader.
+    renderPicker();
+    fireEvent.click(dialogView());
+    const regions = document.querySelectorAll("[aria-live]");
+    expect(regions).toHaveLength(1);
+    expect(dialog()?.contains(regions[0] as Node)).toBe(true);
+    fireEvent.click(checkbox("Cap"));
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(announced()).toBe("All columns are shown.");
+    // Back outside it once the dialog closes.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(document.querySelectorAll("[aria-live]")).toHaveLength(1);
+    expect(dialog()).toBeNull();
+  });
+
   it("should close on its button, and return the focus to the picker's button", () => {
     renderPicker();
     fireEvent.click(dialogView());

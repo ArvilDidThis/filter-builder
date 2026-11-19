@@ -811,6 +811,18 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     </button>
   );
 
+  const isDialogOpen = open && isDialog;
+  // Where a screen reader hears each new message put into it. A modal dialog hides the rest
+  // of the page from a screen reader, so while the dialog is open this is inside it.
+  // Otherwise it stays on the page after the picker closes.
+  const liveRegion = (
+    <span aria-live="polite" className="fb-visually-hidden">
+      {/* A new element for each message. A screen reader reads out what is added, and
+          putting the same text in again would add nothing. */}
+      <span key={announcement.count}>{announcement.text}</span>
+    </span>
+  );
+
   // What the popover and the dialog both hold: the search box, the list and the buttons.
   const content = (
     <>
@@ -990,7 +1002,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
         </div>
       )}
 
-      {open && isDialog && (
+      {isDialogOpen && (
         // The browser's own dialog element. Shown as a modal, it keeps the focus inside it
         // and stands in the middle of the screen, over everything else on the page.
         // The click it hears is one on the dimmed page around it. The keyboard has Escape
@@ -1037,15 +1049,11 @@ export function ColumnPicker<Column extends ColumnDefinition>({
             </button>
           </div>
           {content}
+          {liveRegion}
         </dialog>
       )}
 
-      {/* Always on the page, so a screen reader hears each new message put into it. */}
-      <span aria-live="polite" className="fb-visually-hidden">
-        {/* A new element for each message. A screen reader reads out what is added, and
-            putting the same text in again would add nothing. */}
-        <span key={announcement.count}>{announcement.text}</span>
-      </span>
+      {!isDialogOpen && liveRegion}
     </div>
   );
 }
