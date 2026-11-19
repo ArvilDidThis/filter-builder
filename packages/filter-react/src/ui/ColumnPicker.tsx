@@ -308,10 +308,10 @@ export interface ColumnPickerProps<
   /**
    * Whether the list has a "Group drag" button. While it is on, a person selects rows with a
    * second checkbox and moves them together, and the show/hide checkboxes are turned off.
-   * Defaults to true.
    *
-   * A row drawn by `renderRow` must draw the `selectProps` checkbox while `grouping` is
-   * true. Pass `false` here if it does not.
+   * Defaults to true for the picker's own rows, and to false with `renderRow`: a row drawn by
+   * `renderRow` must draw the `selectProps` checkbox while `grouping` is true, and a row
+   * written before group drag existed does not. Pass `true` once your rows draw it.
    */
   groupDrag?: boolean;
   /** Added to the picker's own class, for an app's extra styling. */
@@ -356,7 +356,8 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   search: searchMode = "auto",
   dialogView: hasDialogView = true,
   defaultView = "popover",
-  groupDrag: hasGroupDrag = true,
+  // Off for an app's own rows unless asked for, as they may not draw the selection box.
+  groupDrag: hasGroupDrag = renderRow === undefined,
   className,
   style,
 }: ColumnPickerProps<Column>) {

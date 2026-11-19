@@ -409,7 +409,7 @@ reports the difference. Saving table state is planned as a feature of its own.
 | `search`        | `true` or `false` forces the search box on or off. See above           |
 | `dialogView`    | `false` takes the "Dialog view" button away. See above                 |
 | `defaultView`   | `"dialog"` opens the list straight in the dialog. See above            |
-| `groupDrag`     | `false` takes the "Group drag" button away. See above                  |
+| `groupDrag`     | `false` takes the "Group drag" button away. See above and below        |
 | `className`     | Added to the picker's own class                                        |
 | `style`         | An inline style for the picker. It also takes the `--fb-*` variables   |
 
@@ -426,8 +426,9 @@ such as a pinned one, `handleProps` turns the handle off, or you can leave the h
 or every row redraws whenever the picker does. `labels` may be written in place.
 
 For group drag, a row also has `grouping`, `selected` and `selectProps`. While `grouping` is
-true, draw a checkbox from `selectProps`, and point the row's `<label>` at it. If your rows do
-not draw it, pass `groupDrag={false}`.
+true, draw a checkbox from `selectProps`, and point the row's `<label>` at it. With
+`renderRow`, the "Group drag" button is off until you pass `groupDrag`, so rows written before
+group drag existed keep working.
 
 ```tsx
 const renderRow = useCallback(

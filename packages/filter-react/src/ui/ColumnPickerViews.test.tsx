@@ -302,6 +302,21 @@ describe("ColumnPicker group drag", () => {
     expect(screen.queryByRole("button", { name: "Group drag" })).toBeNull();
   });
 
+  it("should have no button for an app's own rows unless asked for", () => {
+    // Rows written before group drag existed draw no selection box.
+    const renderRow: ColumnPickerProps["renderRow"] = (row) => (
+      <>
+        <input {...row.checkboxProps} />
+        <button {...row.handleProps}>grip</button>
+      </>
+    );
+    renderPicker({ renderRow });
+    expect(screen.queryByRole("button", { name: "Group drag" })).toBeNull();
+    cleanup();
+    renderPicker({ renderRow, groupDrag: true });
+    expect(groupDrag()).toBeTruthy();
+  });
+
   it("should use the app's wording", () => {
     renderPicker({
       labels: {
@@ -332,7 +347,7 @@ describe("ColumnPicker group drag", () => {
         </>
       );
     };
-    renderPicker({ renderRow });
+    renderPicker({ renderRow, groupDrag: true });
     expect(seen.get("cap")).toEqual({ grouping: false, selected: false });
     select("Cap");
     expect(seen.get("cap")).toEqual({ grouping: true, selected: true });
