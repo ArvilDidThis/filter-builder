@@ -39,12 +39,12 @@ describe("the theme variables in the style sheet", () => {
   });
 
   it("should read every variable with a fallback, so an app's value wins and a default remains", () => {
-    // A read with no fallback: `var(--fb-radius)`.
-    const bare = found(/var\((--fb-[a-z-]+)\)/g);
+    // A read with no fallback: `var(--fb-radius)`, with or without spaces inside.
+    const bare = found(/var\(\s*(--fb-[a-z-]+)\s*\)/g);
     expect(bare.sort()).toEqual(INTERNAL);
     // A read with a fallback names the variable's own private default.
     for (const [, name, fallback] of SHEET.matchAll(
-      /var\(--fb-([a-z-]+),\s*var\(--_fb-([a-z-]+)\)\)/g,
+      /var\(\s*--fb-([a-z-]+)\s*,\s*var\(\s*--_fb-([a-z-]+)\s*\)\s*\)/g,
     )) {
       expect(fallback).toBe(name);
     }
