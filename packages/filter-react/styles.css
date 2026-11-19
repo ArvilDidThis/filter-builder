@@ -674,6 +674,10 @@
 
 /* A row is never cut in two between one grid column and the next. */
 .fb-columns-dialog .fb-columns-row {
+  /* An app's own rule for list items, such as one for running text, may give them a margin.
+     In the dialog only the first grid column would keep the margin above its first row,
+     and so start lower than the others. */
+  margin: 0;
   break-inside: avoid;
 }
 

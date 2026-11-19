@@ -1,23 +1,13 @@
 import type { FieldDefinition } from "@arvilmena/filter-core";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { FilterBuilder } from "../src/ui/FilterBuilder";
+import { addAppCss } from "./support/app-css";
 import { PickerApp, pickerParts } from "./support/apps";
 import { mount } from "./support/mount";
 
 // An app changes the look by setting `--fb-*` variables. Whether its value wins over the
 // library's default is decided by the browser's own rules for style sheets, so it is checked
 // here on the styles the browser really worked out.
-
-/**
- * Adds an app's own CSS to the page, BEFORE the library's style sheet. A later rule wins over
- * an earlier one of the same weight, so this is the order in which an app's rule could lose.
- */
-function addAppCss(css: string): void {
-  const sheet = document.createElement("style");
-  sheet.textContent = css;
-  document.head.prepend(sheet);
-  onTestFinished(() => sheet.remove());
-}
 
 /** The corner radius the browser gives the picker's button. */
 async function triggerRadius(): Promise<string> {

@@ -1,6 +1,7 @@
 import axe from "axe-core";
 import { describe, expect, onTestFinished, test } from "vitest";
 import { commands, page, userEvent } from "vitest/browser";
+import { addAppCss } from "./support/app-css";
 import {
   manyColumns,
   mountOpenDialog,
@@ -164,6 +165,34 @@ describe("the grid in the dialog", () => {
     expect(place(perColumn - 1).left).toBeCloseTo(place(0).left, 0);
   });
 
+  test("starts every grid column at the same height, in an app that gives list items a margin", async () => {
+    // A style sheet for running text often spaces list items out like this. Between two
+    // grid columns the browser drops such a margin, and keeps it above the very first row.
+    addAppCss("li { margin-top: 0.5em; margin-bottom: 0.5em; }");
+    const picker = await mountOpenDialog({
+      // The first row is a pinned one, which is drawn with other parts than the rest.
+      columns: [
+        { key: "id", label: "Id", pinned: "start", hideable: false },
+        ...manyColumns(60),
+      ],
+    });
+    // The top of the first row of each grid column, by the grid column's left edge.
+    const tops = new Map<number, number>();
+    for (const row of picker.rows()) {
+      const box = row.getBoundingClientRect();
+      const left = Math.round(box.left);
+      if (!tops.has(left)) tops.set(left, box.top);
+    }
+    expect(tops.size).toBeGreaterThan(1);
+    const [first, ...others] = [...tops.values()] as [number, ...number[]];
+    for (const top of others) expect(Math.abs(top - first)).toBeLessThan(SLACK);
+    // The rows stand one right below the other, with no gap between them.
+    const [one, two] = picker.rows().map((row) => row.getBoundingClientRect());
+    expect(
+      Math.abs((two as DOMRect).top - (one as DOMRect).bottom),
+    ).toBeLessThan(SLACK);
+  });
+
   test("has no scrollbar while the grid columns fit", async () => {
     const picker = await mountOpenDialog({ columns: manyColumns(60) });
     const list = picker.list();
@@ -223,6 +252,10 @@ describe("using the list in the dialog", () => {
     await expect.poll(picker.table).not.toContain("c3 ");
     await clickOn(picker.showAll());
     await expect.poll(picker.table).toContain("c3 ");
+    await clickOn(picker.hideAll());
+    await expect.poll(picker.table).toBe("");
+    await clickOn(picker.showAll());
+    await expect.poll(picker.table).toContain("c3 ");
 
     const search = document.querySelector(
       ".fb-columns-search-input",
@@ -252,10 +285,6 @@ describe("using the list in the dialog", () => {
     await moveTo(upperHalf(picker.row(`Column ${target}`)));
     // The line is drawn above the row under the pointer.
     await expect
-    await clickOn(picker.hideAll());
-    await expect.poll(picker.table).toBe("");
-    await clickOn(picker.showAll());
-    await expect.poll(picker.table).toContain("c3 ");
       .poll(() => picker.row(`Column ${target}`).getAttribute("data-drop"))
       .toBe("before");
     await release();
