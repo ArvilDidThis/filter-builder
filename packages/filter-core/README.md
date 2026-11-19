@@ -43,8 +43,9 @@ settings are plain JSON, so an app can store them. Every function is pure. A fun
 both the column list and the settings takes the column list first.
 
 A function that takes settings and returns settings hands back the same object when nothing
-changed. Those are `setColumnVisible`, `moveColumn`, `moveColumnAroundPinned`, `showAllColumns`,
-`resetColumnSettings` and `reconcileColumnSettings`. The others, `visibleColumns`, `orderedColumns` and
+changed. Those are `setColumnVisible`, `moveColumn`, `moveColumnAroundPinned`,
+`moveColumnGroup`, `moveColumnGroupAroundPinned`, `showAllColumns`, `resetColumnSettings` and
+`reconcileColumnSettings`. The others, `visibleColumns`, `orderedColumns` and
 `defaultColumnSettings`, build a new result on each call. The React hook `useColumnSettings`
 memoises them (keeps the result until its inputs change).
 
@@ -98,22 +99,24 @@ settings = resetColumnSettings(columns, settings);
 // { order: ["name", "price", "notes"], hidden: ["notes"] }
 ```
 
-| Function                  | Does                                                 |
-| ------------------------- | ---------------------------------------------------- |
-| `defaultColumnSettings`   | The list's own order and starting visibility         |
-| `reconcileColumnSettings` | Fits saved settings to the column list               |
-| `setColumnVisible`        | Shows or hides one column                            |
-| `moveColumn`              | Moves one column to a place in the order             |
-| `moveColumnAroundPinned`  | The same move, leaving pinned columns in place       |
-| `unpinnedRange`           | The places of an order that a column may be moved to |
-| `columnPin`               | The end a column is pinned to, if any                |
-| `showAllColumns`          | Shows every column, keeping the order                |
-| `resetColumnSettings`     | Puts the defaults back                               |
-| `isDefaultColumnSettings` | Whether the settings are the defaults                |
-| `orderedColumns`          | Every column in order, each with whether it is shown |
-| `visibleColumns`          | The shown columns in order, as the app's own objects |
-| `columnMatchesSearch`     | Whether a column's label matches a search            |
-| `searchColumns`           | The columns of a list that match a search            |
+| Function                      | Does                                                 |
+| ----------------------------- | ---------------------------------------------------- |
+| `defaultColumnSettings`       | The list's own order and starting visibility         |
+| `reconcileColumnSettings`     | Fits saved settings to the column list               |
+| `setColumnVisible`            | Shows or hides one column                            |
+| `moveColumn`                  | Moves one column to a place in the order             |
+| `moveColumnAroundPinned`      | The same move, leaving pinned columns in place       |
+| `moveColumnGroup`             | Moves several columns together to a place            |
+| `moveColumnGroupAroundPinned` | The same move, leaving pinned columns in place       |
+| `unpinnedRange`               | The places of an order that a column may be moved to |
+| `columnPin`                   | The end a column is pinned to, if any                |
+| `showAllColumns`              | Shows every column, keeping the order                |
+| `resetColumnSettings`         | Puts the defaults back                               |
+| `isDefaultColumnSettings`     | Whether the settings are the defaults                |
+| `orderedColumns`              | Every column in order, each with whether it is shown |
+| `visibleColumns`              | The shown columns in order, as the app's own objects |
+| `columnMatchesSearch`         | Whether a column's label matches a search            |
+| `searchColumns`               | The columns of a list that match a search            |
 
 ### Pinned columns
 
@@ -160,6 +163,42 @@ The rules:
   column of `visibleColumns`, which are the app's own column objects. `columnPin(column)` reads
   it too, and also compiles for a list written with `as const` where only some columns are
   pinned.
+
+### Moving several columns together
+
+`moveColumnGroup` moves several columns in one step. They land side by side, with the first of
+them at the index given, and keep the order they had among themselves. The order the keys are
+named in does not count.
+
+```ts
+let settings: ColumnSettings = {
+  order: [
+    "symbol",
+    "company",
+    "industry",
+    "cap",
+    "return",
+    "age",
+    "release",
+    "beta",
+  ],
+  hidden: [],
+};
+
+settings = moveColumnGroup(settings, ["cap", "return", "beta"], 1);
+// order: symbol, cap, return, beta, company, industry, age, release
+
+// The group already stands there: the same settings come back.
+moveColumnGroup(settings, ["cap", "return", "beta"], 1) === settings; // true
+```
+
+The rules:
+
+- An index too near either end means the nearest place the whole group fits in.
+- A key the order does not name is skipped, and so is a key named twice.
+- With one key, it does what `moveColumn` does.
+- `moveColumnGroupAroundPinned(columns, settings, keys, toIndex)` takes the column list too.
+  It skips a pinned column named in `keys`, and the group never passes a pinned column.
 
 ### Searching the columns
 

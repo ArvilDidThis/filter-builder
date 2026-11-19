@@ -73,8 +73,8 @@ failed run offers that folder for download as `browser-test-failures`.
 
 ### Screenshots
 
-Two tests compare the open picker, on a light page and on a dark page, with stored
-screenshots. Text is drawn differently on each system, so each system has its own stored
+Six tests compare the picker with stored screenshots: the open picker, the picker with group
+drag on, and its dialog, each on a light page and on a dark page. Text is drawn differently on each system, so each system has its own stored
 screenshots, in `packages/filter-react/browser/__screenshots__/<system>/<browser>/`.
 
 - **Linux** screenshots are the ones CI compares. Only they are kept in the repository. On
@@ -104,7 +104,7 @@ that, or to store Linux screenshots without pushing, use Docker on your own mach
 pnpm test:browser:update:linux
 ```
 
-It runs the two screenshot tests in a Linux container, with the same Ubuntu release, kind of
+It runs the screenshot tests in a Linux container, with the same Ubuntu release, kind of
 processor and Playwright version as CI, and stores the pictures in the same folder. Your
 `node_modules` is left alone. Look at each picture, then commit them. If CI then reports a
 difference, its machines draw text differently from the container: replace the pictures with
@@ -257,6 +257,8 @@ function Products() {
 
 A column with `pinned: "start"` or `pinned: "end"` keeps its place at that end of the table,
 and the picker shows it as fixed. A long list has a search box that narrows it by column name.
+For a very long list, "Dialog view" opens the same list in a dialog in the middle of the screen,
+laid out in grid columns, and "Group drag" moves several selected columns together.
 
 The picker works with a mouse, with touch and with a keyboard. To draw your own picker, use the
 hook alone: it returns every column in order, the visible columns and the actions. The

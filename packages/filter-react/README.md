@@ -231,6 +231,96 @@ import { searchColumns } from "@arvilmena/filter-core";
 const listed = searchColumns(table.orderedColumns, typed);
 ```
 
+### The dialog view
+
+With a few hundred columns, a small list means a lot of scrolling. The popover has a
+"Dialog view" button, which opens the same list in a dialog in the middle of the screen, about
+nine tenths of the screen's height.
+
+In the dialog the columns are laid out as a grid. It reads down the first grid column and then
+across to the next, and holds as many grid columns as its width fits. It scrolls sideways only
+when the columns need more grid columns than fit.
+
+Everything works as in the popover: ticking, the search box, "Show all", "Reset", dragging
+and the keyboard. On a handle, the up and down arrow keys move a column by one place, and the
+left and right arrow keys move it by one grid column.
+
+The dialog is modal: the focus stays inside it, and the rest of the page cannot be pressed.
+Escape, the "Close" button, or a click on the dimmed page closes it, and the focus returns to
+the picker's button.
+
+```tsx
+// Open the list straight in the dialog, with no popover.
+<ColumnPicker state={table} defaultView="dialog" />;
+
+// Keep the popover only.
+<ColumnPicker state={table} dialogView={false} />;
+
+// Change the wording, and how wide a grid column is at least.
+<ColumnPicker
+  state={table}
+  labels={{ dialogView: "Wide view", closeDialog: "Done" }}
+  style={{ "--fb-dialog-column-width": "18rem" }}
+/>;
+```
+
+| Prop          | Does                                                                  |
+| ------------- | --------------------------------------------------------------------- |
+| `dialogView`  | `false` takes the "Dialog view" button off the popover                |
+| `defaultView` | `"dialog"` makes the picker's button open the dialog, not the popover |
+
+The wording is in `labels`: `dialogView`, `closeDialog` and `dialogMoveHint`, which tells a
+screen reader about the four arrow keys.
+
+The dialog is the browser's own `<dialog>` element, so it needs no other library. It reads
+from left to right; a page that reads from right to left is not tested.
+
+### Group drag
+
+Moving a block of columns one by one is slow. The "Group drag" button, above the list, lets a
+person move several columns together. While it is on:
+
+- The boxes that show and hide columns are turned off. They still say which columns are shown.
+- Each column that can move gets a second box, which selects it. A click on the column's name
+  ticks that box. A pinned column cannot be selected.
+- Dragging the handle of any selected column moves every selected column. They land together
+  at the drop place, in the order they had among themselves.
+- The arrow keys, Home and End on the handle of a selected column move the whole selection.
+- Dragging a column that is not selected moves that column alone.
+
+For example, a list reads Symbol, Company, Industry, Cap, Return, Age, Release, Beta. Select
+Cap, Return and Beta, and drop them above Company. The list then reads Symbol, Cap, Return,
+Beta, Company, Industry, Age, Release.
+
+A drop empties the selection, so the next group starts fresh. A move with the keyboard keeps
+it, so the key can be pressed again. Group drag stays on until its button is pressed again. A
+group never passes a pinned column. A screen reader hears how many columns moved and where,
+once the move is on screen.
+
+```tsx
+// Leave the button out.
+<ColumnPicker state={table} groupDrag={false} />;
+
+// Change the wording.
+<ColumnPicker
+  state={table}
+  labels={{
+    groupDrag: "Move several",
+    select: (label) => `Select ${label}`,
+    movedGroup: (count, position, total) =>
+      `${count} columns moved to place ${position} of ${total}.`,
+  }}
+/>;
+```
+
+The wording is in `labels`: `groupDrag`, `groupDragHint`, `select` and `movedGroup`.
+
+Group drag works in the dialog too, across its grid columns. While a search narrows the list,
+no column can be selected or moved.
+
+A row you draw with `renderRow` must draw the selection box itself. See
+[Replacing parts of the picker](#replacing-parts-of-the-picker).
+
 ### Who keeps the settings
 
 The hook works like a form input. The settings are plain JSON, and the hook fits them to the
@@ -306,6 +396,9 @@ reports the difference. Saving table state is planned as a feature of its own.
 | `renderTrigger` | Draws your own button. Spread the props it is given onto the button    |
 | `renderRow`     | Draws the inside of one row from the `checkboxProps` and `handleProps` |
 | `search`        | `true` or `false` forces the search box on or off. See above           |
+| `dialogView`    | `false` takes the "Dialog view" button away. See above                 |
+| `defaultView`   | `"dialog"` opens the list straight in the dialog. See above            |
+| `groupDrag`     | `false` takes the "Group drag" button away. See above                  |
 | `className`     | Added to the picker's own class                                        |
 | `style`         | An inline style for the picker. It also takes the `--fb-*` variables   |
 
@@ -320,6 +413,26 @@ Spread all of `handleProps` onto your handle. It carries the `touch-action` styl
 finger drag the handle. A row also has `pinned` and `movable`. On a row that is not movable,
 such as a pinned one, `handleProps` turns the handle off, or you can leave the handle out. Keep the same `renderRow` function between renders (see `useCallback`),
 or every row redraws whenever the picker does. `labels` may be written in place.
+
+For group drag, a row also has `grouping`, `selected` and `selectProps`. While `grouping` is
+true, draw a checkbox from `selectProps`, and point the row's `<label>` at it. If your rows do
+not draw it, pass `groupDrag={false}`.
+
+```tsx
+const renderRow = useCallback(
+  (row: ColumnPickerRow) => (
+    <>
+      {row.grouping && <input {...row.selectProps} />}
+      <input {...row.checkboxProps} />
+      <button {...row.handleProps}>Move</button>
+      <label htmlFor={row.grouping ? row.selectProps.id : row.checkboxProps.id}>
+        {row.column.label}
+      </label>
+    </>
+  ),
+  [],
+);
+```
 
 The picker reads the same `--fb-*` variables as the builder. Set them on the picker with
 `className` or `style`, or on any element around it. See [Theming](#theming).
@@ -421,6 +534,15 @@ function ProductColumns() {
 }
 ```
 
+To move several columns together, call `actions.moveGroup` with their keys and the place the
+first of them should take. The columns land side by side, in the order they had among
+themselves, and never pass a pinned column:
+
+```tsx
+// "cap", "return" and "beta" land together, with the first of them in the second place.
+actions.moveGroup(["cap", "return", "beta"], 1);
+```
+
 ## Theming
 
 The ready-made builder and column picker take their look from CSS variables whose names start
@@ -505,23 +627,26 @@ variables, so TypeScript suggests their names and needs no cast.
 
 ### The variables
 
-| Variable              | Sets                                                | Default                               |
-| --------------------- | --------------------------------------------------- | ------------------------------------- |
-| `--fb-page`           | The colour behind the component                     | `--background`, else the page colour  |
-| `--fb-border`         | Borders                                             | 22% of the text colour                |
-| `--fb-control-bg`     | The background of buttons and boxes                 | 7% of the text colour on `--fb-page`  |
-| `--fb-hover-bg`       | The background under the pointer                    | 15% of the text colour on `--fb-page` |
-| `--fb-popover-bg`     | The background of an open list                      | `--popover`, else `--fb-page`         |
-| `--fb-muted`          | Quieter text, such as counts and handles            | 60% of the text colour                |
-| `--fb-focus`          | The focus ring and the drop line                    | `--ring`, else the system highlight   |
-| `--fb-shadow`         | The shadow under an open list                       | `rgb(0 0 0 / 0.25)`                   |
-| `--fb-and`            | The bar of a group where every condition must pass  | `#3b82f6`                             |
-| `--fb-or`             | The bar of a group where one condition is enough    | `#f59e0b`                             |
-| `--fb-radius`         | Rounded corners                                     | `0.375rem`                            |
-| `--fb-control-height` | The height of buttons and boxes                     | `2.25rem`                             |
-| `--fb-gap`            | The space between controls                          | `0.5rem`                              |
-| `--fb-value-width`    | The widest a value box grows                        | `12rem`                               |
-| `--fb-sticky-top`     | How far below the top a group's "And" or "Or" stays | `0.5rem`                              |
+| Variable                   | Sets                                                | Default                               |
+| -------------------------- | --------------------------------------------------- | ------------------------------------- |
+| `--fb-page`                | The colour behind the component                     | `--background`, else the page colour  |
+| `--fb-border`              | Borders                                             | 22% of the text colour                |
+| `--fb-control-bg`          | The background of buttons and boxes                 | 7% of the text colour on `--fb-page`  |
+| `--fb-hover-bg`            | The background under the pointer                    | 15% of the text colour on `--fb-page` |
+| `--fb-popover-bg`          | The background of an open list                      | `--popover`, else `--fb-page`         |
+| `--fb-muted`               | Quieter text, such as counts and handles            | 60% of the text colour                |
+| `--fb-focus`               | The focus ring and the drop line                    | `--ring`, else the system highlight   |
+| `--fb-shadow`              | The shadow under an open list                       | `rgb(0 0 0 / 0.25)`                   |
+| `--fb-and`                 | The bar of a group where every condition must pass  | `#3b82f6`                             |
+| `--fb-or`                  | The bar of a group where one condition is enough    | `#f59e0b`                             |
+| `--fb-radius`              | Rounded corners                                     | `0.375rem`                            |
+| `--fb-control-height`      | The height of buttons and boxes                     | `2.25rem`                             |
+| `--fb-gap`                 | The space between controls                          | `0.5rem`                              |
+| `--fb-value-width`         | The widest a value box grows                        | `12rem`                               |
+| `--fb-backdrop`            | The dimmed page around the column picker's dialog   | `rgb(0 0 0 / 0.45)`                   |
+| `--fb-dialog-column-width` | The least width of a grid column in that dialog     | `14rem`                               |
+| `--fb-selected-bg`         | Behind a row selected for a group drag              | 20% of `--fb-focus`                   |
+| `--fb-sticky-top`          | How far below the top a group's "And" or "Or" stays | `0.5rem`                              |
 
 The same names are exported as `FILTER_THEME_VARIABLES` from `@arvilmena/filter-react/ui`.
 
