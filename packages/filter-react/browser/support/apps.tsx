@@ -188,6 +188,7 @@ export function pickerParts(within: ParentNode = document) {
     closeDialog: () => toolButton("Close"),
     groupDrag: () => toolButton("Group drag"),
     showAll: () => footerButton("Show all"),
+    hideAll: () => footerButton("Hide all"),
     reset: () => footerButton("Reset"),
     /** The column keys the table shows, in order. */
     table: () => one('[data-testid="table"]').textContent,

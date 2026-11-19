@@ -275,6 +275,7 @@ const checkbox = (label: string) =>
 const handle = (label: string) =>
   screen.getByRole("button", { name: `Move ${label}` });
 const showAll = () => screen.getByRole("button", { name: "Show all" });
+const hideAll = () => screen.getByRole("button", { name: "Hide all" });
 const reset = () => screen.getByRole("button", { name: "Reset" });
 /** Whether a button is marked as having nothing to do. */
 const isUnavailable = (button: HTMLElement): boolean =>
@@ -415,6 +416,39 @@ describe("ColumnPicker", () => {
     expect(table()).toBe("stock name price notes");
   });
 
+  it("should hide every column that may be hidden with Hide all, keeping the order", () => {
+    renderPicker();
+    fireEvent.keyDown(handle("Stock"), { key: "Home" });
+    fireEvent.click(hideAll());
+    // "Name" must stay shown.
+    expect(table()).toBe("name");
+    expect(listed()).toBe("⠿Stock ⠿Name ⠿Price ⠿Notes");
+    expect(checkbox("Name").checked).toBe(true);
+    expect(checkbox("Stock").checked).toBe(false);
+    expect(checkbox("Price").checked).toBe(false);
+    expect(announced()).toBe("All columns that can be hidden are hidden.");
+    // "Show all" brings them back, in the same order.
+    fireEvent.click(showAll());
+    expect(table()).toBe("stock name price notes");
+  });
+
+  it("should stand between Show all and Reset", () => {
+    renderPicker();
+    const footer = reset().parentElement as HTMLElement;
+    expect(Array.from(footer.children, (button) => button.textContent)).toEqual(
+      ["Show all", "Hide all", "Reset"],
+    );
+  });
+
+  it("should use the app's wording for Hide all and for what it did", () => {
+    renderPicker({
+      labels: { hideAll: "Alle ausblenden", hideAllDone: "Alle verborgen." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Alle ausblenden" }));
+    expect(table()).toBe("name");
+    expect(announced()).toBe("Alle verborgen.");
+  });
+
   it("should put back the starting order and visibility with Reset", () => {
     renderPicker();
     fireEvent.click(checkbox("Price"));
@@ -481,6 +515,40 @@ describe("ColumnPicker", () => {
       fireEvent.click(checkbox("Price"));
       expect(isUnavailable(showAll())).toBe(false);
       expect(showAll().hasAttribute("aria-disabled")).toBe(false);
+    });
+
+    it("should mark Hide all as unavailable only while nothing more can be hidden", () => {
+      renderPicker();
+      expect(isUnavailable(hideAll())).toBe(false);
+      expect(hideAll().hasAttribute("aria-disabled")).toBe(false);
+      fireEvent.click(checkbox("Price"));
+      fireEvent.click(checkbox("Stock"));
+      // Only "Name" is shown now, and it must stay shown.
+      expect(isUnavailable(hideAll())).toBe(true);
+      fireEvent.click(checkbox("Price"));
+      expect(isUnavailable(hideAll())).toBe(false);
+    });
+
+    it("should do nothing, and say nothing, when Hide all is pressed with nothing to hide", () => {
+      renderPicker();
+      fireEvent.click(hideAll());
+      expect(isUnavailable(hideAll())).toBe(true);
+      const message = document.querySelector("[aria-live]")?.firstChild;
+      changed.mockClear();
+      fireEvent.click(hideAll());
+      expect(changed).not.toHaveBeenCalled();
+      expect(document.querySelector("[aria-live]")?.firstChild).toBe(message);
+      // It is marked, not turned off, so that it stays in the Tab order.
+      expect(hideAll().hasAttribute("disabled")).toBe(false);
+      expect(hideAll().tabIndex).toBe(0);
+    });
+
+    it("should keep the focus on Hide all after it is pressed with the keyboard", () => {
+      renderPicker();
+      hideAll().focus();
+      fireEvent.click(hideAll());
+      expect(isUnavailable(hideAll())).toBe(true);
+      expect(document.activeElement).toBe(hideAll());
     });
 
     it("should mark Reset as unavailable only while the settings are the starting ones", () => {
@@ -1614,6 +1682,33 @@ describe("ColumnPicker", () => {
       expect(checkbox("Notes").checked).toBe(true);
       expect(announced()).toBe("All columns are shown.");
       expect(isUnavailable(showAll())).toBe(true);
+    });
+
+    it("should announce Hide all only once the app applies it", () => {
+      openOwningApp();
+      fireEvent.click(hideAll());
+      expect(announced()).toBe("");
+      expect(isUnavailable(hideAll())).toBe(false);
+      apply();
+      expect(checkbox("Price").checked).toBe(false);
+      expect(announced()).toBe("All columns that can be hidden are hidden.");
+      expect(isUnavailable(hideAll())).toBe(true);
+    });
+
+    it("should not announce Hide all when the app applies something else", () => {
+      openOwningApp();
+      fireEvent.click(hideAll());
+      // The app turns the press down, and changes the order itself.
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      expect(announced()).toBe("");
+      // The press was given up then. A person who hides the columns by hand later did not
+      // press "Hide all" for it.
+      fireEvent.click(checkbox("Price"));
+      apply();
+      fireEvent.click(checkbox("Stock"));
+      apply();
+      expect(isUnavailable(hideAll())).toBe(true);
+      expect(announced()).toBe("");
     });
 
     it("should announce Reset only once the app applies it", () => {
@@ -3158,6 +3253,18 @@ describe("ColumnPicker search", () => {
     );
     // The search stays as typed.
     expect(names()).toEqual(["Name"]);
+  });
+
+  it("should let Hide all act on every column, not only the listed ones", () => {
+    renderSearch();
+    // Only "Notes" is listed, and it is hidden already.
+    type("not");
+    expect(names()).toEqual(["Notes"]);
+    fireEvent.click(hideAll());
+    expect(table()).toBe("name");
+    expect(announced()).toBe("All columns that can be hidden are hidden.");
+    // The search stays as typed.
+    expect(names()).toEqual(["Notes"]);
   });
 
   it("should tell an app's own row its real place and that it cannot move", () => {

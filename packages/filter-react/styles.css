@@ -785,7 +785,6 @@
   display: flex;
   /* A button whose label is too long to stand beside the other takes a line of its own. */
   flex-wrap: wrap;
-  justify-content: space-between;
   gap: var(--fb-gap, var(--_fb-gap));
   padding-top: 0.25rem;
   border-top: 1px solid var(--fb-border, var(--_fb-border));
@@ -838,6 +837,11 @@
    also reach a column picker placed inside the builder, which uses the same marks. */
 .fb [data-fb-item][data-dragging] {
   opacity: 0.4;
+/* "Reset" stands at the far side, apart from "Show all" and "Hide all". */
+.fb-columns-footer > .fb-columns-footer-end {
+  margin-left: auto;
+}
+
 }
 
 .fb [data-fb-item],

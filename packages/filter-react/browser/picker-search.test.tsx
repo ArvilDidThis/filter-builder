@@ -119,6 +119,19 @@ describe("the search box of the picker", () => {
     expect(picker.listed()).toEqual(["Column 39"]);
   });
 
+  test("lets Hide all reach the columns that are not listed", async () => {
+    const picker = await mountOpenPicker({ columns: LONG });
+    await typeSearch("column 39");
+    await expect.poll(picker.listed).toEqual(["Column 39"]);
+    await clickOn(picker.hideAll());
+    await expect.poll(picker.table).toBe("");
+    expect(picker.announced()).toBe(
+      "All columns that can be hidden are hidden.",
+    );
+    // The search is still as typed.
+    expect(picker.listed()).toEqual(["Column 39"]);
+  });
+
   test("closes the picker on Escape once the box is empty", async () => {
     const picker = await mountOpenPicker({ columns: LONG });
     await typeSearch("x");

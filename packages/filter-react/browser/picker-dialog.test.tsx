@@ -217,7 +217,7 @@ describe("the grid in the dialog", () => {
 });
 
 describe("using the list in the dialog", () => {
-  test("ticks, searches, shows all and resets", async () => {
+  test("ticks, searches, shows all, hides all and resets", async () => {
     const picker = await mountOpenDialog({ columns: manyColumns(40) });
     await clickOn(picker.checkbox("Column 3"));
     await expect.poll(picker.table).not.toContain("c3 ");
@@ -252,6 +252,10 @@ describe("using the list in the dialog", () => {
     await moveTo(upperHalf(picker.row(`Column ${target}`)));
     // The line is drawn above the row under the pointer.
     await expect
+    await clickOn(picker.hideAll());
+    await expect.poll(picker.table).toBe("");
+    await clickOn(picker.showAll());
+    await expect.poll(picker.table).toContain("c3 ");
       .poll(() => picker.row(`Column ${target}`).getAttribute("data-drop"))
       .toBe("before");
     await release();

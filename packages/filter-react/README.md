@@ -55,15 +55,24 @@ A button that opens a list of a table's columns. A person ticks a column to show
 its handle to move it. The handle also works from the keyboard: the arrow keys, Home and End
 move the column, and a screen reader hears each move.
 
-Below the list, "Show all" shows every column and "Reset" puts back the starting order and
-visibility. Each button is unavailable while it has nothing to do: "Show all" while every column
-is shown, and "Reset" while the settings are the starting ones. An unavailable button is dimmed
-and ignores a press, but it keeps the keyboard focus, so a person who presses "Reset" with the
-keyboard stays where they are.
+Below the list are three buttons:
+
+- **"Show all"** shows every column.
+- **"Hide all"** hides every column that may be hidden. A column with `hideable: false` stays
+  shown. Both buttons keep the order.
+- **"Reset"** puts back the starting order and visibility.
+
+Each button is unavailable while it has nothing to do: "Show all" while every column is shown,
+"Hide all" while nothing more can be hidden, and "Reset" while the settings are the starting
+ones. An unavailable button is dimmed and ignores a press, but it keeps the keyboard focus, so a
+person who presses "Reset" with the keyboard stays where they are.
 
 A screen reader hears what a button did once the change is on screen, not at the press. If your
 app keeps the settings and applies the change later, the message comes then. If your app turns
 the change down, or applies a different one, nothing is read out.
+
+Replace the wording with `labels`: `showAll`, `hideAll` and `reset` for the buttons, and
+`showAllDone`, `hideAllDone` and `resetDone` for what is read out.
 
 The `useColumnSettings` hook keeps the settings. Its result goes to the picker, and gives the
 table its columns.
@@ -214,7 +223,7 @@ How the search works:
 - **Moving is off while a search is on.** The rows between the listed ones are out of sight,
   so a move could not show where the column lands. The handles are turned off, and a line
   below the box says "Clear the search to move columns." Ticking a column still works.
-- **"Show all" and "Reset" act on every column,** not only the listed ones.
+- **"Show all", "Hide all" and "Reset" act on every column,** not only the listed ones.
 - **A screen reader hears the count,** such as "3 of 40 columns match." The same line is
   shown below the box.
 - **Escape clears the search.** Pressed again, it closes the picker. The search also starts
@@ -241,8 +250,8 @@ In the dialog the columns are laid out as a grid. It reads down the first grid c
 across to the next, and holds as many grid columns as its width fits. It scrolls sideways only
 when the columns need more grid columns than fit.
 
-Everything works as in the popover: ticking, the search box, "Show all", "Reset", dragging
-and the keyboard. On a handle, the up and down arrow keys move a column by one place, and the
+Everything works as in the popover: ticking, the search box, "Show all", "Hide all", "Reset",
+dragging and the keyboard. On a handle, the up and down arrow keys move a column by one place, and the
 left and right arrow keys move it by one grid column.
 
 The dialog is modal: the focus stays inside it, and the rest of the page cannot be pressed.
@@ -462,13 +471,14 @@ visible columns (`visibleColumns`), and the actions that change the settings. Th
 object never changes, and `visibleColumns` changes only when its content does, so a memoised
 table does not redraw for nothing.
 
-Two more values say whether a button has anything to do:
+Three more values say whether a button has anything to do:
 
 | Value        | True when                                   | So this would change nothing |
 | ------------ | ------------------------------------------- | ---------------------------- |
 | `allVisible` | Every column is shown                       | `actions.showAll`            |
 | `isDefault`  | The settings are the column list's defaults | `actions.reset`              |
 
+| `allHidden`  | Every column that may be hidden is hidden   | `actions.hideAll`            |
 The example marks such a button with `aria-disabled`, not `disabled`. A button that turns itself
 `disabled` while it holds the keyboard focus loses that focus. The click needs no check of its
 own, because an action that has nothing to do changes nothing.
@@ -484,8 +494,14 @@ const columns = [
 ] as const satisfies readonly ColumnDefinition[];
 
 function ProductColumns() {
-  const { orderedColumns, visibleColumns, allVisible, isDefault, actions } =
-    useColumnSettings({ columns });
+  const {
+    orderedColumns,
+    visibleColumns,
+    allVisible,
+    allHidden,
+    isDefault,
+    actions,
+  } = useColumnSettings({ columns });
   return (
     <>
       <ul>
@@ -527,6 +543,9 @@ function ProductColumns() {
       </button>
       <button type="button" aria-disabled={isDefault} onClick={actions.reset}>
         Reset
+      <button type="button" aria-disabled={allHidden} onClick={actions.hideAll}>
+        Hide all
+      </button>
       </button>
       <p>Showing: {visibleColumns.map((column) => column.label).join(", ")}</p>
     </>

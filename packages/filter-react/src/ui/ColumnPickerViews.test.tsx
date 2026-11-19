@@ -435,6 +435,19 @@ describe("ColumnPicker dialog view", () => {
     expect(dialog()?.open).toBe(true);
   });
 
+  it("should hide all in the dialog, also while group drag is on", () => {
+    renderPicker({ defaultView: "dialog" });
+    fireEvent.click(groupDrag());
+    fireEvent.click(screen.getByRole("button", { name: "Hide all" }));
+    // The pinned "Symbol" must stay shown.
+    expect(checkbox("Symbol").checked).toBe(true);
+    expect(checkbox("Cap").checked).toBe(false);
+    expect(announced()).toBe("All columns that can be hidden are hidden.");
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(checkbox("Cap").checked).toBe(true);
+    expect(dialog()?.open).toBe(true);
+  });
+
   it("should clear a search on the first Escape, and close on the second", () => {
     renderPicker({ defaultView: "dialog", search: true });
     const box = screen.getByRole("searchbox");

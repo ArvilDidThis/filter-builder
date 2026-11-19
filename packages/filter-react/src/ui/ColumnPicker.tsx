@@ -31,6 +31,8 @@ import { useOutsidePointerDown } from "./useOutsidePointerDown";
 // A ready-made column picker with default styling: a button that opens a list of every column.
 // Each row has a checkbox that shows or hides the column, and a handle that moves it. A pinned
 // column has no handle: it stays at its end of the list. A long list has a search box above it.
+// Below the list, "Show all" and "Hide all" tick or untick every column, and "Reset" puts the
+// starting settings back.
 //
 // The list opens in a small popover below the button. Its "Dialog view" button opens the same
 // list in a dialog in the middle of the screen, laid out in grid columns, for a long list.
@@ -49,6 +51,11 @@ export interface ColumnPickerLabels {
   title: string;
   /** The button that shows every column. It is unavailable while every column is shown. */
   showAll: string;
+  /**
+   * The button that hides every column that may be hidden. It is unavailable while nothing
+   * more can be hidden.
+   */
+  hideAll: string;
   /**
    * The button that puts back the starting order and visibility. It is unavailable while the
    * settings are the starting ones.
@@ -73,6 +80,8 @@ export interface ColumnPickerLabels {
   searchMoveHint: string;
   /** Read out once the "show all" button has shown every column. */
   showAllDone: string;
+  /** Read out once the "hide all" button has hidden every column that may be hidden. */
+  hideAllDone: string;
   /** Read out once the "reset" button has put the starting settings back. */
   resetDone: string;
   /** The button in the popover that opens the list in a dialog. */
@@ -103,6 +112,7 @@ export const COLUMN_PICKER_LABELS: ColumnPickerLabels = {
   hiddenCount: (count) => `${count} hidden`,
   title: "Columns",
   showAll: "Show all",
+  hideAll: "Hide all",
   reset: "Reset",
   move: (label) => `Move ${label}`,
   moveHint:
@@ -115,6 +125,7 @@ export const COLUMN_PICKER_LABELS: ColumnPickerLabels = {
     count === 0 ? "No columns match." : `${count} of ${total} columns match.`,
   searchMoveHint: "Clear the search to move columns.",
   showAllDone: "All columns are shown.",
+  hideAllDone: "All columns that can be hidden are hidden.",
   resetDone: "The columns are back in their starting order and visibility.",
   dialogView: "Dialog view",
   closeDialog: "Close",
@@ -277,7 +288,7 @@ export interface ColumnPickerProps<
    *
    * The search follows `columnMatchesSearch` of `@arvilmena/filter-core`. While a search is
    * on, no column can be moved, because the rows between the listed ones are out of sight.
-   * "Show all" and "Reset" still act on every column.
+   * "Show all", "Hide all" and "Reset" still act on every column.
    */
   search?: boolean | "auto";
   /**
@@ -349,7 +360,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   className,
   style,
 }: ColumnPickerProps<Column>) {
-  const { orderedColumns, allVisible, isDefault, actions } = state;
+  const { orderedColumns, allVisible, allHidden, isDefault, actions } = state;
   const [open, setOpen] = useState(false);
   // Which of the two the open list is shown in.
   const [view, setView] = useState<ColumnPickerView>(defaultView);
@@ -574,12 +585,12 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     if (pending.clearsSelection) setSelected(NONE_SELECTED);
   });
 
-  // The "show all" or "reset" press that is still to be read out. Like a move, it waits here
+  // The "show all", "hide all" or "reset" press that is still to be read out. Like a move, it waits here
   // until it has really happened, because an app that owns the settings may apply it later, or
   // turn it down. A tick or a move asked for in the meantime ends the wait: the press cannot
   // tell its own result from theirs.
   const pendingButton = useRef<{
-    button: "showAll" | "reset";
+    button: FooterAction;
     /** The list when the button was pressed. The hook keeps it until its content changes. */
     list: readonly OrderedColumn<Column>[];
     /** The order of the keys when the button was pressed. */
@@ -591,16 +602,19 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     // A button can only be pressed while it has something to do. So once the list shows what
     // the press would give, the press has landed. "Show all" gives every column shown in the
     // order it was pressed in: an app that shows every column in another order applied
-    // settings of its own. "Reset" gives the starting settings, which is all `isDefault` says.
-    const isShowAll = pending.button === "showAll";
-    const hasLanded = isShowAll
-      ? allVisible && isSameOrder(keys, pending.order)
-      : isDefault;
-    if (hasLanded) {
+    // settings of its own. "Hide all" is told the same way. "Reset" gives the starting
+    // settings, which is all `isDefault` says.
+    const keptOrder = isSameOrder(keys, pending.order);
+    const landed: Record<FooterAction, boolean> = {
+      showAll: allVisible && keptOrder,
+      hideAll: allHidden && keptOrder,
+      reset: isDefault,
+    };
+    if (landed[pending.button]) {
       pendingButton.current = null;
       // The button stays where it is and the list may barely change, so without this a
       // screen reader would say nothing.
-      announce(isShowAll ? labels.showAllDone : labels.resetDone);
+      announce(labels[`${pending.button}Done`]);
     } else if (orderedColumns !== pending.list) {
       // The list changed to something else: the app turned the press down and applied
       // another change. That is not this press's to speak for.
@@ -608,8 +622,8 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     }
   });
 
-  const press = (button: "showAll" | "reset") => {
-    // Either button can change the list. A move still waiting must not take the credit.
+  const press = (button: FooterAction) => {
+    // Each of these buttons can change the list. A move still waiting must not take the credit.
     pendingMove.current = null;
     pendingButton.current = { button, list: orderedColumns, order: keys };
     actions[button]();
@@ -666,7 +680,7 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       ).order;
       // The same list back means the move changes nothing.
       if (after === before) return;
-      // A "show all" or "reset" press still waiting gives up. What the list becomes next is
+      // A "show all", "hide all" or "reset" press still waiting gives up. What the list becomes next is
       // this move's doing, and the press must not be read out for it.
       pendingButton.current = null;
       pendingMove.current = {
@@ -885,7 +899,15 @@ export function ColumnPicker<Column extends ColumnDefinition>({
         <FooterButton onPress={() => press("showAll")} unavailable={allVisible}>
           {labels.showAll}
         </FooterButton>
-        <FooterButton onPress={() => press("reset")} unavailable={isDefault}>
+        <FooterButton onPress={() => press("hideAll")} unavailable={allHidden}>
+          {labels.hideAll}
+        </FooterButton>
+        {/* "Reset" stands apart at the far side: it undoes moves too, not only ticks. */}
+        <FooterButton
+          className="fb-columns-footer-end"
+          onPress={() => press("reset")}
+          unavailable={isDefault}
+        >
           {labels.reset}
         </FooterButton>
       </div>
@@ -1038,17 +1060,20 @@ export function ColumnPicker<Column extends ColumnDefinition>({
 function FooterButton({
   unavailable,
   onPress,
+  className,
   children,
 }: {
   /** Whether a press would change nothing. */
   unavailable: boolean;
   onPress: () => void;
+  /** Added to the button's own class. */
+  className?: string;
   children: ReactNode;
 }) {
   return (
     <button
       aria-disabled={unavailable ? true : undefined}
-      className="fb-button"
+      className={className ? `fb-button ${className}` : "fb-button"}
       onClick={unavailable ? undefined : onPress}
       type="button"
     >
@@ -1056,6 +1081,9 @@ function FooterButton({
     </button>
   );
 }
+
+/** A button below the list, by the name of the action it calls. */
+type FooterAction = "showAll" | "hideAll" | "reset";
 
 /** The handle of the row at `index` of the list, if the list is open and has such a row. */
 function handleAt(list: HTMLElement | null, index: number): HTMLElement | null {
