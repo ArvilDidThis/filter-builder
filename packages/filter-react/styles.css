@@ -320,11 +320,10 @@
   max-width: var(--fb-value-width, var(--_fb-value-width));
 }
 
-/* A box that holds a list of values is wider. It sets the public variable on itself, which
-   wins over a value set further up: an app that wants another width for these boxes sets
-   `--fb-value-width` on `.fb-value-list`. */
+/* A box that holds a list of values is wider by default. Only the private default changes
+   here, so an app's `--fb-value-width` still wins for these boxes too. */
 .fb-value-list {
-  --fb-value-width: 24rem;
+  --_fb-value-width: 24rem;
 }
 
 /* The typing area inside a value box. The box around it draws the border. */

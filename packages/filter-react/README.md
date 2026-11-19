@@ -664,7 +664,7 @@ variables, so TypeScript suggests their names and needs no cast.
 | `--fb-radius`              | Rounded corners                                     | `0.375rem`                            |
 | `--fb-control-height`      | The height of buttons and boxes                     | `2.25rem`                             |
 | `--fb-gap`                 | The space between controls                          | `0.5rem`                              |
-| `--fb-value-width`         | The widest a value box grows                        | `12rem`                               |
+| `--fb-value-width`         | The widest a value box grows                        | `12rem`, and `24rem` for a list       |
 | `--fb-backdrop`            | The dimmed page around the column picker's dialog   | `rgb(0 0 0 / 0.45)`                   |
 | `--fb-dialog-column-width` | The least width of a grid column in that dialog     | `14rem`                               |
 | `--fb-selected-bg`         | Behind a row selected for a group drag              | 20% of `--fb-focus`                   |

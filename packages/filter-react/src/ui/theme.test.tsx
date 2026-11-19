@@ -53,8 +53,7 @@ describe("the theme variables in the style sheet", () => {
   it("should never set a variable of the list on the component itself", () => {
     // Set on the component, a default would win over a value an app sets further up.
     const set = found(/^\s*(--fb-[a-z-]+)\s*:/gm);
-    // The one exception is set on a part inside the builder, and says so in the sheet.
-    expect(set.sort()).toEqual([...INTERNAL, "--fb-value-width"].sort());
+    expect(set.sort()).toEqual([...INTERNAL].sort());
   });
 });
 
