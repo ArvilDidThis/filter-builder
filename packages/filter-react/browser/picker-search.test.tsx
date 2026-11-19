@@ -60,18 +60,19 @@ describe("the search box of the picker", () => {
     expect(status()).toBe(
       "13 of 40 columns match. Clear the search to move columns.",
     );
-    expect(picker.announced()).toBe("13 of 40 columns match.");
+    // The count is announced after the list has changed, so wait for it.
+    await expect.poll(picker.announced).toBe("13 of 40 columns match.");
 
     await userEvent.keyboard("9");
     await expect.poll(picker.listed).toEqual(["Column 19"]);
     expect(document.activeElement).toBe(searchBox());
-    expect(picker.announced()).toBe("1 of 40 columns match.");
+    await expect.poll(picker.announced).toBe("1 of 40 columns match.");
     // The box does not jump narrower while the list is short.
     expect(popoverWidth(picker)).toBe(widthBefore);
 
     await userEvent.keyboard("zz");
     await expect.poll(() => picker.listed().length).toBe(0);
-    expect(picker.announced()).toBe("No columns match.");
+    await expect.poll(picker.announced).toBe("No columns match.");
   });
 
   test("turns the handles off while a search is on, and on again after", async () => {
