@@ -3056,12 +3056,15 @@ describe("useSavedTableState", () => {
     });
 
     it("should run the rule that spans parts on the carried state", () => {
-      const old = oldPlace({ filter: "broken", sort: NAME_SORT });
+      // The columns are not the defaults, so the test shows the old entry was read.
+      const columns = { order: ["price", "name", "notes"], hidden: [] };
+      const old = oldPlace({ filter: "broken", sort: NAME_SORT, columns });
       const { result } = renderSaved({
         store: carryOverStore(memoryStore(), old),
         check: (_values, defaulted) =>
           defaulted.includes("filter") ? { sort: null } : undefined,
       });
+      expect(result.current.values.columns).toEqual(columns);
       expect(result.current.values.sort).toBeNull();
     });
   });
