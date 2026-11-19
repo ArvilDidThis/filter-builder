@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
-import type { ColumnDefinition, ColumnSettings } from "./columns";
+import {
+  type ColumnDefinition,
+  type ColumnSettings,
+  reconcileColumnSettings,
+} from "./columns";
 import { createRowPredicate } from "./evaluate";
 import {
   columnStatePart,
@@ -603,7 +607,49 @@ describe("columnStatePart", () => {
     expect(
       parse({ order: ["notes", "gone", "name"], hidden: ["name"] }),
     ).toEqual({ order: ["notes", "name", "price"], hidden: [] });
-    expect(parse("broken")).toEqual(COLUMN_DEFAULTS);
+    // One list is enough for the value to be fitted, and not turned down.
+    for (const saved of [{ order: ["price"] }, { hidden: ["price"] }]) {
+      expect(parse(saved)).toEqual(reconcileColumnSettings(COLUMNS, saved));
+    }
+  });
+
+  it.each([
+    ["text", "broken"],
+    ["null", null],
+    ["a list", [["name"], []]],
+    ["neither list", { order: "name", hidden: 7 }],
+  ])(
+    "should give its default for %s, and report it to `check`",
+    (_label, saved) => {
+      const seen: string[][] = [];
+      const state = readSavedState(
+        createSavedState({ columns: saved, filter: EMPTY_FILTER }),
+        { filter: filterStatePart(), columns: columnStatePart(COLUMNS) },
+        {
+          check: (_values, defaulted) => {
+            seen.push([...defaulted]);
+            return undefined;
+          },
+        },
+      );
+      expect(state.columns).toEqual(COLUMN_DEFAULTS);
+      expect(seen).toEqual([["columns"]]);
+    },
+  );
+
+  it("should not report saved settings equal to the defaults as defaulted", () => {
+    const seen: string[][] = [];
+    readSavedState(
+      createSavedState({ columns: COLUMN_DEFAULTS, filter: EMPTY_FILTER }),
+      { filter: filterStatePart(), columns: columnStatePart(COLUMNS) },
+      {
+        check: (_values, defaulted) => {
+          seen.push([...defaulted]);
+          return undefined;
+        },
+      },
+    );
+    expect(seen).toEqual([[]]);
   });
 
   it("should keep settings that already fit as the same object", () => {

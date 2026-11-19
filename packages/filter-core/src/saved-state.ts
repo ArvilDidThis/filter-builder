@@ -258,7 +258,13 @@ export function columnStatePart(
   }
   return {
     defaultValue: defaultColumnSettings(columns),
-    parse: (saved) => reconcileColumnSettings(columns, saved),
+    // A value with neither list holds nothing to fit. Turning it down lets `check` see the
+    // part as defaulted, as it sees a filter that could not be used.
+    parse: (saved) =>
+      isRecord(saved) &&
+      (Array.isArray(saved.order) || Array.isArray(saved.hidden))
+        ? reconcileColumnSettings(columns, saved)
+        : undefined,
   };
 }
 
