@@ -693,10 +693,12 @@ describe("carryOverStore", () => {
   });
 
   it("should mark the carried state with the version the app names", () => {
+    // Not the default version, so a wrapper that ignored the option would be caught.
     const store = carryOverStore(memoryStore(), {
       read: () => ({ rows: 50 }),
-      version: 1,
+      version: 3,
     });
+    const fromVersions: number[] = [];
     const state = readSavedState(
       store.load("orders"),
       {
@@ -706,8 +708,15 @@ describe("carryOverStore", () => {
             typeof saved === "number" ? saved : undefined,
         },
       },
-      { version: 2, migrate: (parts) => ({ pageSize: parts.rows }) },
+      {
+        version: 4,
+        migrate: (parts, fromVersion) => {
+          fromVersions.push(fromVersion);
+          return { pageSize: parts.rows };
+        },
+      },
     );
+    expect(fromVersions).toEqual([3]);
     expect(state.pageSize).toBe(50);
   });
 
