@@ -3,13 +3,16 @@ import { describe, expect, onTestFinished, test } from "vitest";
 import { commands, page, server, userEvent } from "vitest/browser";
 import type { ReaderNode } from "./commands";
 import {
+  manyColumns,
   mountOpenPicker,
   openPicker,
   PickerApp,
+  type PickerAppProps,
   type PickerParts,
   pickerParts,
 } from "./support/apps";
 import { mount } from "./support/mount";
+import { clickOn } from "./support/pointer";
 
 // How the open picker looks, and whether it passes an accessibility scan, on a light page and
 // on a dark one.
@@ -22,6 +25,7 @@ const SCHEMES = ["light", "dark"] as const;
  */
 async function openOnStage(
   scheme: (typeof SCHEMES)[number],
+  app: PickerAppProps = {},
 ): Promise<PickerParts> {
   await commands.colorScheme(scheme);
   // Lets the page follow the device's theme, as the picker's colours are worked out from
@@ -36,14 +40,15 @@ async function openOnStage(
       style={{
         boxSizing: "border-box",
         width: 360,
-        height: 320,
+        // Tall enough for the whole open popover, down to the buttons below the list.
+        height: 360,
         padding: 16,
         background: "Canvas",
         color: "CanvasText",
         fontFamily: "system-ui, sans-serif",
       }}
     >
-      <PickerApp />
+      <PickerApp {...app} />
     </div>,
   );
   const picker = await openPicker();
@@ -54,6 +59,31 @@ async function openOnStage(
 
 /** Whether this run was asked to store new screenshots: `pnpm test:browser:update`. */
 const isUpdating = server.config.snapshotOptions.updateSnapshot === "all";
+
+/** Compares what `locator` finds with the stored screenshot named `name`. */
+async function matchStored(
+  name: string,
+  locator: ReturnType<typeof page.getByTestId>,
+): Promise<void> {
+  // Text is drawn differently on each system, so a screenshot is compared only with one
+  // stored on the same system. Where none is stored yet, there is nothing to compare.
+  if (!isUpdating && !(await commands.hasBaseline(name))) {
+    // Linux screenshots are kept in the repository, and CI runs on Linux. A missing one
+    // there means the look is no longer checked, so it fails and does not pass quietly.
+    if (server.platform === "linux") {
+      throw new Error(
+        `The stored screenshot "${name}" for ${server.browser} on Linux is missing. ` +
+          "Store it with `pnpm test:browser:update:linux` and commit it.",
+      );
+    }
+    console.warn(
+      `No stored screenshot "${name}" for ${server.browser} on ${server.platform}. ` +
+        "Nothing was compared. Store one with `pnpm test:browser:update`.",
+    );
+    return;
+  }
+  await expect.element(locator).toMatchScreenshot(name);
+}
 
 describe("the open picker's look (item 14)", () => {
   test.each(SCHEMES)(
@@ -68,24 +98,39 @@ describe("the open picker's look (item 14)", () => {
       if (scheme === "dark") expect(background).not.toBe("rgb(255, 255, 255)");
       else expect(background).toBe("rgb(255, 255, 255)");
 
-      // Text is drawn differently on each system, so a screenshot is compared only with one
-      // stored on the same system. Where none is stored yet, there is nothing to compare.
-      if (!isUpdating && !(await commands.hasBaseline(name))) {
-        // Linux screenshots are kept in the repository, and CI runs on Linux. A missing one
-        // there means the look is no longer checked, so it fails and does not pass quietly.
-        if (server.platform === "linux") {
-          throw new Error(
-            `The stored screenshot "${name}" for ${server.browser} on Linux is missing. ` +
-              "Store it with `pnpm test:browser:update:linux` and commit it.",
-          );
-        }
-        console.warn(
-          `No stored screenshot "${name}" for ${server.browser} on ${server.platform}. ` +
-            "Nothing was compared. Store one with `pnpm test:browser:update`.",
-        );
-        return;
-      }
-      await expect.element(page.getByTestId("stage")).toMatchScreenshot(name);
+      await matchStored(name, page.getByTestId("stage"));
+    },
+  );
+
+  test.each(SCHEMES)(
+    "matches the stored screenshot with group drag on, on a %s page",
+    async (scheme) => {
+      const picker = await openOnStage(scheme);
+      await clickOn(picker.groupDrag());
+      await clickOn(picker.selectBox("Price"));
+      await clickOn(picker.selectBox("Notes"));
+      await commands.mouseMove({ x: 0, y: 0 });
+      // The focus ring is not part of the picture: whether a click draws one differs
+      // between browsers.
+      (document.activeElement as HTMLElement | null)?.blur();
+      await matchStored(`group-drag-${scheme}`, page.getByTestId("stage"));
+    },
+  );
+
+  test.each(SCHEMES)(
+    "matches the stored screenshot of the dialog, on a %s page",
+    async (scheme) => {
+      // Enough columns for three grid columns, with one pinned and one that must stay shown.
+      const columns = [
+        { key: "id", label: "Id", pinned: "start", hideable: false } as const,
+        ...manyColumns(40),
+      ];
+      const picker = await openOnStage(scheme, { columns });
+      await clickOn(picker.dialogView());
+      await expect.poll(picker.dialog).not.toBeNull();
+      await commands.mouseMove({ x: 0, y: 0 });
+      (document.activeElement as HTMLElement | null)?.blur();
+      await matchStored(`dialog-${scheme}`, page.getByRole("dialog"));
     },
   );
 });

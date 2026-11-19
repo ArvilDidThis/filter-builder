@@ -545,9 +545,8 @@
   /* The browser's own limits on a dialog's size are replaced by these. */
   width: min(96rem, 94vw);
   max-width: none;
-  height: 90vh;
-  /* Where the browser knows it, the height that is really in view on a phone, whose
-     address bar comes and goes. */
+  /* Nine tenths of the height that is really in view. On a phone that changes as the
+     address bar comes and goes, which `dvh` follows and `vh` does not. */
   height: 90dvh;
   max-height: none;
   margin: auto;
@@ -657,11 +656,6 @@
   column-fill: auto;
 }
 
-/* A row is never cut in two between one grid column and the next. */
-.fb-columns-dialog .fb-columns-row {
-  break-inside: avoid;
-}
-
 /* While a row is dragged, the pointer must not select the names it passes over. */
 .fb-columns-list[data-dragging] {
   cursor: grabbing;
@@ -676,6 +670,11 @@
   min-height: 2rem;
   padding: 0 0.375rem;
   border-radius: calc(var(--fb-radius, var(--_fb-radius)) - 2px);
+}
+
+/* A row is never cut in two between one grid column and the next. */
+.fb-columns-dialog .fb-columns-row {
+  break-inside: avoid;
 }
 
 .fb-columns-list:not([data-dragging]) > .fb-columns-row:hover {
