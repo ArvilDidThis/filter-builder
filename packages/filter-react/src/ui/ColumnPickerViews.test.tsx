@@ -181,6 +181,24 @@ describe("ColumnPicker group drag", () => {
     expect(announced()).toBe("3 columns moved to positions 2 to 4 of 8.");
   });
 
+  it("should empty a selection of one row after its drop", () => {
+    renderPicker();
+    select("Cap", "Beta");
+    layOutGrid(100);
+    // A row that is not selected moves alone, and the selection stays.
+    fireEvent.pointerDown(handle("Age"), pointer(10, 5 * ROW + 15));
+    fireEvent.pointerUp(document, pointer(10, ROW + 5));
+    expect(order()).toBe("symbol age company industry cap return release beta");
+    expect(selectedRows()).toEqual(["Cap", "Beta"]);
+    // Only "Cap" stays selected.
+    fireEvent.click(selectBox("Beta"));
+    layOutGrid(100);
+    fireEvent.pointerDown(handle("Cap"), pointer(10, 4 * ROW + 15));
+    fireEvent.pointerUp(document, pointer(10, ROW + 5));
+    expect(order()).toBe("symbol cap age company industry return release beta");
+    expect(selectedRows()).toEqual([]);
+  });
+
   it("should not gather a group that a handle was only pressed on", () => {
     renderPicker();
     select("Cap", "Beta");

@@ -704,8 +704,9 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     active: open && !isSearching,
     free,
     selected: group,
-    onDrop: (key, to) => moveTo([key], to, key, false),
-    // A group that was dropped has done its work, so its rows are no longer selected.
+    // A group that was dropped has done its work, so its rows are no longer selected. That
+    // includes a group of one selected row, which moves as a single row does.
+    onDrop: (key, to) => moveTo([key], to, key, latestGroup.current.has(key)),
     onDropGroup: (moved, to, held) => moveTo(moved, to, held, true),
   });
 
