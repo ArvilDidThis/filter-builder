@@ -108,7 +108,7 @@ describe("moving a column with the keyboard (item 4)", () => {
   });
 });
 
-describe("the Show all and Reset buttons (item 5)", () => {
+describe("the Show all, Hide all and Reset buttons (item 5)", () => {
   const isUnavailable = (button: Element): boolean =>
     button.getAttribute("aria-disabled") === "true";
 
@@ -139,6 +139,41 @@ describe("the Show all and Reset buttons (item 5)", () => {
     expect(isUnavailable(picker.reset())).toBe(true);
     expect(isUnavailable(picker.showAll())).toBe(false);
     expect(picker.popover()?.contains(document.activeElement)).toBe(true);
+  });
+
+  test("hide every column that may be hidden, and show them all again", async () => {
+    const changed: Counter = { count: 0 };
+    const picker = await mountOpenPicker({ changed });
+    expect(isUnavailable(picker.hideAll())).toBe(false);
+
+    await clickOn(picker.hideAll());
+    // "Name" must stay shown.
+    await expect.poll(picker.table).toBe("name");
+    expect(changed.count).toBe(1);
+    expect(isUnavailable(picker.hideAll())).toBe(true);
+    expect(isUnavailable(picker.showAll())).toBe(false);
+    await expect
+      .poll(picker.announced)
+      .toBe("All columns that can be hidden are hidden.");
+    expect(picker.popover()?.contains(document.activeElement)).toBe(true);
+
+    // A real click on the unavailable button does nothing, and the picker stays open.
+    await clickOn(picker.hideAll());
+    expect(changed.count).toBe(1);
+    expect(picker.popover()).not.toBeNull();
+
+    await clickOn(picker.showAll());
+    await expect.poll(picker.table).toBe("name price stock notes");
+    expect(isUnavailable(picker.hideAll())).toBe(false);
+  });
+
+  test("keep the focus on Hide all when a key press makes it unavailable", async () => {
+    const picker = await mountOpenPicker();
+    picker.hideAll().focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.poll(picker.table).toBe("name");
+    await expect.poll(() => isUnavailable(picker.hideAll())).toBe(true);
+    expect(document.activeElement).toBe(picker.hideAll());
   });
 
   test("keep the focus when a key press makes them unavailable", async () => {
@@ -195,7 +230,7 @@ function OwningApp({ control }: { control: OwnerControl }) {
   );
 }
 
-describe("what Show all tells a screen reader in an app that owns the settings", () => {
+describe("what Show all and Hide all tell a screen reader in an app that owns the settings", () => {
   const isUnavailable = (button: Element): boolean =>
     button.getAttribute("aria-disabled") === "true";
 
@@ -231,5 +266,25 @@ describe("what Show all tells a screen reader in an app that owns the settings",
     control.apply(control.asked[0] as ColumnSettings);
     await expect.poll(picker.table).toBe("name price stock notes");
     await expect.poll(picker.announced).toBe("All columns are shown.");
+  });
+
+  test("says that the columns are hidden only once the app applies Hide all", async () => {
+    const control: OwnerControl = { asked: [], apply: () => {} };
+    mount(<OwningApp control={control} />);
+    const picker = await openPicker();
+
+    await clickOn(picker.hideAll());
+    await expect.poll(() => control.asked.length).toBe(1);
+    // The app has the press and has not applied it: nothing on the page has changed.
+    expect(picker.table()).toBe("name price stock");
+    expect(picker.announced()).toBe("");
+    expect(isUnavailable(picker.hideAll())).toBe(false);
+
+    control.apply(control.asked[0] as ColumnSettings);
+    await expect.poll(picker.table).toBe("name");
+    await expect
+      .poll(picker.announced)
+      .toBe("All columns that can be hidden are hidden.");
+    expect(isUnavailable(picker.hideAll())).toBe(true);
   });
 });

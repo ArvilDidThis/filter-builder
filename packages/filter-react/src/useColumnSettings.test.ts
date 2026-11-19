@@ -151,6 +151,21 @@ describe("useColumnSettings", () => {
     expect(shape(result.current)).toBe("name price stock (notes)");
   });
 
+  it("should hide every column that may be hidden, and show them all again", () => {
+    const { result, onChange } = renderUncontrolled();
+    act(() => result.current.actions.move("stock", 0));
+    act(() => result.current.actions.hideAll());
+    // "Name" must stay shown, and the order is kept.
+    expect(shape(result.current)).toBe("(stock) name (price) (notes)");
+    expect(visibleKeys(result.current)).toBe("name");
+    expect(onChange).toHaveBeenLastCalledWith({
+      order: ["stock", "name", "price", "notes"],
+      hidden: ["notes", "stock", "price"],
+    });
+    act(() => result.current.actions.showAll());
+    expect(shape(result.current)).toBe("stock name price notes");
+  });
+
   it("should not report an action that changes nothing", () => {
     const { result, onChange } = renderUncontrolled();
     const before = result.current;
@@ -508,7 +523,7 @@ describe("useColumnSettings", () => {
     expect(result.current.visibleColumns).toBe(before);
   });
 
-  describe("whether Show all and Reset have anything to do", () => {
+  describe("whether Show all, Hide all and Reset have anything to do", () => {
     it("should start with the defaults, and not all shown while a column starts hidden", () => {
       const { result } = renderUncontrolled();
       expect(result.current.isDefault).toBe(true);
@@ -533,6 +548,27 @@ describe("useColumnSettings", () => {
       act(() => result.current.actions.reset());
       expect(result.current.isDefault).toBe(true);
       expect(result.current.allVisible).toBe(false);
+    });
+
+    it("should say all are hidden only once nothing more can be hidden", () => {
+      const { result, onChange } = renderUncontrolled();
+      expect(result.current.allHidden).toBe(false);
+      act(() => result.current.actions.hideAll());
+      expect(result.current.allHidden).toBe(true);
+      expect(result.current.allVisible).toBe(false);
+      // Pressed again, it has nothing to do and reports no change.
+      act(() => result.current.actions.hideAll());
+      expect(onChange).toHaveBeenCalledTimes(1);
+      act(() => result.current.actions.toggle("price"));
+      expect(result.current.allHidden).toBe(false);
+    });
+
+    it("should say all are hidden when every column must stay shown", () => {
+      const { result } = renderHook(() =>
+        useColumnSettings({ columns: COLUMNS.slice(0, 1) }),
+      );
+      expect(result.current.allHidden).toBe(true);
+      expect(result.current.allVisible).toBe(true);
     });
 
     it("should not be the defaults once a column is only moved", () => {
@@ -611,6 +647,7 @@ describe("useColumnSettings", () => {
       rerender();
       expect(result.current.isDefault).toBe(before.isDefault);
       expect(result.current.allVisible).toBe(before.allVisible);
+      expect(result.current.allHidden).toBe(before.allHidden);
       expect(result.current.orderedColumns).toBe(before.orderedColumns);
       expect(result.current.visibleColumns).toBe(before.visibleColumns);
       expect(result.current.actions).toBe(before.actions);
@@ -662,5 +699,114 @@ describe("useColumnSettings", () => {
 
   it("should render on a server", () => {
     expect(renderToString(createElement(Keys))).toBe("<p>name price stock</p>");
+  });
+});
+
+describe("useColumnSettings with pinned columns", () => {
+  // The list has neither pinned column at its end, so the hook has to put them there.
+  const PINNED: readonly ColumnDefinition[] = [
+    { key: "price", label: "Price" },
+    { key: "actions", label: "Actions", pinned: "end" },
+    { key: "name", label: "Name", pinned: "start", hideable: false },
+    { key: "stock", label: "Stock" },
+  ];
+
+  const keys = (state: ColumnSettingsState) =>
+    state.orderedColumns.map((entry) => entry.column.key).join(" ");
+
+  it("should keep the pinned columns at the ends, and say which are pinned", () => {
+    const { result } = renderHook(() => useColumnSettings({ columns: PINNED }));
+    expect(keys(result.current)).toBe("name price stock actions");
+    expect(result.current.orderedColumns.map((entry) => entry.pinned)).toEqual([
+      "start",
+      undefined,
+      undefined,
+      "end",
+    ]);
+    // The table's columns are the app's own objects, with the pin still on them.
+    expect(
+      result.current.visibleColumns.map((column) => column.pinned),
+    ).toEqual(["start", undefined, undefined, "end"]);
+    expect(result.current.isDefault).toBe(true);
+  });
+
+  it("should load settings saved before the columns were pinned", () => {
+    const { result } = renderHook(() =>
+      useColumnSettings({
+        columns: PINNED,
+        defaultValue: {
+          order: ["stock", "actions", "name", "price"],
+          hidden: [],
+        },
+      }),
+    );
+    expect(keys(result.current)).toBe("name stock price actions");
+  });
+
+  it("should not move a pinned column, and should not report a change", () => {
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useColumnSettings({ columns: PINNED, onChange }),
+    );
+    const before = result.current.settings;
+    act(() => result.current.actions.move("name", 2));
+    act(() => result.current.actions.move("actions", 0));
+    expect(result.current.settings).toBe(before);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("should stop another column at the pinned ones", () => {
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useColumnSettings({ columns: PINNED, onChange }),
+    );
+    // Already next to the pinned column: nothing to do.
+    act(() => result.current.actions.move("price", 0));
+    expect(onChange).not.toHaveBeenCalled();
+    act(() => result.current.actions.move("stock", 0));
+    expect(keys(result.current)).toBe("name stock price actions");
+    act(() => result.current.actions.move("stock", 99));
+    expect(keys(result.current)).toBe("name price stock actions");
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("should move a group of columns together, and report one change", () => {
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useColumnSettings({ columns: COLUMNS, onChange }),
+    );
+    act(() => result.current.actions.moveGroup(["notes", "price"], 0));
+    expect(shape(result.current)).toBe("price (notes) name stock");
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenLastCalledWith(result.current.settings);
+  });
+
+  it("should not report a group move that changes nothing", () => {
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useColumnSettings({ columns: COLUMNS, onChange }),
+    );
+    const before = result.current.settings;
+    act(() => result.current.actions.moveGroup(["price", "stock"], 1));
+    act(() => result.current.actions.moveGroup([], 0));
+    expect(result.current.settings).toBe(before);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("should keep a group between the pinned columns, and skip a pinned one", () => {
+    const { result } = renderHook(() => useColumnSettings({ columns: PINNED }));
+    act(() => result.current.actions.moveGroup(["name", "stock"], 0));
+    expect(keys(result.current)).toBe("name stock price actions");
+    act(() => result.current.actions.moveGroup(["stock", "actions"], 99));
+    expect(keys(result.current)).toBe("name price stock actions");
+  });
+
+  it("should put the pinned columns back in place on reset", () => {
+    const { result } = renderHook(() => useColumnSettings({ columns: PINNED }));
+    act(() => result.current.actions.move("stock", 1));
+    expect(result.current.isDefault).toBe(false);
+    act(() => result.current.actions.reset());
+    expect(keys(result.current)).toBe("name price stock actions");
+    expect(result.current.isDefault).toBe(true);
   });
 });

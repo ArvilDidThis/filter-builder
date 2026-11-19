@@ -20,9 +20,18 @@ import {
   vi,
 } from "vitest";
 import { useColumnSettings } from "../useColumnSettings";
-import { ColumnPicker, type ColumnPickerProps } from "./ColumnPicker";
+import {
+  COLUMN_PICKER_SEARCH_THRESHOLD,
+  ColumnPicker,
+  type ColumnPickerProps,
+} from "./ColumnPicker";
 import { pressInOpenTree, stopPressesAt } from "./shadowPress.testing";
-import { placeFromSlot, slotAt, useColumnDrag } from "./useColumnDrag";
+import {
+  placeFromSlot,
+  slotAt,
+  slotWithin,
+  useColumnDrag,
+} from "./useColumnDrag";
 import { shiftToFit } from "./useKeepOnScreen";
 
 const COLUMNS: readonly ColumnDefinition[] = [
@@ -266,6 +275,7 @@ const checkbox = (label: string) =>
 const handle = (label: string) =>
   screen.getByRole("button", { name: `Move ${label}` });
 const showAll = () => screen.getByRole("button", { name: "Show all" });
+const hideAll = () => screen.getByRole("button", { name: "Hide all" });
 const reset = () => screen.getByRole("button", { name: "Reset" });
 /** Whether a button is marked as having nothing to do. */
 const isUnavailable = (button: HTMLElement): boolean =>
@@ -406,6 +416,39 @@ describe("ColumnPicker", () => {
     expect(table()).toBe("stock name price notes");
   });
 
+  it("should hide every column that may be hidden with Hide all, keeping the order", () => {
+    renderPicker();
+    fireEvent.keyDown(handle("Stock"), { key: "Home" });
+    fireEvent.click(hideAll());
+    // "Name" must stay shown.
+    expect(table()).toBe("name");
+    expect(listed()).toBe("⠿Stock ⠿Name ⠿Price ⠿Notes");
+    expect(checkbox("Name").checked).toBe(true);
+    expect(checkbox("Stock").checked).toBe(false);
+    expect(checkbox("Price").checked).toBe(false);
+    expect(announced()).toBe("All columns that can be hidden are hidden.");
+    // "Show all" brings them back, in the same order.
+    fireEvent.click(showAll());
+    expect(table()).toBe("stock name price notes");
+  });
+
+  it("should stand between Show all and Reset", () => {
+    renderPicker();
+    const footer = reset().parentElement as HTMLElement;
+    expect(Array.from(footer.children, (button) => button.textContent)).toEqual(
+      ["Show all", "Hide all", "Reset"],
+    );
+  });
+
+  it("should use the app's wording for Hide all and for what it did", () => {
+    renderPicker({
+      labels: { hideAll: "Alle ausblenden", hideAllDone: "Alle verborgen." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Alle ausblenden" }));
+    expect(table()).toBe("name");
+    expect(announced()).toBe("Alle verborgen.");
+  });
+
   it("should put back the starting order and visibility with Reset", () => {
     renderPicker();
     fireEvent.click(checkbox("Price"));
@@ -472,6 +515,40 @@ describe("ColumnPicker", () => {
       fireEvent.click(checkbox("Price"));
       expect(isUnavailable(showAll())).toBe(false);
       expect(showAll().hasAttribute("aria-disabled")).toBe(false);
+    });
+
+    it("should mark Hide all as unavailable only while nothing more can be hidden", () => {
+      renderPicker();
+      expect(isUnavailable(hideAll())).toBe(false);
+      expect(hideAll().hasAttribute("aria-disabled")).toBe(false);
+      fireEvent.click(checkbox("Price"));
+      fireEvent.click(checkbox("Stock"));
+      // Only "Name" is shown now, and it must stay shown.
+      expect(isUnavailable(hideAll())).toBe(true);
+      fireEvent.click(checkbox("Price"));
+      expect(isUnavailable(hideAll())).toBe(false);
+    });
+
+    it("should do nothing, and say nothing, when Hide all is pressed with nothing to hide", () => {
+      renderPicker();
+      fireEvent.click(hideAll());
+      expect(isUnavailable(hideAll())).toBe(true);
+      const message = document.querySelector("[aria-live]")?.firstChild;
+      changed.mockClear();
+      fireEvent.click(hideAll());
+      expect(changed).not.toHaveBeenCalled();
+      expect(document.querySelector("[aria-live]")?.firstChild).toBe(message);
+      // It is marked, not turned off, so that it stays in the Tab order.
+      expect(hideAll().hasAttribute("disabled")).toBe(false);
+      expect(hideAll().tabIndex).toBe(0);
+    });
+
+    it("should keep the focus on Hide all after it is pressed with the keyboard", () => {
+      renderPicker();
+      hideAll().focus();
+      fireEvent.click(hideAll());
+      expect(isUnavailable(hideAll())).toBe(true);
+      expect(document.activeElement).toBe(hideAll());
     });
 
     it("should mark Reset as unavailable only while the settings are the starting ones", () => {
@@ -1274,7 +1351,8 @@ describe("ColumnPicker", () => {
         );
         expect(colours.length).toBeGreaterThan(0);
         for (const colour of colours) {
-          expect(colour).toMatch(/^var\(--fb-[a-z-]+\)$/);
+          // The app's value of the variable, or else the variable's own default.
+          expect(colour).toMatch(/^var\(--fb-([a-z-]+), var\(--_fb-\1\)\)$/);
         }
       }
     });
@@ -1293,7 +1371,10 @@ describe("ColumnPicker", () => {
       const ring = popoverRules.find((rule) =>
         selectorsOf(rule).includes(".fb-columns-popover:focus-visible"),
       );
-      expect(ring?.style.outlineColor).toBe("var(--fb-focus)");
+      expect(ring?.style.outlineStyle).toBe("solid");
+      expect(ring?.style.outlineColor).toBe(
+        "var(--fb-focus, var(--_fb-focus))",
+      );
       // And no rule takes the ring away from such a focus.
       const removing = popoverRules.filter(
         (rule) =>
@@ -1389,7 +1470,9 @@ describe("ColumnPicker", () => {
       expect(styled(button, "white-space")).toBeUndefined();
       // It grows taller to hold the lines, and a short label keeps the usual height.
       expect(styled(button, "height")).toBe("auto");
-      expect(styled(button, "min-height")).toBe("var(--fb-control-height)");
+      expect(styled(button, "min-height")).toBe(
+        "var(--fb-control-height, var(--_fb-control-height))",
+      );
     });
 
     it("should let the page scroll on once the list has reached its end", () => {
@@ -1599,6 +1682,33 @@ describe("ColumnPicker", () => {
       expect(checkbox("Notes").checked).toBe(true);
       expect(announced()).toBe("All columns are shown.");
       expect(isUnavailable(showAll())).toBe(true);
+    });
+
+    it("should announce Hide all only once the app applies it", () => {
+      openOwningApp();
+      fireEvent.click(hideAll());
+      expect(announced()).toBe("");
+      expect(isUnavailable(hideAll())).toBe(false);
+      apply();
+      expect(checkbox("Price").checked).toBe(false);
+      expect(announced()).toBe("All columns that can be hidden are hidden.");
+      expect(isUnavailable(hideAll())).toBe(true);
+    });
+
+    it("should not announce Hide all when the app applies something else", () => {
+      openOwningApp();
+      fireEvent.click(hideAll());
+      // The app turns the press down, and changes the order itself.
+      fireEvent.click(screen.getByRole("button", { name: "Put notes first" }));
+      expect(announced()).toBe("");
+      // The press was given up then. A person who hides the columns by hand later did not
+      // press "Hide all" for it.
+      fireEvent.click(checkbox("Price"));
+      apply();
+      fireEvent.click(checkbox("Stock"));
+      apply();
+      expect(isUnavailable(hideAll())).toBe(true);
+      expect(announced()).toBe("");
     });
 
     it("should announce Reset only once the app applies it", () => {
@@ -2845,5 +2955,377 @@ describe("shiftToFit", () => {
   it("should move nothing on a page that reports no width", () => {
     expect(shiftToFit(0, 0, 0)).toBe(0);
     expect(shiftToFit(500, 288, 0)).toBe(0);
+  });
+});
+
+// A column list with pinned columns: "Name" is pinned to the start and "Actions" to the end.
+const PINNED: readonly ColumnDefinition[] = [
+  { key: "name", label: "Name", pinned: "start", hideable: false },
+  { key: "price", label: "Price" },
+  { key: "stock", label: "Stock" },
+  { key: "notes", label: "Notes" },
+  { key: "actions", label: "Actions", pinned: "end" },
+];
+
+/** An app around a picker whose first and last columns are pinned. */
+function PinnedApp({ extra = {} }: { extra?: Partial<ColumnPickerProps> }) {
+  const state = useColumnSettings({ columns: PINNED, onChange: changed });
+  return (
+    <>
+      <ColumnPicker state={state} {...extra} />
+      <Table columns={state.visibleColumns} />
+    </>
+  );
+}
+
+/** Draws the app with pinned columns, and opens the picker. */
+function renderPinned(extra: Partial<ColumnPickerProps> = {}) {
+  changed.mockClear();
+  render(<PinnedApp extra={extra} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+}
+
+describe("ColumnPicker with pinned columns", () => {
+  it("should list a pinned column at its end, with no handle", () => {
+    renderPinned();
+    expect(listed()).toBe("Name ⠿Price ⠿Stock ⠿Notes Actions");
+    expect(screen.queryByRole("button", { name: "Move Name" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move Actions" })).toBeNull();
+    expect(rows().map((row) => row.getAttribute("data-pinned"))).toEqual([
+      "start",
+      null,
+      null,
+      null,
+      "end",
+    ]);
+  });
+
+  it("should tell a screen reader that a pinned column cannot be moved", () => {
+    renderPinned();
+    const hintId = checkbox("Actions").getAttribute("aria-describedby");
+    expect(document.getElementById(hintId as string)?.textContent).toBe(
+      "This column is pinned in place and cannot be moved.",
+    );
+    expect(checkbox("Price").hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("should still let a person hide a pinned column that may be hidden", () => {
+    renderPinned();
+    fireEvent.click(checkbox("Actions"));
+    expect(table()).toBe("name price stock notes");
+    expect(checkbox("Name").disabled).toBe(true);
+  });
+
+  it("should stop a keyboard move at the pinned columns", () => {
+    renderPinned();
+    // "Price" is already next to the pinned column: nothing moves, and nothing is asked for.
+    fireEvent.keyDown(handle("Price"), { key: "ArrowUp" });
+    fireEvent.keyDown(handle("Price"), { key: "Home" });
+    fireEvent.keyDown(handle("Notes"), { key: "ArrowDown" });
+    expect(changed).not.toHaveBeenCalled();
+    expect(announced()).toBe("");
+
+    fireEvent.keyDown(handle("Notes"), { key: "Home" });
+    expect(listed()).toBe("Name ⠿Notes ⠿Price ⠿Stock Actions");
+    expect(announced()).toBe("Notes moved to position 2 of 5.");
+    fireEvent.keyDown(handle("Notes"), { key: "End" });
+    expect(listed()).toBe("Name ⠿Price ⠿Stock ⠿Notes Actions");
+    expect(announced()).toBe("Notes moved to position 4 of 5.");
+    expect(table()).toBe("name price stock notes actions");
+  });
+
+  it("should drop a dragged column next to a pinned one, not past it", () => {
+    renderPinned();
+    layOutList();
+    fireEvent.pointerDown(handle("Stock"), pointer(175));
+    // Above "Name", the pinned first row. The line is drawn below that row, not above it.
+    fireEvent.pointerMove(document, pointer(90));
+    expect(rows().map((row) => row.getAttribute("data-drop"))).toEqual([
+      null,
+      "before",
+      null,
+      null,
+      null,
+    ]);
+    fireEvent.pointerUp(document, pointer(90));
+    expect(listed()).toBe("Name ⠿Stock ⠿Price ⠿Notes Actions");
+
+    layOutList();
+    fireEvent.pointerDown(handle("Stock"), pointer(145));
+    // Below "Actions", the pinned last row.
+    fireEvent.pointerMove(document, pointer(400));
+    expect(rows()[4]?.getAttribute("data-drop")).toBe("before");
+    fireEvent.pointerUp(document, pointer(400));
+    expect(listed()).toBe("Name ⠿Price ⠿Notes ⠿Stock Actions");
+  });
+
+  it("should show no drop line when the nearest free place is the row's own", () => {
+    renderPinned();
+    layOutList();
+    fireEvent.pointerDown(handle("Price"), pointer(145));
+    fireEvent.pointerMove(document, pointer(90));
+    expect(rows().some((row) => row.hasAttribute("data-drop"))).toBe(false);
+    fireEvent.pointerUp(document, pointer(90));
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("should tell an app's own row that the column is pinned, and turn its handle off", () => {
+    const seen = new Map<string, { pinned: unknown; movable: boolean }>();
+    renderPinned({
+      renderRow: (row) => {
+        seen.set(row.column.key, { pinned: row.pinned, movable: row.movable });
+        return (
+          <>
+            <input {...row.checkboxProps} />
+            <button {...row.handleProps}>grip</button>
+            <label htmlFor={row.checkboxProps.id}>{row.column.label}</label>
+          </>
+        );
+      },
+    });
+    expect(seen.get("name")).toEqual({ pinned: "start", movable: false });
+    expect(seen.get("price")).toEqual({ pinned: undefined, movable: true });
+    expect(seen.get("actions")).toEqual({ pinned: "end", movable: false });
+    const grip = handle("Name") as HTMLButtonElement;
+    expect(grip.disabled).toBe(true);
+    expect((handle("Price") as HTMLButtonElement).disabled).toBe(false);
+    // A press or a key on the handle of a pinned row moves nothing.
+    layOutList();
+    fireEvent.pointerDown(grip, pointer(115));
+    fireEvent.pointerUp(document, pointer(180));
+    fireEvent.keyDown(grip, { key: "End" });
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("should keep a slot inside the free places", () => {
+    const free = { first: 1, last: 3 };
+    expect(slotWithin(0, free)).toBe(1);
+    expect(slotWithin(2, free)).toBe(2);
+    // The slot after the last free row is still a place to drop.
+    expect(slotWithin(4, free)).toBe(4);
+    expect(slotWithin(5, free)).toBe(4);
+    expect(slotWithin(5, undefined)).toBe(5);
+  });
+});
+
+/** An app whose table has a column list of any length. */
+function SearchApp({
+  columns,
+  extra = {},
+}: {
+  columns: readonly ColumnDefinition[];
+  extra?: Partial<ColumnPickerProps>;
+}) {
+  const state = useColumnSettings({ columns, onChange: changed });
+  return (
+    <>
+      <ColumnPicker state={state} {...extra} />
+      <Table columns={state.visibleColumns} />
+    </>
+  );
+}
+
+/** Draws the app with the search box always on, unless `extra` says otherwise, and opens it. */
+function renderSearch(
+  extra: Partial<ColumnPickerProps> = { search: true },
+  columns: readonly ColumnDefinition[] = COLUMNS,
+) {
+  changed.mockClear();
+  const rendered = render(<SearchApp columns={columns} extra={extra} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+  return rendered;
+}
+
+const searchBox = () =>
+  screen.getByRole<HTMLInputElement>("searchbox", { name: "Search columns" });
+const querySearchBox = () => screen.queryByRole("searchbox");
+const type = (text: string) =>
+  fireEvent.change(searchBox(), { target: { value: text } });
+/** The names listed, without the handles' marks. */
+const names = (): string[] =>
+  rows().map((row) => row.querySelector("label")?.textContent ?? "");
+
+describe("ColumnPicker search", () => {
+  describe("when the box is shown", () => {
+    const columnsOf = (count: number) => MANY.slice(0, count);
+
+    it("should show it by default only for a list longer than the threshold", () => {
+      const { unmount } = renderSearch(
+        {},
+        columnsOf(COLUMN_PICKER_SEARCH_THRESHOLD),
+      );
+      expect(querySearchBox()).toBeNull();
+      unmount();
+      renderSearch({}, columnsOf(COLUMN_PICKER_SEARCH_THRESHOLD + 1));
+      expect(querySearchBox()).not.toBeNull();
+    });
+
+    it("should always show it with `search`, and never with `search={false}`", () => {
+      const { unmount } = renderSearch({ search: true });
+      expect(querySearchBox()).not.toBeNull();
+      unmount();
+      renderSearch({ search: false }, MANY);
+      expect(querySearchBox()).toBeNull();
+    });
+
+    it("should take its wording from the labels", () => {
+      renderSearch({ search: true, labels: { search: "Find a column" } });
+      const box = screen.getByRole<HTMLInputElement>("searchbox", {
+        name: "Find a column",
+      });
+      expect(box.placeholder).toBe("Find a column");
+    });
+  });
+
+  it("should narrow the list to the columns whose name matches, ignoring case", () => {
+    renderSearch();
+    type("O");
+    expect(names()).toEqual(["Stock", "Notes"]);
+    type("pri");
+    expect(names()).toEqual(["Price"]);
+    type("");
+    expect(names()).toEqual(["Name", "Price", "Stock", "Notes"]);
+  });
+
+  it("should say how many columns match, on screen and to a screen reader", () => {
+    renderSearch();
+    type("o");
+    const status = document.querySelector(".fb-columns-search-status");
+    expect(status?.textContent).toBe(
+      "2 of 4 columns match. Clear the search to move columns.",
+    );
+    expect(announced()).toBe("2 of 4 columns match.");
+    type("zzz");
+    expect(rows.bind(null)).toThrow();
+    expect(announced()).toBe("No columns match.");
+    type("");
+    expect(document.querySelector(".fb-columns-search-status")).toBeNull();
+  });
+
+  it("should switch every move off while a search is on, and say why", () => {
+    renderSearch();
+    expect((handle("Stock") as HTMLButtonElement).disabled).toBe(false);
+    type("o");
+    const grip = handle("Stock") as HTMLButtonElement;
+    expect(grip.disabled).toBe(true);
+    // The search box points at the hint, so a screen reader hears it with the box.
+    const hintId = searchBox().getAttribute("aria-describedby") as string;
+    expect(document.getElementById(hintId)?.textContent).toBe(
+      "Clear the search to move columns.",
+    );
+    // A key or a press that reaches a handle all the same moves nothing.
+    layOutList();
+    fireEvent.keyDown(grip, { key: "Home" });
+    const isDragging = () =>
+      rows().some((row) => row.hasAttribute("data-dragging"));
+    // No drag starts at all, not even one that lets go of the row on release.
+    fireEvent.pointerDown(grip, pointer(115));
+    expect(isDragging()).toBe(false);
+    fireEvent.pointerMove(document, pointer(300));
+    expect(isDragging()).toBe(false);
+    fireEvent.pointerUp(document, pointer(300));
+    expect(changed).not.toHaveBeenCalled();
+    expect(isDragging()).toBe(false);
+
+    type("");
+    expect(searchBox().hasAttribute("aria-describedby")).toBe(false);
+    fireEvent.keyDown(handle("Stock"), { key: "Home" });
+    expect(names()).toEqual(["Stock", "Name", "Price", "Notes"]);
+  });
+
+  it("should tick and untick a listed column", () => {
+    renderSearch();
+    type("not");
+    fireEvent.click(checkbox("Notes"));
+    expect(table()).toBe("name price stock notes");
+    expect(names()).toEqual(["Notes"]);
+  });
+
+  it("should let Show all and Reset act on every column, not only the listed ones", () => {
+    renderSearch();
+    fireEvent.click(checkbox("Price"));
+    fireEvent.keyDown(handle("Stock"), { key: "Home" });
+    expect(table()).toBe("stock name");
+    // Only "Name" is listed. "Price" and "Notes" are hidden and out of sight.
+    type("nam");
+    expect(names()).toEqual(["Name"]);
+    fireEvent.click(showAll());
+    expect(table()).toBe("stock name price notes");
+    expect(announced()).toBe("All columns are shown.");
+    fireEvent.click(reset());
+    expect(table()).toBe("name price stock");
+    expect(announced()).toBe(
+      "The columns are back in their starting order and visibility.",
+    );
+    // The search stays as typed.
+    expect(names()).toEqual(["Name"]);
+  });
+
+  it("should let Hide all act on every column, not only the listed ones", () => {
+    renderSearch();
+    // Only "Notes" is listed, and it is hidden already.
+    type("not");
+    expect(names()).toEqual(["Notes"]);
+    fireEvent.click(hideAll());
+    expect(table()).toBe("name");
+    expect(announced()).toBe("All columns that can be hidden are hidden.");
+    // The search stays as typed.
+    expect(names()).toEqual(["Notes"]);
+  });
+
+  it("should tell an app's own row its real place and that it cannot move", () => {
+    const seen = new Map<string, { index: number; movable: boolean }>();
+    renderSearch({
+      search: true,
+      renderRow: (row) => {
+        seen.set(row.column.key, { index: row.index, movable: row.movable });
+        return (
+          <>
+            <input {...row.checkboxProps} />
+            <label htmlFor={row.checkboxProps.id}>{row.column.label}</label>
+          </>
+        );
+      },
+    });
+    expect(seen.get("stock")).toEqual({ index: 2, movable: true });
+    type("sto");
+    expect(names()).toEqual(["Stock"]);
+    expect(seen.get("stock")).toEqual({ index: 2, movable: false });
+  });
+
+  it("should clear the search with Escape, and close the picker with the next one", () => {
+    renderSearch();
+    type("o");
+    fireEvent.keyDown(searchBox(), { key: "Escape" });
+    expect(searchBox().value).toBe("");
+    expect(names()).toHaveLength(4);
+    fireEvent.keyDown(searchBox(), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("should start with an empty search each time the picker opens", () => {
+    renderSearch();
+    type("o");
+    const trigger = screen.getByRole("button", { name: /^Columns/ });
+    fireEvent.click(trigger);
+    fireEvent.click(trigger);
+    expect(searchBox().value).toBe("");
+    expect(names()).toHaveLength(4);
+  });
+
+  it("should redraw only the rows that stay listed, in a long list", () => {
+    render(<ManyApp />);
+    fireEvent.click(screen.getByRole("button", { name: /^Columns/ }));
+    drawn.mockClear();
+    type("column 19");
+    // "Column 19", "Column 119" and "Column 190" to "Column 199". Each is drawn once, to turn
+    // its handle off, and the 188 rows that left the list are not drawn at all.
+    expect(names()).toHaveLength(12);
+    expect(drawn).toHaveBeenCalledTimes(12);
+    drawn.mockClear();
+    type("column 199");
+    // The one row that stays is not drawn again.
+    expect(names()).toEqual(["Column 199"]);
+    expect(drawn).not.toHaveBeenCalled();
   });
 });

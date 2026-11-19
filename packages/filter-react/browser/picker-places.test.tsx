@@ -601,7 +601,7 @@ describe("the picker on a phone-sized screen (item 7)", () => {
 });
 
 describe("the buttons below the list", () => {
-  /** The two buttons below the list, whatever their wording. */
+  /** The three buttons below the list, whatever their wording. */
   const footerButtons = (picker: PickerParts): HTMLElement[] =>
     Array.from(
       (picker.popover() as HTMLElement).querySelectorAll<HTMLElement>(
@@ -619,6 +619,7 @@ describe("the buttons below the list", () => {
           labels: {
             // Several words, and one word longer than the popover is wide.
             showAll: "Alle Spalten der Tabelle wieder einblenden",
+            hideAll: "Alle Spalten der Tabelle jetzt ausblenden",
             reset: "Ausgangseinstellungenwiederherstellen",
           },
         }}
@@ -631,10 +632,10 @@ describe("the buttons below the list", () => {
     expect(isInsideScreen(popover)).toBe(true);
 
     const usualHeight = picker.trigger().getBoundingClientRect().height;
-    const [showAll, reset] = footerButtons(picker).map((button) =>
+    const [showAll, hideAll, reset] = footerButtons(picker).map((button) =>
       button.getBoundingClientRect(),
-    ) as [DOMRect, DOMRect];
-    for (const button of [showAll, reset]) {
+    ) as [DOMRect, DOMRect, DOMRect];
+    for (const button of [showAll, hideAll, reset]) {
       // Inside the popover on both sides. Half a pixel is let through for rounding.
       expect(button.left).toBeGreaterThanOrEqual(box.left - 0.5);
       expect(button.right).toBeLessThanOrEqual(box.right + 0.5);
@@ -642,7 +643,8 @@ describe("the buttons below the list", () => {
       expect(button.height).toBeGreaterThan(usualHeight + 1);
     }
     // Each button has a line of its own.
-    expect(reset.top).toBeGreaterThanOrEqual(showAll.bottom);
+    expect(hideAll.top).toBeGreaterThanOrEqual(showAll.bottom);
+    expect(reset.top).toBeGreaterThanOrEqual(hideAll.bottom);
     // Nothing is cut off or pushed out: neither the popover nor the page scrolls sideways.
     expect(popover.scrollWidth).toBeLessThanOrEqual(popover.clientWidth);
     for (const button of footerButtons(picker)) {
@@ -663,11 +665,19 @@ describe("the buttons below the list", () => {
     // The picker's own button is drawn by the same rule, at the usual height of a control.
     const usualHeight = picker.trigger().getBoundingClientRect().height;
     const showAll = picker.showAll().getBoundingClientRect();
+    const hideAll = picker.hideAll().getBoundingClientRect();
     const reset = picker.reset().getBoundingClientRect();
     expect(showAll.height).toBe(usualHeight);
+    expect(hideAll.height).toBe(usualHeight);
     expect(reset.height).toBe(usualHeight);
+    expect(hideAll.top).toBe(showAll.top);
     expect(reset.top).toBe(showAll.top);
-    expect(reset.left).toBeGreaterThan(showAll.right);
+    // "Hide all" stands right beside "Show all", and "Reset" apart at the far side.
+    const gap = hideAll.left - showAll.right;
+    expect(gap).toBeGreaterThan(0);
+    expect(reset.left - hideAll.right).toBeGreaterThanOrEqual(gap);
+    const popover = (picker.popover() as HTMLElement).getBoundingClientRect();
+    expect(popover.right - reset.right).toBeLessThan(8);
   });
 });
 

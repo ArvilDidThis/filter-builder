@@ -2,14 +2,22 @@ import { describe, expect, it } from "vitest";
 import {
   type ColumnDefinition,
   type ColumnSettings,
+  columnMatchesSearch,
+  columnPin,
   defaultColumnSettings,
+  hideAllColumns,
   isDefaultColumnSettings,
   moveColumn,
+  moveColumnAroundPinned,
+  moveColumnGroup,
+  moveColumnGroupAroundPinned,
   orderedColumns,
   reconcileColumnSettings,
   resetColumnSettings,
+  searchColumns,
   setColumnVisible,
   showAllColumns,
+  unpinnedRange,
   visibleColumns,
 } from "./columns";
 
@@ -314,6 +322,67 @@ describe("showAllColumns", () => {
   });
 });
 
+describe("hideAllColumns", () => {
+  it("should hide every column that may be hidden and keep the order", () => {
+    const moved = moveColumn(DEFAULTS, "notes", 0);
+    const hidden = hideAllColumns(COLUMNS, moved);
+    // "Name" must stay shown. "Notes" was hidden already, so it keeps its place in the list.
+    expect(hidden.hidden).toEqual(["notes", "price", "stock"]);
+    expect(hidden.order).toBe(moved.order);
+    expect(shape(COLUMNS, hidden)).toBe("(notes) name (price) (stock)");
+  });
+
+  it("should hide a pinned column that may be hidden", () => {
+    const columns: ColumnDefinition[] = [
+      { key: "id", label: "Id", pinned: "start" },
+      { key: "name", label: "Name", pinned: "end", hideable: false },
+      { key: "price", label: "Price" },
+    ];
+    const hidden = hideAllColumns(columns, defaultColumnSettings(columns));
+    expect(shape(columns, hidden)).toBe("(id) (price) name");
+  });
+
+  it("should return the same settings when nothing more can be hidden", () => {
+    const all = hideAllColumns(COLUMNS, DEFAULTS);
+    expect(hideAllColumns(COLUMNS, all)).toBe(all);
+    // A list whose only column must stay shown.
+    const onlyName = COLUMNS.slice(0, 1);
+    const settings: ColumnSettings = { order: ["name"], hidden: [] };
+    expect(hideAllColumns(onlyName, settings)).toBe(settings);
+  });
+
+  it("should skip a key that is no column of the list", () => {
+    const onlyName = COLUMNS.slice(0, 1);
+    const settings: ColumnSettings = { order: ["name", "gone"], hidden: [] };
+    expect(hideAllColumns(onlyName, settings)).toBe(settings);
+  });
+
+  it("should hide a column the order does not name", () => {
+    // Saved before "stock" and "notes" were added to the list.
+    const settings: ColumnSettings = { order: ["price", "name"], hidden: [] };
+    const hidden = hideAllColumns(COLUMNS, settings);
+    expect(hidden.hidden).toEqual(["price", "stock", "notes"]);
+    expect(hidden.order).toBe(settings.order);
+    expect(visibleColumns(COLUMNS, hidden).map(({ key }) => key)).toEqual([
+      "name",
+    ]);
+    expect(hideAllColumns(COLUMNS, hidden)).toBe(hidden);
+  });
+
+  it("should not change the settings it was given", () => {
+    hideAllColumns(COLUMNS, DEFAULTS);
+    expect(DEFAULTS.hidden).toEqual(["notes"]);
+  });
+
+  it("should be undone by showAllColumns", () => {
+    const hidden = hideAllColumns(COLUMNS, DEFAULTS);
+    expect(showAllColumns(hidden)).toEqual({
+      order: DEFAULTS.order,
+      hidden: [],
+    });
+  });
+});
+
 describe("resetColumnSettings", () => {
   it("should put back the list's order and starting visibility", () => {
     const changed = setColumnVisible(
@@ -435,5 +504,405 @@ describe("visibleColumns", () => {
 
   it("should return nothing for an empty list", () => {
     expect(visibleColumns([], DEFAULTS)).toEqual([]);
+  });
+});
+
+describe("pinned columns", () => {
+  // "name" is pinned to the start and "actions" to the end, though the list has neither there.
+  const PINNED = [
+    { key: "price", label: "Price" },
+    { key: "actions", label: "Actions", pinned: "end" },
+    { key: "name", label: "Name", pinned: "start", hideable: false },
+    { key: "stock", label: "Stock" },
+    { key: "notes", label: "Notes", defaultHidden: true },
+  ] satisfies ColumnDefinition[];
+
+  const FITTED: ColumnSettings = {
+    order: ["name", "price", "stock", "notes", "actions"],
+    hidden: ["notes"],
+  };
+
+  describe("defaultColumnSettings", () => {
+    it("should put each pinned column at its end of the order", () => {
+      expect(defaultColumnSettings(PINNED)).toEqual(FITTED);
+    });
+
+    it("should keep several pinned columns in the list's order", () => {
+      const settings = defaultColumnSettings([
+        { key: "a", label: "A" },
+        { key: "z2", label: "Z2", pinned: "end" },
+        { key: "s1", label: "S1", pinned: "start" },
+        { key: "z1", label: "Z1", pinned: "end" },
+        { key: "s2", label: "S2", pinned: "start" },
+      ]);
+      expect(settings.order).toEqual(["s1", "s2", "a", "z2", "z1"]);
+    });
+
+    it("should count as the defaults, so a reset has nothing to do", () => {
+      expect(isDefaultColumnSettings(PINNED, FITTED)).toBe(true);
+      expect(resetColumnSettings(PINNED, FITTED)).toBe(FITTED);
+    });
+  });
+
+  describe("reconcileColumnSettings", () => {
+    it("should load settings saved before the columns were pinned", () => {
+      const saved = {
+        order: ["stock", "actions", "price", "name", "notes"],
+        hidden: ["price"],
+      };
+      expect(reconcileColumnSettings(PINNED, saved)).toEqual({
+        order: ["name", "stock", "price", "notes", "actions"],
+        hidden: ["price"],
+      });
+    });
+
+    it("should return the same object when the pinned columns are already in place", () => {
+      expect(reconcileColumnSettings(PINNED, FITTED)).toBe(FITTED);
+    });
+
+    it("should put a new pinned column at its end of the order", () => {
+      const saved = { order: ["stock", "price", "notes"], hidden: [] };
+      expect(reconcileColumnSettings(PINNED, saved).order).toEqual([
+        "name",
+        "stock",
+        "price",
+        "notes",
+        "actions",
+      ]);
+    });
+
+    it("should keep a pinned column hidden when a person hid it", () => {
+      const saved = { order: FITTED.order, hidden: ["actions"] };
+      expect(reconcileColumnSettings(PINNED, saved)).toBe(saved);
+    });
+
+    it("should ignore a pin that is not one of the two known values", () => {
+      const columns = [
+        { key: "a", label: "A" },
+        { key: "b", label: "B", pinned: true },
+      ] as unknown as ColumnDefinition[];
+      const saved = { order: ["a", "b"], hidden: [] };
+      expect(reconcileColumnSettings(columns, saved)).toBe(saved);
+      expect(orderedColumns(columns, saved)[1]?.pinned).toBeUndefined();
+    });
+  });
+
+  describe("moveColumnAroundPinned", () => {
+    const order = (key: string, toIndex: number) =>
+      moveColumnAroundPinned(PINNED, FITTED, key, toIndex).order.join(" ");
+
+    it("should move a column among the places between the pinned columns", () => {
+      expect(order("price", 2)).toBe("name stock price notes actions");
+      expect(order("notes", 1)).toBe("name notes price stock actions");
+    });
+
+    it("should not move a pinned column", () => {
+      expect(moveColumnAroundPinned(PINNED, FITTED, "name", 3)).toBe(FITTED);
+      expect(moveColumnAroundPinned(PINNED, FITTED, "actions", 0)).toBe(FITTED);
+    });
+
+    it("should stop a column at the pinned columns", () => {
+      // Into a pinned column's place, or past either end: the nearest place it may take.
+      expect(order("stock", 0)).toBe("name stock price notes actions");
+      expect(order("stock", -5)).toBe("name stock price notes actions");
+      expect(order("price", 4)).toBe("name stock notes price actions");
+      expect(order("price", 99)).toBe("name stock notes price actions");
+    });
+
+    it("should return the same settings when the column is already next to the pinned ones", () => {
+      expect(moveColumnAroundPinned(PINNED, FITTED, "price", 0)).toBe(FITTED);
+      expect(moveColumnAroundPinned(PINNED, FITTED, "notes", 4)).toBe(FITTED);
+    });
+
+    it("should return the same settings for an unknown key or a place that is no number", () => {
+      expect(moveColumnAroundPinned(PINNED, FITTED, "gone", 2)).toBe(FITTED);
+      expect(moveColumnAroundPinned(PINNED, FITTED, "price", Number.NaN)).toBe(
+        FITTED,
+      );
+    });
+
+    it("should move as moveColumn does when no column is pinned", () => {
+      expect(moveColumnAroundPinned(COLUMNS, DEFAULTS, "notes", 0)).toEqual(
+        moveColumn(DEFAULTS, "notes", 0),
+      );
+      expect(moveColumnAroundPinned(COLUMNS, DEFAULTS, "name", 0)).toBe(
+        DEFAULTS,
+      );
+    });
+
+    it("should not move anything when every column is pinned", () => {
+      const columns: ColumnDefinition[] = [
+        { key: "a", label: "A", pinned: "start" },
+        { key: "b", label: "B", pinned: "end" },
+      ];
+      const settings = defaultColumnSettings(columns);
+      expect(moveColumnAroundPinned(columns, settings, "a", 1)).toBe(settings);
+      expect(moveColumnAroundPinned(columns, settings, "b", 0)).toBe(settings);
+    });
+  });
+
+  describe("moveColumnGroup", () => {
+    const WIDE: ColumnSettings = {
+      order: [
+        "symbol",
+        "company",
+        "industry",
+        "cap",
+        "return",
+        "age",
+        "release",
+        "beta",
+      ],
+      hidden: ["age"],
+    };
+    const group = (keys: readonly string[], toIndex: number) =>
+      moveColumnGroup(WIDE, keys, toIndex).order.join(" ");
+
+    it("should land the columns together, in the order they had among themselves", () => {
+      expect(group(["cap", "return", "beta"], 1)).toBe(
+        "symbol cap return beta company industry age release",
+      );
+      // The order the keys are named in does not count.
+      expect(group(["beta", "cap", "return"], 1)).toBe(
+        "symbol cap return beta company industry age release",
+      );
+    });
+
+    it("should move a group down the order", () => {
+      expect(group(["company", "cap"], 5)).toBe(
+        "symbol industry return age release company cap beta",
+      );
+    });
+
+    it("should take an index too near either end as the nearest place that fits", () => {
+      expect(group(["cap", "beta"], -4)).toBe(
+        "cap beta symbol company industry return age release",
+      );
+      expect(group(["symbol", "cap"], 99)).toBe(
+        "company industry return age release beta symbol cap",
+      );
+    });
+
+    it("should keep the hidden keys, and not change the settings it was given", () => {
+      const moved = moveColumnGroup(WIDE, ["cap", "beta"], 0);
+      expect(moved.hidden).toBe(WIDE.hidden);
+      expect(WIDE.order[0]).toBe("symbol");
+    });
+
+    it("should return the same settings when the group already stands there", () => {
+      expect(moveColumnGroup(WIDE, ["cap", "return"], 3)).toBe(WIDE);
+      expect(moveColumnGroup(WIDE, ["release", "beta"], 99)).toBe(WIDE);
+      expect(moveColumnGroup(WIDE, [], 0)).toBe(WIDE);
+    });
+
+    it("should skip a key the order does not name, and a key named twice", () => {
+      expect(group(["gone", "beta", "beta"], 0)).toBe(
+        "beta symbol company industry cap return age release",
+      );
+      expect(moveColumnGroup(WIDE, ["gone"], 0)).toBe(WIDE);
+    });
+
+    it("should turn down an index that is not a number", () => {
+      expect(moveColumnGroup(WIDE, ["cap"], Number.NaN)).toBe(WIDE);
+    });
+
+    it("should move one column as moveColumn does", () => {
+      for (const toIndex of [-1, 0, 2, 3, 7, 12, 2.7]) {
+        expect(moveColumnGroup(WIDE, ["cap"], toIndex).order).toEqual(
+          moveColumn(WIDE, "cap", toIndex).order,
+        );
+      }
+    });
+  });
+
+  describe("moveColumnGroupAroundPinned", () => {
+    const group = (keys: readonly string[], toIndex: number) =>
+      moveColumnGroupAroundPinned(PINNED, FITTED, keys, toIndex).order.join(
+        " ",
+      );
+
+    it("should move a group between the pinned columns", () => {
+      expect(group(["price", "notes"], 2)).toBe(
+        "name stock price notes actions",
+      );
+      expect(group(["stock", "notes"], 1)).toBe(
+        "name stock notes price actions",
+      );
+    });
+
+    it("should stop a group at the pinned columns", () => {
+      expect(group(["stock", "notes"], 0)).toBe(
+        "name stock notes price actions",
+      );
+      expect(group(["price", "stock"], 4)).toBe(
+        "name notes price stock actions",
+      );
+    });
+
+    it("should skip a pinned column, and still move the others", () => {
+      expect(group(["name", "notes", "actions"], 1)).toBe(
+        "name notes price stock actions",
+      );
+      expect(
+        moveColumnGroupAroundPinned(PINNED, FITTED, ["name", "actions"], 2),
+      ).toBe(FITTED);
+    });
+
+    it("should return the same settings when nothing changes", () => {
+      expect(
+        moveColumnGroupAroundPinned(PINNED, FITTED, ["price", "stock"], 0),
+      ).toBe(FITTED);
+      expect(
+        moveColumnGroupAroundPinned(PINNED, FITTED, ["price"], Number.NaN),
+      ).toBe(FITTED);
+    });
+
+    it("should move as moveColumnGroup does with no pinned column", () => {
+      expect(
+        moveColumnGroupAroundPinned(COLUMNS, DEFAULTS, ["stock", "notes"], 0),
+      ).toEqual(moveColumnGroup(DEFAULTS, ["stock", "notes"], 0));
+    });
+  });
+
+  describe("unpinnedRange", () => {
+    it("should give the places between the pinned columns", () => {
+      expect(unpinnedRange(PINNED, FITTED.order)).toEqual({
+        first: 1,
+        last: 3,
+      });
+    });
+
+    it("should give every place when no column is pinned", () => {
+      expect(unpinnedRange(COLUMNS, DEFAULTS.order)).toEqual({
+        first: 0,
+        last: 3,
+      });
+    });
+
+    it("should give no place when every column is pinned", () => {
+      const columns: ColumnDefinition[] = [
+        { key: "a", label: "A", pinned: "start" },
+        { key: "b", label: "B", pinned: "start" },
+      ];
+      const { first, last } = unpinnedRange(columns, ["a", "b"]);
+      expect(last).toBeLessThan(first);
+    });
+  });
+
+  describe("columnPin", () => {
+    it("should say which end a column is pinned to", () => {
+      expect(columnPin(PINNED[1])).toBe("end");
+      expect(columnPin(PINNED[2])).toBe("start");
+      expect(columnPin(PINNED[0])).toBeUndefined();
+    });
+
+    it("should read a column of a list written with `as const`", () => {
+      const exact = [
+        { key: "name", label: "Name", pinned: "start" },
+        { key: "price", label: "Price" },
+      ] as const satisfies readonly ColumnDefinition[];
+      // A plain `column.pinned` does not compile here: "price" has no such property.
+      expect(exact.map((column) => columnPin(column))).toEqual([
+        "start",
+        undefined,
+      ]);
+    });
+
+    it("should count anything else as not pinned", () => {
+      const odd = { key: "a", label: "A", pinned: "middle" };
+      expect(columnPin(odd as unknown as ColumnDefinition)).toBeUndefined();
+      expect(columnPin(undefined)).toBeUndefined();
+    });
+  });
+
+  describe("orderedColumns and visibleColumns", () => {
+    // Settings that were not fitted to the list: the order has the pinned columns elsewhere.
+    const loose: ColumnSettings = {
+      order: ["stock", "actions", "name", "price"],
+      hidden: ["price"],
+    };
+
+    it("should keep the pinned columns in place whatever the order says", () => {
+      // "notes" is not in the order, so it goes last of the columns a person may move.
+      expect(shape(PINNED, loose)).toBe("name stock (price) notes actions");
+      expect(visibleColumns(PINNED, loose).map((column) => column.key)).toEqual(
+        ["name", "stock", "notes", "actions"],
+      );
+    });
+
+    it("should say which columns are pinned", () => {
+      expect(
+        orderedColumns(PINNED, FITTED).map((entry) => entry.pinned),
+      ).toEqual(["start", undefined, undefined, undefined, "end"]);
+    });
+
+    it("should leave the pin on the columns a table draws", () => {
+      const [first] = visibleColumns(PINNED, FITTED);
+      expect(first).toBe(PINNED[2]);
+      expect(first?.pinned).toBe("start");
+    });
+  });
+});
+
+describe("columnMatchesSearch", () => {
+  const column = { label: "Close price" };
+
+  it("should match part of the label, ignoring case", () => {
+    expect(columnMatchesSearch(column, "PRI")).toBe(true);
+    expect(columnMatchesSearch(column, "close p")).toBe(true);
+    expect(columnMatchesSearch(column, "open")).toBe(false);
+  });
+
+  it("should ask for every word typed, in any order", () => {
+    expect(columnMatchesSearch(column, "price close")).toBe(true);
+    expect(columnMatchesSearch(column, "price open")).toBe(false);
+  });
+
+  it("should match every column for an empty search", () => {
+    expect(columnMatchesSearch(column, "")).toBe(true);
+    expect(columnMatchesSearch(column, "   ")).toBe(true);
+  });
+
+  it("should not read the search as a pattern", () => {
+    expect(columnMatchesSearch({ label: "Change (%)" }, "(%)")).toBe(true);
+    expect(columnMatchesSearch(column, ".*")).toBe(false);
+  });
+
+  it("should not throw on a search that is not text", () => {
+    expect(columnMatchesSearch(column, undefined as unknown as string)).toBe(
+      true,
+    );
+  });
+});
+
+describe("searchColumns", () => {
+  it("should list the matching columns in the order given", () => {
+    const found = searchColumns(COLUMNS, "o");
+    expect(found.map((column) => column.key)).toEqual(["stock", "notes"]);
+    // The app's own objects, with their extra properties still typed.
+    expect(found[0]?.width).toBe(80);
+  });
+
+  it("should take the entries of orderedColumns", () => {
+    const entries = orderedColumns(COLUMNS, DEFAULTS);
+    const found = searchColumns(entries, "pri");
+    expect(found).toEqual([entries[1]]);
+    expect(found[0]).toBe(entries[1]);
+  });
+
+  it("should take plain columns that have a property named `column`", () => {
+    const columns = [
+      { key: "price", label: "Price", column: null },
+      { key: "volume", label: "Volume", column: "B" },
+    ];
+    expect(searchColumns(columns, "pri")).toEqual([columns[0]]);
+  });
+
+  it("should return the same list for an empty search", () => {
+    expect(searchColumns(COLUMNS, " ")).toBe(COLUMNS);
+  });
+
+  it("should return nothing when no column matches", () => {
+    expect(searchColumns(COLUMNS, "zzz")).toEqual([]);
   });
 });

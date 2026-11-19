@@ -1,8 +1,10 @@
 import {
   type ColumnDefinition,
   type ColumnSettings,
+  hideAllColumns,
   isDefaultColumnSettings,
-  moveColumn,
+  moveColumnAroundPinned,
+  moveColumnGroupAroundPinned,
   type OrderedColumn,
   orderedColumns,
   reconcileColumnSettings,
@@ -56,10 +58,31 @@ export interface ColumnSettingsActions<Key extends string = string> {
   /**
    * Moves a column so that it ends up at `toIndex` in the order. The order counts hidden
    * columns too, so the index is the column's place in `orderedColumns`.
+   *
+   * Pinned columns stay in place. A pinned column does not move, and another column stops at
+   * the pinned ones: an index in a pinned column's place means the nearest place it may take.
    */
   move: (key: Key, toIndex: number) => void;
+  /**
+   * Moves several columns together, so that they stand side by side with the first of them at
+   * `toIndex` in the order. They keep the order they had among themselves, whatever order
+   * `keys` names them in.
+   *
+   * Pinned columns stay in place. A pinned column named in `keys` is skipped, and the group
+   * stops at the pinned ones.
+   *
+   * @example
+   * // Lands "cap", "return" and "beta" together, with the first of them in the second place.
+   * table.actions.moveGroup(["cap", "return", "beta"], 1);
+   */
+  moveGroup: (keys: readonly Key[], toIndex: number) => void;
   /** Shows every column, keeping the order. */
   showAll: () => void;
+  /**
+   * Hides every column that may be hidden, keeping the order. A column with
+   * `hideable: false` stays shown.
+   */
+  hideAll: () => void;
   /** Puts back the list's own order and starting visibility. */
   reset: () => void;
 }
@@ -73,11 +96,16 @@ export interface ColumnSettingsState<
   /**
    * Every column in its chosen place, each with whether it is shown. A picker draws this. The
    * option `columns` is the list the app passed in. This is that list after a person's choices.
+   *
+   * Each entry's `pinned` says whether its column is kept at the start or the end.
    */
   orderedColumns: readonly OrderedColumn<Column>[];
   /**
    * The columns the table should draw, in order. The list stays the same object until its
    * content changes, so a memoised table does not redraw for nothing.
+   *
+   * They are the app's own column objects, so a table reads `column.pinned` to keep a pinned
+   * column in view with sticky CSS of its own. The pinned columns are at the ends of the list.
    */
   visibleColumns: readonly Column[];
   /**
@@ -85,6 +113,12 @@ export interface ColumnSettingsState<
    * uses it to turn its "show all" button off.
    */
   allVisible: boolean;
+  /**
+   * Whether every column that may be hidden is hidden, so that `actions.hideAll` would change
+   * nothing. A picker uses it to turn its "hide all" button off. It is also true for a table
+   * whose columns must all stay shown.
+   */
+  allHidden: boolean;
   /**
    * Whether the settings are the column list's own order and starting visibility, so that
    * `actions.reset` would change nothing. A picker uses it to turn its "reset" button off.
@@ -107,7 +141,8 @@ export interface ColumnSettingsState<
  * const table = useColumnSettings({ columns });
  * // table.visibleColumns: draw these as the table's columns.
  * // table.actions.toggle("price"), table.actions.move("price", 0)
- * // table.allVisible, table.isDefault: whether "show all" and "reset" have anything to do.
+ * // table.allVisible, table.allHidden, table.isDefault: whether "show all", "hide all" and
+ * // "reset" have anything to do.
  */
 export function useColumnSettings<Column extends ColumnDefinition>(
   options: UseColumnSettingsOptions<Column>,
@@ -209,8 +244,15 @@ export function useColumnSettings<Column extends ColumnDefinition>(
       setVisible,
       toggle: (key) => setVisible(key, "toggle"),
       move: (key, toIndex) =>
-        apply((_list, before) => moveColumn(before, key, toIndex)),
+        apply((list, before) =>
+          moveColumnAroundPinned(list, before, key, toIndex),
+        ),
+      moveGroup: (keys, toIndex) =>
+        apply((list, before) =>
+          moveColumnGroupAroundPinned(list, before, keys, toIndex),
+        ),
       showAll: () => apply((_list, before) => showAllColumns(before)),
+      hideAll: () => apply(hideAllColumns),
       reset: () => apply(resetColumnSettings),
     };
   }, [apply]);
@@ -224,10 +266,14 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     Object.is,
   );
 
-  // Both ask the action itself, so each says "nothing to do" exactly when its action would do
+  // Each asks the action itself, so it says "nothing to do" exactly when its action would do
   // nothing. `showAllColumns` hands back the same settings when no column is hidden. That
-  // check is one quick read, so only the second one is kept between renders.
+  // check is one quick read, so only the other two are kept between renders.
   const allVisible = showAllColumns(settings) === settings;
+  const allHidden = useMemo(
+    () => hideAllColumns(columns, settings) === settings,
+    [columns, settings],
+  );
   const isDefault = useMemo(
     () => isDefaultColumnSettings(columns, settings),
     [columns, settings],
@@ -238,6 +284,7 @@ export function useColumnSettings<Column extends ColumnDefinition>(
     orderedColumns: ordered,
     visibleColumns: visible,
     allVisible,
+    allHidden,
     isDefault,
     actions,
   };
@@ -248,10 +295,13 @@ function canHide(columns: readonly ColumnDefinition[], key: string): boolean {
   return columns.find((column) => column.key === key)?.hideable !== false;
 }
 
-// Every part is compared. `hideable` is read from the column object, and an app may have
-// changed that object in place, so the same object does not prove the same answer.
+// Every part is compared. `hideable` and `pinned` are read from the column object, and an app
+// may have changed that object in place, so the same object does not prove the same answer.
 const isSameOrderedColumn = (a: OrderedColumn, b: OrderedColumn): boolean =>
-  a.column === b.column && a.visible === b.visible && a.hideable === b.hideable;
+  a.column === b.column &&
+  a.visible === b.visible &&
+  a.hideable === b.hideable &&
+  a.pinned === b.pinned;
 
 /**
  * Hands back the list from the render before when the new list holds the same items, and

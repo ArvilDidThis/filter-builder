@@ -7,6 +7,11 @@ import {
   useState,
 } from "react";
 import { useEarlyEffect } from "../useEarlyEffect";
+import { type GridColumn, measureGrid, slotAtPoint } from "./columnGrid";
+
+// Kept here too, where the tests of the drag look for it.
+export { slotAt } from "./columnGrid";
+
 import { listenForScrollAround } from "./scrollAround";
 
 // Dragging a row of the column picker to a new place. It uses Pointer Events (one set of
@@ -15,24 +20,41 @@ import { listenForScrollAround } from "./scrollAround";
 //
 // While a row is held, only this hook's state changes, so only the picker's list redraws. The
 // app hears about the move once, on drop.
+//
+// The list may lay its rows out in several grid columns, as the picker's dialog does, so the
+// drop place is found from both the pointer's height and how far across it is. Several rows
+// can move together: the ones `selected` names, when one of them is the row held.
 
 /** What the column picker's list needs to drag its rows. */
 export interface ColumnDrag {
   /** The key of the row being dragged, or `null` when none is. */
   key: string | null;
+  /** The keys of every row that moves with this drag. It is empty when no row is dragged. */
+  moving: ReadonlySet<string>;
   /**
    * Where a drop would land: before the row at this position, or after the last row when it
    * equals the number of rows. It is `null` when a drop would change nothing.
    */
   slot: number | null;
+  /**
+   * Whether the drop line belongs below the row before `slot`, not above the row at it. That
+   * is so at the foot of a grid column, and after the last row.
+   */
+  after: boolean;
   /** Call from the `onPointerDown` of the handle of the row with this key. */
   start: (event: ReactPointerEvent<HTMLElement>, key: string) => void;
 }
 
-/** How close to the list's top or bottom edge the pointer scrolls the list, in pixels. */
+/** How close to an edge of the list the pointer scrolls the list, in pixels. */
 const SCROLL_EDGE = 28;
 /** How far the list scrolls on each screen frame while the pointer is at an edge, in pixels. */
 const SCROLL_STEP = 10;
+/**
+ * How far the pointer must travel over the list before a drop counts, in pixels. A handle let
+ * go where it was pressed, as in a click, moves nothing. That matters for a group: its rows
+ * may stand apart, and a drop in place would still gather them.
+ */
+const DRAG_THRESHOLD = 4;
 
 /** One drag, from the press on a handle to the drop. */
 interface DragSession {
@@ -41,12 +63,19 @@ interface DragSession {
    * change the list while the row is held, and then the same place means another row.
    */
   key: string;
-  /** The row's place in the list as it is now. */
-  from: number;
-  /** The pointer's last known height on the screen. */
+  /** The keys of the rows that move: the held row alone, or its whole group. */
+  keys: readonly string[];
+  /** The places in the list, as it is now, of the rows that move, from the first down. */
+  places: readonly number[];
+  /** The pointer's last known place on the screen. */
+  clientX: number;
   clientY: number;
-  /** The middle of each row, measured from the top of the list's whole content. */
-  middles: readonly number[];
+  /** Where the press was, on the list's whole content. */
+  pressedAt: { x: number; y: number };
+  /** Whether the pointer has gone `DRAG_THRESHOLD` from the press. Once it has, it is a drag. */
+  hasLeftPress: boolean;
+  /** Where each row stands, measured from the corner of the list's whole content. */
+  grid: readonly GridColumn[];
   /** The screen frame waiting to scroll the list, if any. */
   frame: number | null;
   /** Watches the rows the list has now for a change of size, in place of the rows before. */
@@ -67,10 +96,35 @@ export interface ColumnDragOptions {
   /** Whether the list is on the page. A drag ends when this turns false. */
   active: boolean;
   /**
-   * Called once per drag, with the row's key and its new place, and only when the row landed
-   * in a new place.
+   * The places a row may be dropped in: from `first` to `last`, counting from 0. The rows
+   * before and after them are pinned, and a drop aimed past them lands at the nearest place.
+   * Leave it out when every row may move.
+   */
+  free?: FreePlaces;
+  /**
+   * The keys of the rows that move together. Dragging one of them moves them all, and they
+   * land side by side in the order they had. Dragging any other row moves that row alone.
+   * Name only rows that may move. Leave it out when rows only ever move one at a time.
+   */
+  selected?: ReadonlySet<string>;
+  /**
+   * Called once per drag of one row, with the row's key and its new place, and only when the
+   * row landed in a new place.
    */
   onDrop: (key: string, to: number) => void;
+  /**
+   * Called in place of `onDrop` when several rows moved together, and only when the drop
+   * changes the order. `keys` holds the rows that moved, in the order they had, and `to` is
+   * the place the first of them lands in. `held` is the key of the row whose handle was
+   * dragged. It is needed only with `selected`.
+   */
+  onDropGroup?: (keys: readonly string[], to: number, held: string) => void;
+}
+
+/** The places of a list that a row may be dropped in, from `first` to `last`. */
+export interface FreePlaces {
+  first: number;
+  last: number;
 }
 
 /** Keeps track of a drag in a list of rows. */
@@ -78,15 +132,18 @@ export function useColumnDrag({
   listRef,
   keys,
   active,
+  free,
+  selected,
   onDrop,
+  onDropGroup,
 }: ColumnDragOptions): ColumnDrag {
-  const [held, setHeld] = useState<Pick<ColumnDrag, "key" | "slot">>(IDLE);
+  const [held, setHeld] = useState<Held>(IDLE);
   const session = useRef<DragSession | null>(null);
 
   // Read through a ref, so `start` can stay the same function between renders.
-  const latest = useRef({ keys, onDrop });
+  const latest = useRef({ keys, free, selected, onDrop, onDropGroup });
   useEarlyEffect(() => {
-    latest.current = { keys, onDrop };
+    latest.current = { keys, free, selected, onDrop, onDropGroup };
   });
 
   const end = useCallback(() => {
@@ -109,14 +166,24 @@ export function useColumnDrag({
     const drag = session.current;
     const list = listRef.current;
     if (drag === null || list === null) return;
-    // One read of the list's place per pointer move. The rows were measured already, so no
-    // row is measured here. They are measured again only when one of them changes size.
-    const box = list.getBoundingClientRect();
-    const slot = slotAt(drag.middles, drag.clientY - box.top + list.scrollTop);
-    const shown = placeFromSlot(drag.from, slot) === drag.from ? null : slot;
+    // One read of the list's place per pointer move, and a second one only until the pointer
+    // leaves the press. The rows were measured already, so no row is measured here. They are
+    // measured again only when one of them changes size.
+    const { slot, after } = dropSlot(
+      drag.grid,
+      list,
+      drag,
+      latest.current.free,
+    );
+    const shown =
+      isStillPressed(drag, list, drag) || staysPut(drag.places, slot)
+        ? null
+        : slot;
     // The pointer moves many times a second, so the state changes only when the slot does.
     setHeld((was) =>
-      was.slot === shown ? was : { key: drag.key, slot: shown },
+      was.slot === shown && (shown === null || was.after === after)
+        ? was
+        : { ...was, slot: shown, after: shown !== null && after },
     );
   }, [listRef]);
 
@@ -126,22 +193,23 @@ export function useColumnDrag({
     const drag = session.current;
     const list = listRef.current;
     if (drag === null || list === null || drag.frame !== null) return;
-    if (edgeDirection(drag.clientY, list.getBoundingClientRect()) === 0) return;
+    if (!isAtEdge(edgeDirections(drag, list))) return;
     drag.frame = requestAnimationFrame(() => {
       drag.frame = null;
       // The way to scroll is worked out now, not when the frame was asked for. The pointer
       // may have crossed to the other edge since, and a scroll the old way could find the
       // list at its end and stop the scrolling for good.
-      const direction = edgeDirection(
-        drag.clientY,
-        list.getBoundingClientRect(),
-      );
-      if (direction === 0) return;
-      const before = list.scrollTop;
-      list.scrollTop += direction * SCROLL_STEP;
+      const direction = edgeDirections(drag, list);
+      if (!isAtEdge(direction)) return;
+      const before = { left: list.scrollLeft, top: list.scrollTop };
+      list.scrollTop += direction.down * SCROLL_STEP;
+      // A list that is no wider than its box, as the popover's is, has nowhere to go.
+      list.scrollLeft += direction.across * SCROLL_STEP;
       // Stops once the list has reached its end. Otherwise it follows again, which keeps the
       // list scrolling for as long as the pointer rests at the edge.
-      if (list.scrollTop !== before) follow();
+      const hasScrolled =
+        list.scrollTop !== before.top || list.scrollLeft !== before.left;
+      if (hasScrolled) follow();
     });
   }, [listRef, showSlot]);
 
@@ -152,14 +220,13 @@ export function useColumnDrag({
     const drag = session.current;
     const list = listRef.current;
     if (drag === null || list === null) return;
-    const from = keys.indexOf(drag.key);
-    if (from === -1) {
+    if (!keys.includes(drag.key)) {
       // The held column itself is gone.
       end();
       return;
     }
-    drag.from = from;
-    drag.middles = measureMiddles(list);
+    drag.places = placesOf(drag.keys, keys);
+    drag.grid = measureGrid(list);
     drag.watchRows();
     follow();
   }, [keys, listRef, follow, end]);
@@ -194,6 +261,7 @@ export function useColumnDrag({
           end();
           return;
         }
+        drag.clientX = moved.clientX;
         drag.clientY = moved.clientY;
         follow();
       };
@@ -203,15 +271,32 @@ export function useColumnDrag({
         end();
         // A drop means nothing once the list it was aimed at has left the page.
         if (listRef.current !== list) return;
+        // Let go where it was pressed. The release's own place counts too, as a pointer can
+        // travel and let go with no move reported in between.
+        if (isStillPressed(drag, list, released)) return;
         // The place is worked out here, from where the pointer was let go and the list as it
         // is now. The last move heard may be out of date: a pointer can travel and let go
         // with no move reported in between, and the list can change under a still pointer.
-        const from = latest.current.keys.indexOf(drag.key);
-        if (from === -1) return;
-        const y =
-          released.clientY - list.getBoundingClientRect().top + list.scrollTop;
-        const to = placeFromSlot(from, slotAt(measureMiddles(list), y));
-        if (to !== from) latest.current.onDrop(drag.key, to);
+        const order = latest.current.keys;
+        if (!order.includes(drag.key)) return;
+        const places = placesOf(drag.keys, order);
+        const { slot } = dropSlot(
+          measureGrid(list),
+          list,
+          released,
+          latest.current.free,
+        );
+        if (staysPut(places, slot)) return;
+        const to = groupPlaceFromSlot(places, slot);
+        if (places.length === 1) {
+          latest.current.onDrop(drag.key, to);
+          return;
+        }
+        latest.current.onDropGroup?.(
+          places.map((place) => order[place] as string),
+          to,
+          drag.key,
+        );
       };
       // The browser took the pointer away, for example to scroll the page, or took the
       // capture away without a release.
@@ -220,8 +305,10 @@ export function useColumnDrag({
       };
       const onKeyDown = (pressed: KeyboardEvent) => {
         if (pressed.key !== "Escape") return;
-        // Escape gives up the drag only. It must not also close the picker.
+        // Escape gives up the drag only. It must not also close the picker. That includes
+        // the browser's own closing of a dialog, which the key would otherwise bring on.
         pressed.stopPropagation();
+        pressed.preventDefault();
         end();
       };
 
@@ -279,7 +366,7 @@ export function useColumnDrag({
         ? new SizeWatcher(() => {
             const drag = session.current;
             if (drag === null) return;
-            drag.middles = measureMiddles(list);
+            drag.grid = measureGrid(list);
             // Only the drop line follows a change of size. The list does not start to
             // scroll: the first report comes with the press itself, and a row that is
             // only pressed at the list's edge must not move the list.
@@ -291,12 +378,22 @@ export function useColumnDrag({
         sizeWatcher.disconnect();
         for (const row of Array.from(list.children)) sizeWatcher.observe(row);
       };
+      // The rows that move with this one: its whole group when it is one of the selected
+      // rows, and otherwise the row alone.
+      const { keys: order, selected: group } = latest.current;
+      const moving = group?.has(key)
+        ? order.filter((other) => group.has(other))
+        : [key];
       session.current = {
         key,
-        from,
+        keys: moving,
+        places: placesOf(moving, order),
+        clientX: event.clientX,
         clientY: event.clientY,
+        pressedAt: pointOnList(list, event),
+        hasLeftPress: false,
         // Every row is measured once, here, and not again while the list stays as it is.
-        middles: measureMiddles(list),
+        grid: measureGrid(list),
         frame: null,
         watchRows,
         stop: () => {
@@ -314,33 +411,63 @@ export function useColumnDrag({
         },
       };
       watchRows();
-      setHeld({ key, slot: null });
+      setHeld({ key, moving: new Set(moving), slot: null, after: false });
     },
     [listRef, follow, showSlot, end],
   );
 
-  return { key: held.key, slot: held.slot, start };
+  return { ...held, start };
 }
 
-const IDLE: Pick<ColumnDrag, "key" | "slot"> = { key: null, slot: null };
+/** What the hook's state holds: everything about the drag but how to start one. */
+type Held = Omit<ColumnDrag, "start">;
 
-/** The middle of each row of the list, measured from the top of the list's whole content. */
-function measureMiddles(list: HTMLElement): number[] {
-  const box = list.getBoundingClientRect();
-  return Array.from(list.children, (row) => {
-    const rowBox = row.getBoundingClientRect();
-    return rowBox.top + rowBox.height / 2 - box.top + list.scrollTop;
+const IDLE: Held = {
+  key: null,
+  moving: new Set<string>(),
+  slot: null,
+  after: false,
+};
+
+/** The places in `order` of the rows named, from the first down. A row that is gone is left out. */
+function placesOf(keys: readonly string[], order: readonly string[]): number[] {
+  const named = new Set(keys);
+  const places: number[] = [];
+  order.forEach((key, index) => {
+    if (named.has(key)) places.push(index);
   });
+  return places;
 }
 
 /**
- * The slot a pointer at height `y` is over: the number of rows whose middle is above it. So a
- * drop lands before a row while the pointer is over its top half, and after it otherwise.
+ * The gap a drop would land in for a pointer at this place on the screen, kept to the gaps
+ * that `free` allows.
  */
-export function slotAt(middles: readonly number[], y: number): number {
-  let slot = 0;
-  while (slot < middles.length && (middles[slot] as number) < y) slot++;
-  return slot;
+function dropSlot(
+  grid: readonly GridColumn[],
+  list: HTMLElement,
+  pointer: { clientX: number; clientY: number },
+  free: FreePlaces | undefined,
+): { slot: number; after: boolean } {
+  // One read of the list's place. No row is measured here.
+  const box = list.getBoundingClientRect();
+  const aimed = slotAtPoint(
+    grid,
+    pointer.clientX - box.left + list.scrollLeft,
+    pointer.clientY - box.top + list.scrollTop,
+  );
+  const slot = slotWithin(aimed.slot, free);
+  // A gap the pointer did not aim at is beside a pinned row, and is marked above that row.
+  return { slot, after: aimed.after && slot === aimed.slot };
+}
+
+/**
+ * The slot nearest to `slot` that a drop may land in. A slot is the gap before a row, so the
+ * free places from `first` to `last` have one more slot than rows: the last is after `last`.
+ */
+export function slotWithin(slot: number, free: FreePlaces | undefined): number {
+  if (free === undefined) return slot;
+  return Math.min(Math.max(slot, free.first), free.last + 1);
 }
 
 /**
@@ -351,9 +478,85 @@ export function placeFromSlot(from: number, slot: number): number {
   return slot > from ? slot - 1 : slot;
 }
 
-/** Which way to scroll the list: -1 near its top edge, 1 near its bottom edge, else 0. */
-function edgeDirection(clientY: number, box: DOMRect): -1 | 0 | 1 {
-  if (clientY < box.top + SCROLL_EDGE) return -1;
-  if (clientY > box.bottom - SCROLL_EDGE) return 1;
+/**
+ * The place the first of several rows ends up at when they are dropped together into `slot`.
+ * `places` holds the rows' places now. Taking them out first moves every later row up, so
+ * each of them that stands before the slot counts one less.
+ */
+export function groupPlaceFromSlot(
+  places: readonly number[],
+  slot: number,
+): number {
+  return slot - places.filter((place) => place < slot).length;
+}
+
+/**
+ * Whether the pointer is still within `DRAG_THRESHOLD` of the press, and has never left it.
+ * Once it has left, it is a drag, even back where it began.
+ */
+function isStillPressed(
+  drag: DragSession,
+  list: HTMLElement,
+  pointer: { clientX: number; clientY: number },
+): boolean {
+  if (drag.hasLeftPress) return false;
+  const now = pointOnList(list, pointer);
+  const { x, y } = drag.pressedAt;
+  if (Math.hypot(now.x - x, now.y - y) < DRAG_THRESHOLD) return true;
+  drag.hasLeftPress = true;
+  return false;
+}
+
+/**
+ * The pointer's place on the list's whole content. It stays the same when the list or the
+ * page scrolls under a still pointer, which is a way to drag too.
+ */
+function pointOnList(
+  list: HTMLElement,
+  pointer: { clientX: number; clientY: number },
+): { x: number; y: number } {
+  const box = list.getBoundingClientRect();
+  return {
+    x: pointer.clientX - box.left + list.scrollLeft,
+    y: pointer.clientY - box.top + list.scrollTop,
+  };
+}
+
+/** Whether a drop into `slot` leaves the rows at `places` where they are, side by side. */
+function staysPut(places: readonly number[], slot: number): boolean {
+  const to = groupPlaceFromSlot(places, slot);
+  return places.every((place, index) => place === to + index);
+}
+
+/** Which way to scroll a list: -1 towards its start, 1 towards its end, 0 for not at all. */
+type Direction = -1 | 0 | 1;
+
+/** Which way a pointer near the list's edges scrolls it, across and down. */
+function edgeDirections(
+  pointer: { clientX: number; clientY: number },
+  list: HTMLElement,
+): { across: Direction; down: Direction } {
+  const box = list.getBoundingClientRect();
+  return {
+    // Only a list that is wider than its box scrolls sideways, as the dialog's grid can be.
+    // Without this check a pointer at the side of the popover's list would ask for a new
+    // frame on every move, to scroll a list that cannot.
+    across:
+      list.scrollWidth > list.clientWidth
+        ? edgeDirection(pointer.clientX, box.left, box.right)
+        : 0,
+    down: edgeDirection(pointer.clientY, box.top, box.bottom),
+  };
+}
+
+/** Whether the pointer is near an edge that scrolls the list. */
+function isAtEdge(direction: { across: Direction; down: Direction }): boolean {
+  return direction.across !== 0 || direction.down !== 0;
+}
+
+/** -1 near the `start` edge, 1 near the `end` edge, else 0. */
+function edgeDirection(at: number, start: number, end: number): Direction {
+  if (at < start + SCROLL_EDGE) return -1;
+  if (at > end - SCROLL_EDGE) return 1;
   return 0;
 }

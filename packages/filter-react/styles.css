@@ -4,14 +4,15 @@
  * Load it once in the app:  import "@arvilmena/filter-react/styles.css";
  *
  * The colours are worked out from the page's own text colour, so the builder fits a light page
- * and a dark page without any setup. To change the look, set the `--fb-*` variables below on
- * `.fb` in the app's own style sheet, for example:
+ * and a dark page without any setup.
  *
- *   .fb { --fb-radius: 0; --fb-bar-bg: #334; }
+ * To change the look, set any of the `--fb-*` variables below. Set them on the component, or
+ * on any element around it, up to `:root`. One class or an inline style is enough, and the
+ * order of the style sheets does not matter:
  *
- * The column picker stands outside the builder, so it reads the same variables from its own
- * class, `.fb-columns`. Wherever this file says to set a variable on `.fb`, set it on
- * `.fb-columns` too.
+ *   :root { --fb-radius: 0; --fb-and: #334; }      (every builder and picker on the page)
+ *   .my-table-tools { --fb-control-height: 2rem; } (the ones inside this element)
+ *   <ColumnPicker style={{ "--fb-radius": "0" }} /> (this one)
  *
  * `--fb-page` should be the colour behind the builder. It defaults to `--background`, which
  * many apps already define, and otherwise to the browser's page colour.
@@ -21,33 +22,71 @@
  * colour (`--background: 0 0% 100%`) and wrap them in `hsl()` where they are used. With such a
  * theme, set the builder's own variables to whole colours:
  *
- *   .fb {
+ *   :root {
  *     --fb-page: hsl(var(--background));
  *     --fb-popover-bg: hsl(var(--popover));
  *     --fb-focus: hsl(var(--ring));
  *   }
+ *
+ * Some defaults are worked out from others: the control background mixes the text colour into
+ * `--fb-page`. They are worked out on the component, so set `--fb-page` on the component or
+ * above it for them to follow.
  */
 
+/*
+ * The default of every variable an app may set. Each is kept under a private name, with an
+ * underscore: `--_fb-radius` holds the default of `--fb-radius`. This file never sets a public
+ * variable on the component itself, so nothing here can win over an app's own value.
+ *
+ * Wherever a variable is used, it is read as `var(--fb-radius, var(--_fb-radius))`: the app's
+ * value if any element up the tree sets one, and otherwise the default. Always read a variable
+ * this way. A plain `var(--fb-radius)` is empty unless an app sets it. A test checks this.
+ */
 .fb,
 .fb-columns {
-  --fb-page: var(--background, Canvas);
-  --fb-border: color-mix(in srgb, currentColor 22%, transparent);
-  --fb-control-bg: color-mix(in srgb, currentColor 7%, var(--fb-page));
-  --fb-hover-bg: color-mix(in srgb, currentColor 15%, var(--fb-page));
+  --_fb-page: var(--background, Canvas);
+  --_fb-border: color-mix(in srgb, currentColor 22%, transparent);
+  --_fb-control-bg: color-mix(
+    in srgb,
+    currentColor 7%,
+    var(--fb-page, var(--_fb-page))
+  );
+  --_fb-hover-bg: color-mix(
+    in srgb,
+    currentColor 15%,
+    var(--fb-page, var(--_fb-page))
+  );
   /* The colour of a group's bar: one for "all must pass", one for "one is enough". Blue and
      orange stay apart for people who see colours differently, and the word is always there too. */
-  --fb-and: #3b82f6;
-  --fb-or: #f59e0b;
-  --fb-popover-bg: var(--popover, var(--fb-page));
+  --_fb-and: #3b82f6;
+  --_fb-or: #f59e0b;
+  --_fb-popover-bg: var(--popover, var(--fb-page, var(--_fb-page)));
   /* The shadow under the field list and the tooltips. */
-  --fb-shadow: rgb(0 0 0 / 0.25);
-  --fb-muted: color-mix(in srgb, currentColor 60%, transparent);
-  --fb-focus: var(--ring, Highlight);
-  --fb-radius: 0.375rem;
-  --fb-control-height: 2.25rem;
-  --fb-gap: 0.5rem;
+  --_fb-shadow: rgb(0 0 0 / 0.25);
+  --_fb-muted: color-mix(in srgb, currentColor 60%, transparent);
+  --_fb-focus: var(--ring, Highlight);
+  --_fb-radius: 0.375rem;
+  --_fb-control-height: 2.25rem;
+  --_fb-gap: 0.5rem;
   /* The widest a value box grows, so a short number does not sit in a very long box. */
-  --fb-value-width: 12rem;
+  --_fb-value-width: 12rem;
+  /* The dimmed page around the column picker's dialog. */
+  --_fb-backdrop: rgb(0 0 0 / 0.45);
+  /* The narrowest a grid column of the column picker's dialog may be. The dialog fits as
+     many as its width holds, and shares the width left over among them. */
+  --_fb-dialog-column-width: 14rem;
+  /* Behind a row that is selected for a group drag, and behind the button that is on. */
+  --_fb-selected-bg: color-mix(
+    in srgb,
+    var(--fb-focus, var(--_fb-focus)) 20%,
+    transparent
+  );
+  /* How faint a checkbox is while it is locked: one for a column that must stay shown, and
+     every show/hide box while group drag is on. */
+  --_fb-locked-opacity: 0.4;
+  /* The ring around the box that selects a row for a group drag, which sets it apart from
+     the show/hide box beside it. */
+  --_fb-select-ring: var(--fb-focus, var(--_fb-focus));
 
   font-size: 0.875rem;
   line-height: 1.25rem;
@@ -76,7 +115,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--fb-gap);
+  gap: var(--fb-gap, var(--_fb-gap));
 }
 
 .fb-title {
@@ -87,14 +126,14 @@
 
 .fb-count {
   font-weight: 400;
-  color: var(--fb-muted);
+  color: var(--fb-muted, var(--_fb-muted));
 }
 
 .fb-header-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--fb-gap);
+  gap: var(--fb-gap, var(--_fb-gap));
   margin-left: auto;
 }
 
@@ -103,24 +142,28 @@
 /* A group is its bar on the left and its rows on the right. */
 .fb-group {
   display: flex;
-  gap: var(--fb-gap);
+  gap: var(--fb-gap, var(--_fb-gap));
   min-width: 0;
 }
 
 /* The tall bar that says "And" or "Or". It is as tall as the group's rows, and its colour says
    which of the two it is, so a person need not scroll up to the word to know. */
 .fb-bar {
-  --fb-bar-color: var(--fb-and);
+  --fb-bar-color: var(--fb-and, var(--_fb-and));
 
   display: flex;
   flex: 0 0 2rem;
   flex-direction: column;
-  border-radius: var(--fb-radius);
-  background: color-mix(in srgb, var(--fb-bar-color) 32%, var(--fb-page));
+  border-radius: var(--fb-radius, var(--_fb-radius));
+  background: color-mix(
+    in srgb,
+    var(--fb-bar-color) 32%,
+    var(--fb-page, var(--_fb-page))
+  );
 }
 
 .fb-group[data-logic="OR"] > .fb-bar {
-  --fb-bar-color: var(--fb-or);
+  --fb-bar-color: var(--fb-or, var(--_fb-or));
 }
 
 .fb-bar-logic,
@@ -140,11 +183,12 @@
   min-height: 3.5rem;
   /* Room above the word, so it does not sit against the top edge of the bar. */
   padding: 0.875rem 0 0.5rem;
-  border-radius: var(--fb-radius) var(--fb-radius) 0 0;
+  border-radius: var(--fb-radius, var(--_fb-radius))
+    var(--fb-radius, var(--_fb-radius)) 0 0;
 }
 
 .fb-bar-logic:last-child {
-  border-radius: var(--fb-radius);
+  border-radius: var(--fb-radius, var(--_fb-radius));
 }
 
 /* The word reads from top to bottom, as in SearchBuilder. It follows the page down a long
@@ -162,21 +206,26 @@
 .fb-bar-remove {
   flex: 0 0 auto;
   height: 2rem;
-  border-radius: 0 0 var(--fb-radius) var(--fb-radius);
+  border-radius: 0 0 var(--fb-radius, var(--_fb-radius))
+    var(--fb-radius, var(--_fb-radius));
   font-size: 1rem;
   line-height: 1;
 }
 
 .fb-bar-logic:hover,
 .fb-bar-remove:hover {
-  background: color-mix(in srgb, var(--fb-bar-color) 55%, var(--fb-page));
+  background: color-mix(
+    in srgb,
+    var(--fb-bar-color) 55%,
+    var(--fb-page, var(--_fb-page))
+  );
 }
 
 .fb-group-body {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--fb-gap);
+  gap: var(--fb-gap, var(--_fb-gap));
   min-width: 0;
 }
 
@@ -184,7 +233,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--fb-gap);
+  gap: var(--fb-gap, var(--_fb-gap));
 }
 
 /* ---- Rows ---- */
@@ -196,20 +245,20 @@
     minmax(8rem, 16rem) minmax(7rem, 11rem)
     minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--fb-gap);
+  gap: var(--fb-gap, var(--_fb-gap));
   min-width: 0;
 }
 
 .fb-row-broken {
   grid-template-columns: minmax(0, 1fr) auto;
   padding: 0.25rem 0.5rem;
-  border: 1px dashed var(--fb-border);
-  border-radius: var(--fb-radius);
+  border: 1px dashed var(--fb-border, var(--_fb-border));
+  border-radius: var(--fb-radius, var(--_fb-radius));
 }
 
 .fb-values {
   display: flex;
-  gap: var(--fb-gap);
+  gap: var(--fb-gap, var(--_fb-gap));
   min-width: 0;
 }
 
@@ -253,12 +302,12 @@
 .fb-control {
   width: 100%;
   min-width: 0;
-  height: var(--fb-control-height);
+  height: var(--fb-control-height, var(--_fb-control-height));
   margin: 0;
   padding: 0 0.625rem;
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
-  background-color: var(--fb-control-bg);
+  border: 1px solid var(--fb-border, var(--_fb-border));
+  border-radius: var(--fb-radius, var(--_fb-radius));
+  background-color: var(--fb-control-bg, var(--_fb-control-bg));
   color: inherit;
   font: inherit;
 }
@@ -268,11 +317,13 @@
   flex: 1 1 0;
   align-items: center;
   gap: 0.25rem;
-  max-width: var(--fb-value-width);
+  max-width: var(--fb-value-width, var(--_fb-value-width));
 }
 
+/* A box that holds a list of values is wider by default. Only the private default changes
+   here, so an app's `--fb-value-width` still wins for these boxes too. */
 .fb-value-list {
-  --fb-value-width: 24rem;
+  --_fb-value-width: 24rem;
 }
 
 /* The typing area inside a value box. The box around it draws the border. */
@@ -297,16 +348,16 @@
 
 .fb-affix,
 .fb-muted {
-  color: var(--fb-muted);
+  color: var(--fb-muted, var(--_fb-muted));
 }
 
 .fb-button,
 .fb-icon-button {
-  height: var(--fb-control-height);
+  height: var(--fb-control-height, var(--_fb-control-height));
   margin: 0;
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
-  background-color: var(--fb-control-bg);
+  border: 1px solid var(--fb-border, var(--_fb-border));
+  border-radius: var(--fb-radius, var(--_fb-radius));
+  background-color: var(--fb-control-bg, var(--_fb-control-bg));
   color: inherit;
   font: inherit;
   cursor: pointer;
@@ -318,7 +369,7 @@
 }
 
 .fb-icon-button {
-  width: var(--fb-control-height);
+  width: var(--fb-control-height, var(--_fb-control-height));
   padding: 0;
   line-height: 1;
 }
@@ -326,7 +377,7 @@
 .fb-button:hover,
 .fb-icon-button:hover:not(:disabled),
 .fb-picker-button:hover {
-  background-color: var(--fb-hover-bg);
+  background-color: var(--fb-hover-bg, var(--_fb-hover-bg));
 }
 
 .fb-icon-button:disabled {
@@ -337,12 +388,12 @@
 /* A button with nothing to do right now. It is marked with `aria-disabled` and not turned off,
    so that it keeps the keyboard focus. Its text is dimmed, and it does not answer the pointer. */
 .fb-button[aria-disabled="true"] {
-  color: var(--fb-muted);
+  color: var(--fb-muted, var(--_fb-muted));
   cursor: default;
 }
 
 .fb-button[aria-disabled="true"]:hover {
-  background-color: var(--fb-control-bg);
+  background-color: var(--fb-control-bg, var(--_fb-control-bg));
 }
 
 .fb-control:focus-visible,
@@ -353,8 +404,13 @@
 .fb-bar-remove:focus-visible,
 .fb-columns-handle:focus-visible,
 .fb-columns-checkbox:focus-visible,
-.fb-columns-popover:focus-visible {
-  outline: 2px solid var(--fb-focus);
+.fb-columns-popover:focus-visible,
+.fb-columns-dialog:focus-visible {
+  /* Written as separate properties. The simulated page of the unit tests cannot read the
+     short form `outline` when its colour is a variable with a fallback. */
+  outline-width: 2px;
+  outline-style: solid;
+  outline-color: var(--fb-focus, var(--_fb-focus));
   outline-offset: 1px;
 }
 
@@ -382,7 +438,7 @@
 
 .fb-picker-arrow {
   flex: 0 0 auto;
-  color: var(--fb-muted);
+  color: var(--fb-muted, var(--_fb-muted));
 }
 
 /* The list opens over the rows below it, so it needs a solid background of its own. */
@@ -396,10 +452,10 @@
   gap: 0.25rem;
   width: max(100%, 18rem);
   padding: 0.25rem;
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
-  background: var(--fb-popover-bg);
-  box-shadow: 0 8px 24px var(--fb-shadow);
+  border: 1px solid var(--fb-border, var(--_fb-border));
+  border-radius: var(--fb-radius, var(--_fb-radius));
+  background: var(--fb-popover-bg, var(--_fb-popover-bg));
+  box-shadow: 0 8px 24px var(--fb-shadow, var(--_fb-shadow));
 }
 
 .fb-picker-list {
@@ -410,7 +466,7 @@
 .fb-picker-option,
 .fb-picker-empty {
   padding: 0.375rem 0.5rem;
-  border-radius: calc(var(--fb-radius) - 2px);
+  border-radius: calc(var(--fb-radius, var(--_fb-radius)) - 2px);
 }
 
 .fb-picker-option {
@@ -419,7 +475,7 @@
 
 .fb-picker-option[data-active],
 .fb-picker-option:hover {
-  background: var(--fb-hover-bg);
+  background: var(--fb-hover-bg, var(--_fb-hover-bg));
 }
 
 .fb-picker-option[aria-selected="true"] {
@@ -447,10 +503,10 @@
   min-width: min(14rem, 90vw);
   max-width: min(22rem, 90vw);
   padding: 0.25rem;
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
-  background: var(--fb-popover-bg);
-  box-shadow: 0 8px 24px var(--fb-shadow);
+  border: 1px solid var(--fb-border, var(--_fb-border));
+  border-radius: var(--fb-radius, var(--_fb-radius));
+  background: var(--fb-popover-bg, var(--_fb-popover-bg));
+  box-shadow: 0 8px 24px var(--fb-shadow, var(--_fb-shadow));
   /* The picker sets these two on the popover once it has measured it. The first moves a
      popover that would run off the screen back inside it. The second is the height the
      screen has left below the popover's top edge. */
@@ -472,8 +528,107 @@
 /* The box takes the focus when it opens, so that Tab starts from it. It is not a control, so
    a click that opens it shows no focus ring. Opened from the keyboard, it keeps the ring of
    the rule above, so a person can see where the focus went. */
-.fb-columns-popover:focus:not(:focus-visible) {
+.fb-columns-popover:focus:not(:focus-visible),
+.fb-columns-dialog:focus:not(:focus-visible) {
   outline: none;
+}
+
+/* The same list in a dialog in the middle of the screen, for a long list. The picker shows
+   it as a modal dialog, so the browser draws it over everything else on the page.
+   It is a flex box only while it is open: a closed dialog must stay hidden. */
+.fb-columns-dialog[open] {
+  display: flex;
+}
+
+.fb-columns-dialog {
+  /* The browser centres a modal dialog this way already. It is spelled out for a browser
+     that shows the dialog without making it modal. */
+  position: fixed;
+  inset: 0;
+  flex-direction: column;
+  gap: var(--fb-gap, var(--_fb-gap));
+  /* The browser's own limits on a dialog's size are replaced by these. */
+  width: min(96rem, 94vw);
+  max-width: none;
+  /* Nine tenths of the height that is really in view. On a phone that changes as the
+     address bar comes and goes, which `dvh` follows and `vh` does not. */
+  height: 90dvh;
+  max-height: none;
+  margin: auto;
+  padding: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--fb-border, var(--_fb-border));
+  border-radius: var(--fb-radius, var(--_fb-radius));
+  background: var(--fb-popover-bg, var(--_fb-popover-bg));
+  box-shadow: 0 8px 24px var(--fb-shadow, var(--_fb-shadow));
+  /* A browser gives a dialog its own text colour. The page's colour is kept, as the
+     colours above are worked out from it. */
+  color: inherit;
+}
+
+/* The dimmed page around the dialog. An older browser does not hand the variables on to
+   this part, and leaves the page undimmed. */
+.fb-columns-dialog::backdrop {
+  background: var(--fb-backdrop, var(--_fb-backdrop));
+}
+
+/* The buttons above the list: "Group drag", and "Dialog view" or "Close". In the dialog
+   its title stands before them. */
+.fb-columns-tools {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fb-gap, var(--_fb-gap));
+}
+
+.fb-columns-title {
+  /* Takes the room left over, so the buttons stand together at the far side. */
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Smaller than the buttons below the list, so two fit side by side in a narrow popover. */
+.fb-columns-tool {
+  height: auto;
+  min-height: 1.75rem;
+  padding: 0 0.5rem;
+  font-size: 0.8125rem;
+}
+
+/* The "Group drag" button while it is on. */
+.fb-columns-tool[aria-pressed="true"] {
+  border-color: var(--fb-focus, var(--_fb-focus));
+  background-color: var(--fb-selected-bg, var(--_fb-selected-bg));
+}
+
+/* The search box above the list, and the line below it that says how many columns match. */
+.fb-columns-search {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* A browser gives a search box a look of its own, such as round ends in Safari. This takes
+   it off, so the box looks like the library's other controls. */
+.fb-columns-search-input {
+  appearance: none;
+}
+
+.fb-columns-search-status {
+  /* As wide as the popover, and no wider: the popover is as wide as its longest column name,
+     and this line must wrap inside it, not stretch it. */
+  width: 0;
+  min-width: 100%;
+  margin: 0;
+  padding: 0 0.375rem;
+  color: var(--fb-muted, var(--_fb-muted));
+  font-size: 0.75rem;
+  line-height: 1rem;
 }
 
 .fb-columns-list {
@@ -485,6 +640,25 @@
      Below a button near the bottom of the screen, the buttons under the list are out of
      view, and a wheel or a finger over the list must be able to bring them in. */
   list-style: none;
+}
+
+/* In the dialog the list is a grid: the rows fill one grid column from top to bottom, and
+   then the next one beside it. The browser lays this out by itself (CSS multi-column), and
+   fits as many grid columns as the width holds. Only when the rows need more grid columns
+   than fit does the list scroll, sideways. */
+.fb-columns-dialog .fb-columns-list {
+  /* Takes the height the dialog has left, which is what the grid columns fill. */
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+  /* Room for the focus ring of a control in the first or the last row. */
+  padding: 0.25rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  column-width: var(--fb-dialog-column-width, var(--_fb-dialog-column-width));
+  column-gap: var(--fb-gap, var(--_fb-gap));
+  /* Fills each grid column to the foot before the next one starts. */
+  column-fill: auto;
 }
 
 /* While a row is dragged, the pointer must not select the names it passes over. */
@@ -499,12 +673,27 @@
   align-items: center;
   gap: 0.25rem;
   min-height: 2rem;
+  /* An app's own rule for list items, such as one for running text, may give them a margin.
+     In the dialog only the first grid column would keep the margin above its first row,
+     and so start lower than the others. */
+  margin: 0;
   padding: 0 0.375rem;
-  border-radius: calc(var(--fb-radius) - 2px);
+  border-radius: calc(var(--fb-radius, var(--_fb-radius)) - 2px);
+}
+
+/* A row is never cut in two between one grid column and the next. */
+.fb-columns-dialog .fb-columns-row {
+  break-inside: avoid;
 }
 
 .fb-columns-list:not([data-dragging]) > .fb-columns-row:hover {
-  background: var(--fb-hover-bg);
+  background: var(--fb-hover-bg, var(--_fb-hover-bg));
+}
+
+/* A row that is selected for a group drag, under the pointer or not. */
+.fb-columns-list > .fb-columns-row[data-selected],
+.fb-columns-list:not([data-dragging]) > .fb-columns-row[data-selected]:hover {
+  background: var(--fb-selected-bg, var(--_fb-selected-bg));
 }
 
 .fb-columns-row[data-dragging] {
@@ -519,7 +708,7 @@
   left: 0;
   height: 2px;
   border-radius: 1px;
-  background: var(--fb-focus);
+  background: var(--fb-focus, var(--_fb-focus));
   pointer-events: none;
 }
 
@@ -538,6 +727,40 @@
   margin: 0;
 }
 
+/* A box that is locked. The browser's own look for it is not relied on: an app's style
+   sheet may redraw every checkbox, and then a locked box looks like any other. */
+.fb-columns-checkbox:disabled {
+  opacity: var(--fb-locked-opacity, var(--_fb-locked-opacity));
+  cursor: default;
+}
+
+/* The box that selects a row for a group drag. On a pinned column, which cannot be
+   selected, an empty gap of the same size stands in its place, so the boxes, handles and
+   names of every row line up. */
+.fb-columns-select {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+}
+
+/* The selection box is the one in use while group drag is on. A ring in the focus colour
+   sets it apart from the locked show/hide box beside it, ticked or not. */
+input.fb-columns-select {
+  /* An outline, as Safari draws no shadow around a checkbox it draws itself. */
+  outline-width: 2px;
+  outline-style: solid;
+  outline-color: var(--fb-select-ring, var(--_fb-select-ring));
+  border-radius: 0.1875rem;
+  /* The colour of the tick, where the browser draws the box itself. */
+  accent-color: var(--fb-select-ring, var(--_fb-select-ring));
+}
+
+/* With the keyboard focus on it, the ring is wider and stands off the box, so the focus
+   can still be told from the ring the box always has. */
+input.fb-columns-select:focus-visible {
+  outline-width: 3px;
+}
+
 /* The grip that moves a column. It is a button, so the keyboard can reach it. */
 .fb-columns-handle {
   display: flex;
@@ -549,9 +772,9 @@
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: calc(var(--fb-radius) - 2px);
+  border-radius: calc(var(--fb-radius, var(--_fb-radius)) - 2px);
   background: transparent;
-  color: var(--fb-muted);
+  color: var(--fb-muted, var(--_fb-muted));
   font: inherit;
   cursor: grab;
   user-select: none;
@@ -559,6 +782,23 @@
 
 .fb-columns-handle:active {
   cursor: grabbing;
+}
+
+/* A handle that is turned off, as on a row an app draws for a column that cannot move now. */
+.fb-columns-handle:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Stands where the handle would be on a pinned column, which cannot be moved. */
+.fb-columns-pin {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  color: var(--fb-muted, var(--_fb-muted));
 }
 
 .fb-columns-label {
@@ -580,10 +820,9 @@
   display: flex;
   /* A button whose label is too long to stand beside the other takes a line of its own. */
   flex-wrap: wrap;
-  justify-content: space-between;
-  gap: var(--fb-gap);
+  gap: var(--fb-gap, var(--_fb-gap));
   padding-top: 0.25rem;
-  border-top: 1px solid var(--fb-border);
+  border-top: 1px solid var(--fb-border, var(--_fb-border));
 }
 
 /* An app may give these buttons long labels, such as translated ones. A button is never
@@ -592,9 +831,14 @@
 .fb-columns-footer > .fb-button {
   max-width: 100%;
   height: auto;
-  min-height: var(--fb-control-height);
+  min-height: var(--fb-control-height, var(--_fb-control-height));
   padding-block: 0.25rem;
   overflow-wrap: anywhere;
+}
+
+/* "Reset" stands at the far side, apart from "Show all" and "Hide all". */
+.fb-columns-footer > .fb-columns-footer-end {
+  margin-left: auto;
 }
 
 /* On the page for screen readers only: it takes no room and shows nothing. */
@@ -618,8 +862,8 @@
   align-items: center;
   justify-content: center;
   width: 1.25rem;
-  height: var(--fb-control-height);
-  color: var(--fb-muted);
+  height: var(--fb-control-height, var(--_fb-control-height));
+  color: var(--fb-muted, var(--_fb-muted));
   cursor: grab;
   user-select: none;
 }
@@ -645,12 +889,12 @@
 .fb-group-footer[data-drop]::before {
   content: "";
   position: absolute;
-  top: calc(var(--fb-gap) / -2 - 1px);
+  top: calc(var(--fb-gap, var(--_fb-gap)) / -2 - 1px);
   right: 0;
   left: 0;
   height: 2px;
   border-radius: 1px;
-  background: var(--fb-focus);
+  background: var(--fb-focus, var(--_fb-focus));
   pointer-events: none;
 }
 
@@ -683,13 +927,17 @@
   width: max-content;
   max-width: 16rem;
   padding: 0.25rem 0.5rem;
-  border: 1px solid var(--fb-border);
-  border-radius: var(--fb-radius);
+  border: 1px solid var(--fb-border, var(--_fb-border));
+  border-radius: var(--fb-radius, var(--_fb-radius));
   /* A little lighter or darker than the page, with the page's own text colour on it. The text
      colour is left alone on purpose: a background worked out from the text colour, with the
      text then set to the page colour, comes out as one colour on itself. */
-  background: color-mix(in srgb, currentColor 16%, var(--fb-page));
-  box-shadow: 0 4px 12px var(--fb-shadow);
+  background: color-mix(
+    in srgb,
+    currentColor 16%,
+    var(--fb-page, var(--_fb-page))
+  );
+  box-shadow: 0 4px 12px var(--fb-shadow, var(--_fb-shadow));
   font-size: 0.75rem;
   font-weight: 400;
   line-height: 1rem;

@@ -12,6 +12,7 @@ npm install @arvilmena/filter-react @arvilmena/filter-core
 ## The ready-made builder
 
 It uses plain HTML controls, and takes its colours from the `--fb-*` variables in the stylesheet.
+[Theming](#theming) shows how to set them.
 
 ```tsx
 import type { FieldDefinition, FilterDefinition } from "@arvilmena/filter-core";
@@ -54,15 +55,24 @@ A button that opens a list of a table's columns. A person ticks a column to show
 its handle to move it. The handle also works from the keyboard: the arrow keys, Home and End
 move the column, and a screen reader hears each move.
 
-Below the list, "Show all" shows every column and "Reset" puts back the starting order and
-visibility. Each button is unavailable while it has nothing to do: "Show all" while every column
-is shown, and "Reset" while the settings are the starting ones. An unavailable button is dimmed
-and ignores a press, but it keeps the keyboard focus, so a person who presses "Reset" with the
-keyboard stays where they are.
+Below the list are three buttons:
+
+- **"Show all"** shows every column.
+- **"Hide all"** hides every column that may be hidden. A column with `hideable: false` stays
+  shown. Both buttons keep the order.
+- **"Reset"** puts back the starting order and visibility.
+
+Each button is unavailable while it has nothing to do: "Show all" while every column is shown,
+"Hide all" while nothing more can be hidden, and "Reset" while the settings are the starting
+ones. An unavailable button is dimmed and ignores a press, but it keeps the keyboard focus, so a
+person who presses "Reset" with the keyboard stays where they are.
 
 A screen reader hears what a button did once the change is on screen, not at the press. If your
 app keeps the settings and applies the change later, the message comes then. If your app turns
 the change down, or applies a different one, nothing is read out.
+
+Replace the wording with `labels`: `showAll`, `hideAll` and `reset` for the buttons, and
+`showAllDone`, `hideAllDone` and `resetDone` for what is read out.
 
 The `useColumnSettings` hook keeps the settings. Its result goes to the picker, and gives the
 table its columns.
@@ -121,6 +131,206 @@ A column keeps any extra properties you give it, such as a width or a cell rende
 `ColumnPicker` takes the hook's result as `state`, where `FilterBuilder` takes `value` and
 `onChange`. The table needs the same state as the picker, so the hook runs once and its result
 goes to both.
+
+### Pinned columns
+
+Give a column `pinned: "start"` or `pinned: "end"` to keep it at that end of the table. Use it
+for a column that must stay in view while the table scrolls sideways, such as the one that
+names the row.
+
+```tsx
+import { type ColumnDefinition, columnPin } from "@arvilmena/filter-core";
+
+const columns = [
+  { key: "name", label: "Name", pinned: "start", hideable: false },
+  { key: "price", label: "Price" },
+  { key: "notes", label: "Notes" },
+  { key: "actions", label: "Actions", pinned: "end" },
+] as const satisfies readonly ColumnDefinition[];
+
+function Products() {
+  const table = useColumnSettings({ columns });
+  return (
+    <>
+      <ColumnPicker state={table} />
+      <table>
+        <thead>
+          <tr>
+            {table.visibleColumns.map((column) => (
+              // "start", "end" or nothing. Your own CSS makes the column sticky.
+              <th key={column.key} data-pinned={columnPin(column)}>
+                {column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+      </table>
+    </>
+  );
+}
+```
+
+```css
+th[data-pinned="start"] {
+  position: sticky;
+  left: 0;
+}
+th[data-pinned="end"] {
+  position: sticky;
+  right: 0;
+}
+```
+
+What pinning does:
+
+- **The column keeps its place.** It is at its end of `visibleColumns` and `orderedColumns`
+  whatever the saved order says. Settings saved before the column was pinned still load.
+- **Nothing moves it.** `actions.move` on a pinned column changes nothing and does not call
+  `onChange`. Another column stops at the pinned ones: moved to a pinned column's place, it
+  lands in the nearest place it may take.
+- **The picker shows it as fixed.** Its row has a pin where the handle would be, so the arrow
+  keys and a drag cannot move it. A screen reader hears that the column cannot be moved.
+- **It may still be hidden.** Pinning says where a column stands. Add `hideable: false` to
+  keep it shown too.
+
+The library draws no table, so it adds no sticky styling. Each entry of `orderedColumns` has
+`pinned`, and the columns of `visibleColumns` are your own objects. `columnPin(column)` reads
+the pin from either, and also compiles for a list written with `as const`. Several columns
+pinned to one end stand in the order of your column list, and each needs its own `left` or
+`right` offset in your CSS.
+
+### Searching the list
+
+A table with many columns makes a long list. The picker then has a search box above the list,
+which narrows it to the columns whose name matches what a person types.
+
+```tsx
+<ColumnPicker state={table} />                  {/* a box once the table has over 10 columns */}
+<ColumnPicker state={table} search />           {/* always a box */}
+<ColumnPicker state={table} search={false} />   {/* never a box */}
+```
+
+| `search`           | The search box is there                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `"auto"` (default) | When the table has more than 10 columns, which is when the list scrolls. The number is `COLUMN_PICKER_SEARCH_THRESHOLD`. |
+| `true`             | Always                                                                                                                   |
+| `false`            | Never                                                                                                                    |
+
+How the search works:
+
+- **Matching.** The column's label is searched, ignoring case. Every word typed must be in
+  the label, in any order, so "price close" finds "Close price".
+- **Moving is off while a search is on.** The rows between the listed ones are out of sight,
+  so a move could not show where the column lands. The handles are turned off, and a line
+  below the box says "Clear the search to move columns." Ticking a column still works.
+- **"Show all", "Hide all" and "Reset" act on every column,** not only the listed ones.
+- **A screen reader hears the count,** such as "3 of 40 columns match." The same line is
+  shown below the box.
+- **Escape clears the search.** Pressed again, it closes the picker. The search also starts
+  empty each time the picker opens.
+
+Replace the wording with `labels`: `search`, `searchCount` and `searchMoveHint`.
+
+A picker you draw yourself can use the same matching. `searchColumns` and
+`columnMatchesSearch` are pure functions in `@arvilmena/filter-core`:
+
+```tsx
+import { searchColumns } from "@arvilmena/filter-core";
+
+const listed = searchColumns(table.orderedColumns, typed);
+```
+
+### The dialog view
+
+With a few hundred columns, a small list means a lot of scrolling. The popover has a
+"Dialog view" button, which opens the same list in a dialog in the middle of the screen, about
+nine tenths of the screen's height.
+
+In the dialog the columns are laid out as a grid. It reads down the first grid column and then
+across to the next, and holds as many grid columns as its width fits. It scrolls sideways only
+when the columns need more grid columns than fit.
+
+Everything works as in the popover: ticking, the search box, "Show all", "Hide all", "Reset",
+dragging and the keyboard. On a handle, the up and down arrow keys move a column by one place, and the
+left and right arrow keys move it by one grid column.
+
+The dialog is modal: the focus stays inside it, and the rest of the page cannot be pressed.
+Escape, the "Close" button, or a click on the dimmed page closes it, and the focus returns to
+the picker's button.
+
+```tsx
+// Open the list straight in the dialog, with no popover.
+<ColumnPicker state={table} defaultView="dialog" />;
+
+// Keep the popover only.
+<ColumnPicker state={table} dialogView={false} />;
+
+// Change the wording, and how wide a grid column is at least.
+<ColumnPicker
+  state={table}
+  labels={{ dialogView: "Wide view", closeDialog: "Done" }}
+  style={{ "--fb-dialog-column-width": "18rem" }}
+/>;
+```
+
+| Prop          | Does                                                                  |
+| ------------- | --------------------------------------------------------------------- |
+| `dialogView`  | `false` takes the "Dialog view" button off the popover                |
+| `defaultView` | `"dialog"` makes the picker's button open the dialog, not the popover |
+
+The wording is in `labels`: `dialogView`, `closeDialog` and `dialogMoveHint`, which tells a
+screen reader about the four arrow keys.
+
+The dialog is the browser's own `<dialog>` element, so it needs no other library. It reads
+from left to right; a page that reads from right to left is not tested.
+
+### Group drag
+
+Moving a block of columns one by one is slow. The "Group drag" button, above the list, lets a
+person move several columns together. While it is on:
+
+- The boxes that show and hide columns are turned off and dimmed. They still say which columns
+  are shown.
+- Each column that can move gets a second box, which selects it. It stands first in the row,
+  with a ring around it, so it is not taken for the dimmed box beside it. A click on the
+  column's name ticks it. A pinned column cannot be selected, and has a gap in that place.
+- Dragging the handle of any selected column moves every selected column. They land together
+  at the drop place, in the order they had among themselves.
+- The arrow keys, Home and End on the handle of a selected column move the whole selection.
+- Dragging a column that is not selected moves that column alone.
+
+For example, a list reads Symbol, Company, Industry, Cap, Return, Age, Release, Beta. Select
+Cap, Return and Beta, and drop them above Company. The list then reads Symbol, Cap, Return,
+Beta, Company, Industry, Age, Release.
+
+A drop empties the selection, so the next group starts fresh. A move with the keyboard keeps
+it, so the key can be pressed again. Group drag stays on until its button is pressed again. A
+group never passes a pinned column. A screen reader hears how many columns moved and where,
+once the move is on screen.
+
+```tsx
+// Leave the button out.
+<ColumnPicker state={table} groupDrag={false} />;
+
+// Change the wording.
+<ColumnPicker
+  state={table}
+  labels={{
+    groupDrag: "Move several",
+    select: (label) => `Select ${label}`,
+    movedGroup: (count, position, total) =>
+      `${count} columns moved to place ${position} of ${total}.`,
+  }}
+/>;
+```
+
+The wording is in `labels`: `groupDrag`, `groupDragHint`, `select` and `movedGroup`.
+
+Group drag works in the dialog too, across its grid columns. While a search narrows the list,
+no column can be selected or moved.
+
+A row you draw with `renderRow` must draw the selection box itself. See
+[Replacing parts of the picker](#replacing-parts-of-the-picker).
 
 ### Who keeps the settings
 
@@ -196,7 +406,12 @@ reports the difference. Saving table state is planned as a feature of its own.
 | `align`         | `"end"` lines the list up with the button's right edge                 |
 | `renderTrigger` | Draws your own button. Spread the props it is given onto the button    |
 | `renderRow`     | Draws the inside of one row from the `checkboxProps` and `handleProps` |
+| `search`        | `true` or `false` forces the search box on or off. See above           |
+| `dialogView`    | `false` takes the "Dialog view" button away. See above                 |
+| `defaultView`   | `"dialog"` opens the list straight in the dialog. See above            |
+| `groupDrag`     | `false` takes the "Group drag" button away. See above and below        |
 | `className`     | Added to the picker's own class                                        |
+| `style`         | An inline style for the picker. It also takes the `--fb-*` variables   |
 
 The list is kept inside the screen sideways. Where lining it up with the button would run it
 past the left or right edge, it moves sideways just far enough to fit. On a page that a person
@@ -206,10 +421,33 @@ near the bottom of the screen it keeps a usable height, so it can still pass the
 and the page scrolls to show the rest of it.
 
 Spread all of `handleProps` onto your handle. It carries the `touch-action` style that lets a
-finger drag the handle. Keep the same `renderRow` function between renders (see `useCallback`),
+finger drag the handle. A row also has `pinned` and `movable`. On a row that is not movable,
+such as a pinned one, `handleProps` turns the handle off, or you can leave the handle out. Keep the same `renderRow` function between renders (see `useCallback`),
 or every row redraws whenever the picker does. `labels` may be written in place.
 
-The picker reads the `--fb-*` variables from its own class, `.fb-columns`.
+For group drag, a row also has `grouping`, `selected` and `selectProps`. While `grouping` is
+true, draw a checkbox from `selectProps`, and point the row's `<label>` at it. With
+`renderRow`, the "Group drag" button is off until you pass `groupDrag`, so rows written before
+group drag existed keep working.
+
+```tsx
+const renderRow = useCallback(
+  (row: ColumnPickerRow) => (
+    <>
+      {row.grouping && <input {...row.selectProps} />}
+      <input {...row.checkboxProps} />
+      <button {...row.handleProps}>Move</button>
+      <label htmlFor={row.grouping ? row.selectProps.id : row.checkboxProps.id}>
+        {row.column.label}
+      </label>
+    </>
+  ),
+  [],
+);
+```
+
+The picker reads the same `--fb-*` variables as the builder. Set them on the picker with
+`className` or `style`, or on any element around it. See [Theming](#theming).
 
 ### In a shadow root or a frame
 
@@ -236,11 +474,12 @@ visible columns (`visibleColumns`), and the actions that change the settings. Th
 object never changes, and `visibleColumns` changes only when its content does, so a memoised
 table does not redraw for nothing.
 
-Two more values say whether a button has anything to do:
+Three more values say whether a button has anything to do:
 
 | Value        | True when                                   | So this would change nothing |
 | ------------ | ------------------------------------------- | ---------------------------- |
 | `allVisible` | Every column is shown                       | `actions.showAll`            |
+| `allHidden`  | Every column that may be hidden is hidden   | `actions.hideAll`            |
 | `isDefault`  | The settings are the column list's defaults | `actions.reset`              |
 
 The example marks such a button with `aria-disabled`, not `disabled`. A button that turns itself
@@ -258,8 +497,14 @@ const columns = [
 ] as const satisfies readonly ColumnDefinition[];
 
 function ProductColumns() {
-  const { orderedColumns, visibleColumns, allVisible, isDefault, actions } =
-    useColumnSettings({ columns });
+  const {
+    orderedColumns,
+    visibleColumns,
+    allVisible,
+    allHidden,
+    isDefault,
+    actions,
+  } = useColumnSettings({ columns });
   return (
     <>
       <ul>
@@ -299,6 +544,9 @@ function ProductColumns() {
       >
         Show all
       </button>
+      <button type="button" aria-disabled={allHidden} onClick={actions.hideAll}>
+        Hide all
+      </button>
       <button type="button" aria-disabled={isDefault} onClick={actions.reset}>
         Reset
       </button>
@@ -307,6 +555,136 @@ function ProductColumns() {
   );
 }
 ```
+
+To move several columns together, call `actions.moveGroup` with their keys and the place the
+first of them should take. The columns land side by side, in the order they had among
+themselves, and never pass a pinned column:
+
+```tsx
+// "cap", "return" and "beta" land together, with the first of them in the second place.
+actions.moveGroup(["cap", "return", "beta"], 1);
+```
+
+## Theming
+
+The ready-made builder and column picker take their look from CSS variables whose names start
+with `--fb-`. With nothing set, the colours are worked out from the page's own text colour, so
+both fit a light page and a dark page.
+
+To change the look, set a variable. Set it on the component, or on any element around it, up
+to `:root`. One class or one inline style is enough. Your value always wins over the default,
+whatever order the style sheets load in, because the library never sets these variables on the
+component itself.
+
+### With plain CSS
+
+```css
+/* Every builder and picker on the page. */
+:root {
+  --fb-radius: 0;
+  --fb-focus: rebeccapurple;
+}
+
+/* Only the ones inside this element. */
+.table-tools {
+  --fb-control-height: 2rem;
+}
+```
+
+```tsx
+<div className="table-tools">
+  <ColumnPicker state={table} />
+</div>;
+```
+
+A class on the component itself works the same way:
+
+```css
+.compact {
+  --fb-control-height: 1.75rem;
+  --fb-gap: 0.25rem;
+}
+```
+
+```tsx
+<FilterBuilder
+  className="compact"
+  value={filter}
+  onChange={setFilter}
+  fields={fields}
+/>;
+```
+
+### With utility classes
+
+A CSS framework that can set a variable from a class needs no CSS file. This is Tailwind's
+syntax for it:
+
+```tsx
+<ColumnPicker
+  state={table}
+  className="[--fb-radius:0] [--fb-focus:var(--color-indigo-500)]"
+/>;
+
+{
+  /* Or on an element around several components. */
+}
+<div className="[--fb-control-height:2rem]">
+  <FilterBuilder value={filter} onChange={setFilter} fields={fields} />
+  <ColumnPicker state={table} />
+</div>;
+```
+
+### With an inline style
+
+`ColumnPicker` and `FilterBuilder` take `style` beside `className`. Its type knows the
+variables, so TypeScript suggests their names and needs no cast.
+
+```tsx
+<ColumnPicker
+  state={table}
+  style={{ "--fb-radius": "0", "--fb-focus": "teal" }}
+/>;
+```
+
+### The variables
+
+| Variable                   | Sets                                                | Default                               |
+| -------------------------- | --------------------------------------------------- | ------------------------------------- |
+| `--fb-page`                | The colour behind the component                     | `--background`, else the page colour  |
+| `--fb-border`              | Borders                                             | 22% of the text colour                |
+| `--fb-control-bg`          | The background of buttons and boxes                 | 7% of the text colour on `--fb-page`  |
+| `--fb-hover-bg`            | The background under the pointer                    | 15% of the text colour on `--fb-page` |
+| `--fb-popover-bg`          | The background of an open list                      | `--popover`, else `--fb-page`         |
+| `--fb-muted`               | Quieter text, such as counts and handles            | 60% of the text colour                |
+| `--fb-focus`               | The focus ring and the drop line                    | `--ring`, else the system highlight   |
+| `--fb-shadow`              | The shadow under an open list                       | `rgb(0 0 0 / 0.25)`                   |
+| `--fb-and`                 | The bar of a group where every condition must pass  | `#3b82f6`                             |
+| `--fb-or`                  | The bar of a group where one condition is enough    | `#f59e0b`                             |
+| `--fb-radius`              | Rounded corners                                     | `0.375rem`                            |
+| `--fb-control-height`      | The height of buttons and boxes                     | `2.25rem`                             |
+| `--fb-gap`                 | The space between controls                          | `0.5rem`                              |
+| `--fb-value-width`         | The widest a value box grows                        | `12rem`, and `24rem` for a list       |
+| `--fb-backdrop`            | The dimmed page around the column picker's dialog   | `rgb(0 0 0 / 0.45)`                   |
+| `--fb-dialog-column-width` | The least width of a grid column in that dialog     | `14rem`                               |
+| `--fb-selected-bg`         | Behind a row selected for a group drag              | 20% of `--fb-focus`                   |
+| `--fb-locked-opacity`      | How faint a locked checkbox is                      | `0.4`                                 |
+| `--fb-select-ring`         | The ring around a row's selection box in group drag | `--fb-focus`                          |
+| `--fb-sticky-top`          | How far below the top a group's "And" or "Or" stays | `0.5rem`                              |
+
+The same names are exported as `FILTER_THEME_VARIABLES` from `@arvilmena/filter-react/ui`.
+
+Three things to know:
+
+- **Colours must be whole colours,** such as `#fff` or `oklch(1 0 0)`. Some themes store only
+  the numbers of a colour (`--background: 0 0% 100%`) and wrap them in `hsl()` where they are
+  used. With such a theme, set `--fb-page: hsl(var(--background))`, and `--fb-popover-bg` and
+  `--fb-focus` the same way from `--popover` and `--ring`.
+- **Some defaults follow `--fb-page`.** The control and hover backgrounds mix the text colour
+  into it. They are worked out on the component, so set `--fb-page` on the component or
+  above it.
+- **For anything a variable does not cover,** restyle the `fb-` classes in your own CSS, or
+  draw your own component from the hooks.
 
 ## Saving a table's state
 
@@ -332,7 +710,7 @@ import { useMemo } from "react";
 
 const PAGE_SIZES = [25, 50, 100];
 
-// Outside the component, so the parts are made once.
+// Outside the component here. Inside it works too: see "Where to build the parts".
 const parts = {
   filter: filterStatePart(),
   columns: columnStatePart(columns),
@@ -396,6 +774,7 @@ takes a number or a function from the old number to the new one.
 | `initialSaved` | The saved value a server already read, for the first render               |
 | `version`      | The version of your state format. Defaults to 1                           |
 | `migrate`      | Upgrades the parts of a value saved under another version                 |
+| `check`        | Corrects parts that depend on each other, after each was parsed           |
 | `saveDelayMs`  | How long to wait after the last change before saving. Defaults to 300     |
 | `onError`      | Called with the error and `"load"`, `"save"` or `"remove"` when one fails |
 
@@ -442,6 +821,57 @@ What the hook guarantees:
 - **A saved value is checked before use.** A broken part falls back to its default alone.
 - **A part added to `parts` later gets a value at once:** the one saved under its name, or its
   default.
+
+### Where to build the parts
+
+Build the parts outside the component when they need nothing from it. When they do, such as
+a column list that comes from props, build them inside it:
+
+```tsx
+function Orders({ columns, rows }) {
+  const saved = useSavedTableState({
+    id: "orders",
+    parts: { filter: filterStatePart(), columns: columnStatePart(columns) },
+  });
+  // …
+}
+```
+
+That is safe, and needs no `useMemo`:
+
+- A new `parts` object on every render starts no load and no save, and the setters in
+  `saved.set` stay the same functions for as long as the part names do.
+- The hook uses the newest parts each time it reads a saved value: on a load, on `reload()`
+  and for a part added later.
+- A value the hook has read already is not parsed again when the parts change. So a column
+  list that changes while the table is on screen does not re-fit `saved.values.columns`. The
+  column hook does that fitting on every render, so the table is still right.
+
+A parts object typed with an `interface` works like one typed with a `type`.
+
+### Passing the column list once
+
+`columnStatePart(columns)` and `useColumnSettings({ columns })` both take the column list. To
+pass it once, call `columnStatePart()` with no list. The part is then `null` until something
+is saved, and the column hook fits the saved settings to the list:
+
+```tsx
+const parts = { filter: filterStatePart(), columns: columnStatePart() };
+
+function Orders({ columns, rows }) {
+  const saved = useSavedTableState({ id: "orders", parts });
+  const table = useColumnSettings({
+    columns,
+    value: saved.values.columns,
+    onChange: saved.set.columns,
+  });
+  // …
+}
+```
+
+Draw the table from `table.visibleColumns`. `saved.values.columns` is then the settings as
+they were saved, or `null`, and may name columns the list no longer has. Keep
+`columnStatePart(columns)` when your code reads `saved.values.columns` itself.
 
 ### One hook call per key
 
@@ -642,8 +1072,63 @@ const saved = useSavedTableState({
 });
 ```
 
+### A rule that spans parts
+
+Each part is parsed by itself. For a rule that needs two parts, pass `check`. It gets every
+part's value, and the names of the parts that got their default because nothing usable was
+saved for them. It returns the parts to correct, or nothing:
+
+```tsx
+// The name a person gave the saved filter.
+const filterNamePart = {
+  defaultValue: "",
+  parse: (saved: unknown) => (typeof saved === "string" ? saved : undefined),
+};
+
+const saved = useSavedTableState({
+  id: "orders",
+  parts: { filter: filterStatePart(), filterName: filterNamePart },
+  // A name without its filter means nothing, so it goes when the filter was not usable.
+  check: (values, defaulted) =>
+    defaulted.includes("filter") ? { filterName: "" } : undefined,
+});
+```
+
+`check` runs each time a saved value is read: on a load, on `reload()` and on `initialSaved`.
+It does not run on the changes a person makes. It is as loose as `parse`: when it throws, the
+parsed values are used, and nothing is reported.
+
+### State the app kept elsewhere before
+
+If your app already keeps a table's state under a key of its own, wrap the store in
+`carryOverStore`. The old state is then shown when nothing is saved under the new key:
+
+```tsx
+import { carryOverStore, localStorageStore } from "@arvilmena/filter-core";
+
+const store = carryOverStore(localStorageStore(), {
+  // Each part's old value by the part's name: `{ filter, columns }`. `null` for nothing.
+  read: () => JSON.parse(localStorage.getItem("orders-table") ?? "null"),
+  // Optional. Leave it out to keep the old entry.
+  remove: () => localStorage.removeItem("orders-table"),
+});
+
+const saved = useSavedTableState({ id: "orders", parts, store });
+```
+
+- The old value is checked like any saved value, part by part. If it has another shape than
+  your parts, turn it into `{ filter, columns }` inside `read`.
+- Nothing is written until the person changes something. That first save holds every carried
+  part, and the old entry is removed after the store has taken it, if you passed `remove`.
+- `clear()` removes the old entry too. Without `remove`, it saves an empty state under the
+  new key and does not delete it, so that the old state does not come back.
+- It works with every store, and `read` and `remove` may answer with a promise. `status`
+  stays `"loading"` until both the store and `read` have answered.
+- With `initialSaved`, the store is not read for the first key, so the server must read the
+  older place itself.
+
 The [filter-core README](https://github.com/ArvilDidThis/filter-builder/tree/main/packages/filter-core#saved-table-state)
-describes the key, the saved format and each store in full.
+describes the key, the saved format, each store and `carryOverStore` in full.
 
 To filter rows, use `createRowPredicate` from `@arvilmena/filter-core`. The full guide is in the
 [repository](https://github.com/ArvilDidThis/filter-builder#readme).

@@ -8,6 +8,8 @@
 // This file names no browser types, because the package runs anywhere JavaScript runs. It
 // describes the few browser features it uses itself.
 
+import { createSavedState, DEFAULT_STATE_VERSION } from "./saved-state";
+
 /**
  * Keeps one JSON value per key. Each method may answer at once or with a promise.
  *
@@ -442,6 +444,160 @@ function addressFor(url: FetchStoreOptions["url"], key: string): string {
   const fragment = fragmentStart === -1 ? "" : url.slice(fragmentStart);
   const joiner = address.includes("?") ? "&" : "?";
   return `${address}${joiner}key=${encodeURIComponent(key)}${fragment}`;
+}
+
+/** What `carryOverStore` needs to know about the older place. */
+export interface CarryOverOptions {
+  /**
+   * Reads the state from the older place, for a key that has nothing saved yet. Return each
+   * part's old value by the part's name, as `{ filter, columns }`. Return `null` or `undefined`
+   * when there is nothing to carry over. It may answer with a promise.
+   *
+   * The result is read like any saved value: each part goes through its `parse`, so a broken
+   * part gets its default and the others are still used. A `read` that throws or rejects
+   * counts as nothing to carry over.
+   */
+  read: (key: string) => unknown;
+  /**
+   * Removes the state from the older place. Leave it out to keep the older place as it is.
+   *
+   * It is called after the first save under the new key that follows a carry-over, once the
+   * store shows it holds that save, and when the state is removed (`clear()` in the hook). A
+   * failure after a save is ignored: the state is safe under the new key by then, and the
+   * older place is not read again.
+   */
+  remove?: (key: string) => void | Promise<void>;
+  /**
+   * The version the carried-over parts are in. Defaults to 1. Pass the `version` you give
+   * `readSavedState` or the hook when the parts are in today's shape. Pass an older version to
+   * have your `migrate` upgrade them.
+   */
+  version?: number;
+}
+
+/**
+ * Wraps a store so that a table's state is carried over from an older place, such as a key
+ * the app used before it had this library.
+ *
+ * - `load` asks the store first. Only when nothing is saved there does it call `read`, and
+ *   hand back what `read` found in the saved format.
+ * - Loading writes nothing. The state reaches the store with the first save, which is the
+ *   first change a person makes.
+ * - The older place is left alone, unless the app passes `remove`.
+ * - Without `remove`, removing the state saves an empty state in the store and does not
+ *   delete the entry. Otherwise the next load would carry the old state over again.
+ *
+ * Every method answers at once when the store and the app's functions do, so local storage is
+ * still read before the browser paints.
+ *
+ * @example
+ * const store = carryOverStore(localStorageStore(), {
+ *   // The app used to keep `{ filter, columns }` under a key of its own.
+ *   read: () => JSON.parse(localStorage.getItem("orders-table") ?? "null"),
+ *   remove: () => localStorage.removeItem("orders-table"),
+ * });
+ */
+export function carryOverStore(
+  store: StateStore,
+  options: CarryOverOptions,
+): StateStore {
+  const version = options.version ?? DEFAULT_STATE_VERSION;
+  /** The keys whose state came from the older place and is not in the store yet. */
+  const carried = new Set<string>();
+
+  /** What `read` found, in the saved format. `undefined` when there is nothing to carry. */
+  const wrap = (key: string, old: unknown): unknown => {
+    if (!isPartsObject(old)) return undefined;
+    carried.add(key);
+    return createSavedState(old, version);
+  };
+
+  const carryOver = (key: string): unknown => {
+    try {
+      const old = options.read(key);
+      return isPromiseLike(old)
+        ? old.then(
+            (found) => wrap(key, found),
+            () => undefined,
+          )
+        : wrap(key, old);
+    } catch {
+      // The older place could not be read. The table starts from its defaults.
+      return undefined;
+    }
+  };
+
+  /** Removes the older state, now that the store holds the state. A failure is ignored. */
+  const removeOld = (key: string, stored: unknown): void => {
+    // Nothing stored means the save did not stick, so the older state is all there is.
+    if (stored === undefined || stored === null || !carried.delete(key)) return;
+    try {
+      const answer = options.remove?.(key);
+      if (isPromiseLike(answer)) answer.then(undefined, () => undefined);
+    } catch {
+      // The store holds the state, so it is safe. The older place is not read again.
+    }
+  };
+
+  /**
+   * After a save that follows a carry-over, removes the older state once the store shows it
+   * holds the state. A store can save nothing without failing: local storage that the browser
+   * blocks does so. Any failure keeps the older state, and the next save tries again.
+   */
+  const removeCarried = (key: string): void | Promise<void> => {
+    if (options.remove === undefined || !carried.has(key)) return;
+    try {
+      const stored = store.load(key);
+      // A promise goes back, so the save answers once this step is over.
+      if (!isPromiseLike(stored)) return removeOld(key, stored);
+      return Promise.resolve(stored).then(
+        (found) => removeOld(key, found),
+        () => undefined,
+      );
+    } catch {
+      // The store could not be read back, so the older state stays.
+    }
+  };
+
+  return {
+    load(key) {
+      const answer = store.load(key);
+      return isPromiseLike(answer)
+        ? answer.then((saved) => saved ?? carryOver(key))
+        : (answer ?? carryOver(key));
+    },
+    save(key, value) {
+      const answer = store.save(key, value);
+      if (!isPromiseLike(answer)) return removeCarried(key);
+      return answer.then(() => removeCarried(key));
+    },
+    remove(key) {
+      const { remove } = options;
+      if (remove === undefined) {
+        // The older place stays, so an empty state marks the key as cleared.
+        return store.save(key, createSavedState({}, version));
+      }
+      carried.delete(key);
+      const answer = store.remove(key);
+      return isPromiseLike(answer)
+        ? answer.then(() => remove(key))
+        : remove(key);
+    },
+  };
+}
+
+/** Whether `read` gave parts by name: an object that is not a list. */
+function isPartsObject(value: unknown): value is object {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Whether a store or a function of the app answered with a promise, and not at once. */
+function isPromiseLike(value: unknown): value is PromiseLike<void> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
 }
 
 /** The JSON value in `text`, or `undefined` when the text is not JSON. */

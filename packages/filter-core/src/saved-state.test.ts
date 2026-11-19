@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
-import type { ColumnDefinition, ColumnSettings } from "./columns";
+import {
+  type ColumnDefinition,
+  type ColumnSettings,
+  reconcileColumnSettings,
+} from "./columns";
 import { createRowPredicate } from "./evaluate";
 import {
   columnStatePart,
@@ -10,6 +14,7 @@ import {
   readSavedState,
   resolveStateKey,
   type StatePart,
+  type StateParts,
 } from "./saved-state";
 import type { FilterDefinition } from "./types";
 
@@ -297,6 +302,180 @@ describe("readSavedState", () => {
   });
 });
 
+describe("a rule that spans parts (`check`)", () => {
+  /** A table that saves a filter and the name a person gave that filter. */
+  const NAMED_PARTS = {
+    filter: filterStatePart(),
+    filterName: {
+      defaultValue: "",
+      parse: (saved: unknown) =>
+        typeof saved === "string" ? saved : undefined,
+    },
+  };
+
+  /** Drops the name when the filter it belongs to was not usable. */
+  const dropNameWithoutFilter = vi.fn(
+    (
+      _values: { filter: FilterDefinition; filterName: string },
+      defaulted: readonly ("filter" | "filterName")[],
+    ) => (defaulted.includes("filter") ? { filterName: "" } : undefined),
+  );
+
+  afterEach(() => {
+    dropNameWithoutFilter.mockClear();
+  });
+
+  it("should correct one part from what another part turned out to be", () => {
+    const saved = createSavedState({ filter: "broken", filterName: "Cheap" });
+    const state = readSavedState(saved, NAMED_PARTS, {
+      check: dropNameWithoutFilter,
+    });
+    expect(state).toEqual({ filter: EMPTY_FILTER, filterName: "" });
+  });
+
+  it("should keep the parts when the rule returns nothing", () => {
+    const saved = createSavedState({
+      filter: PRICE_FILTER,
+      filterName: "Cheap",
+    });
+    const state = readSavedState(saved, NAMED_PARTS, {
+      check: dropNameWithoutFilter,
+    });
+    expect(state).toEqual({ filter: PRICE_FILTER, filterName: "Cheap" });
+    expect(dropNameWithoutFilter).toHaveBeenCalledExactlyOnceWith(
+      { filter: PRICE_FILTER, filterName: "Cheap" },
+      [],
+    );
+  });
+
+  it("should name a part that is missing as defaulted too", () => {
+    const saved = createSavedState({ filterName: "Cheap" });
+    const state = readSavedState(saved, NAMED_PARTS, {
+      check: dropNameWithoutFilter,
+    });
+    expect(state.filterName).toBe("");
+    expect(dropNameWithoutFilter.mock.calls[0]?.[1]).toEqual(["filter"]);
+  });
+
+  it("should give the rule each part's type", () => {
+    readSavedState(createSavedState({}), NAMED_PARTS, {
+      check: (values, defaulted) => {
+        expectTypeOf(values.filter).toEqualTypeOf<FilterDefinition>();
+        expectTypeOf(values.filterName).toEqualTypeOf<string>();
+        expectTypeOf(defaulted).toEqualTypeOf<
+          readonly ("filter" | "filterName")[]
+        >();
+        return undefined;
+      },
+    });
+  });
+
+  it("should use the parsed values when the rule throws", () => {
+    const saved = createSavedState({
+      filter: PRICE_FILTER,
+      filterName: "Cheap",
+    });
+    const state = readSavedState(saved, NAMED_PARTS, {
+      check: (values) => {
+        // Changing the values on the way to a throw must not show either.
+        (values as { filterName: string }).filterName = "changed";
+        throw new Error("the rule broke");
+      },
+    });
+    expect(state).toEqual({ filter: PRICE_FILTER, filterName: "Cheap" });
+  });
+
+  it.each([
+    ["a list", ["Cheap"]],
+    ["text", "Cheap"],
+    ["null", null],
+  ])(
+    "should use the parsed values when the rule returns %s",
+    (_label, answer) => {
+      const saved = createSavedState({
+        filter: PRICE_FILTER,
+        filterName: "Cheap",
+      });
+      const state = readSavedState(saved, NAMED_PARTS, {
+        check: () => answer as never,
+      });
+      expect(state).toEqual({ filter: PRICE_FILTER, filterName: "Cheap" });
+    },
+  );
+
+  it("should ignore a returned part the app does not have, and an undefined one", () => {
+    const saved = createSavedState({
+      filter: PRICE_FILTER,
+      filterName: "Cheap",
+    });
+    const state = readSavedState(saved, NAMED_PARTS, {
+      check: () => ({ filterName: undefined, other: 1 }) as never,
+    });
+    expect(state).toEqual({ filter: PRICE_FILTER, filterName: "Cheap" });
+  });
+
+  it("should not run the rule when nothing usable is saved", () => {
+    readSavedState(undefined, NAMED_PARTS, { check: dropNameWithoutFilter });
+    readSavedState(createSavedState({ filterName: "Cheap" }, 9), NAMED_PARTS, {
+      check: dropNameWithoutFilter,
+    });
+    // A saved state whose parts are all missing or broken.
+    readSavedState(createSavedState({}), NAMED_PARTS, {
+      check: dropNameWithoutFilter,
+    });
+    readSavedState(
+      createSavedState({ filter: "broken", filterName: 7 }),
+      NAMED_PARTS,
+      { check: dropNameWithoutFilter },
+    );
+    expect(dropNameWithoutFilter).not.toHaveBeenCalled();
+  });
+
+  it("should run the rule on the parts `migrate` upgraded", () => {
+    const state = readSavedState(
+      { version: 1, parts: { filter: "broken", name: "Cheap" } },
+      NAMED_PARTS,
+      {
+        version: 2,
+        migrate: (parts) => ({ filter: parts.filter, filterName: parts.name }),
+        check: dropNameWithoutFilter,
+      },
+    );
+    expect(state.filterName).toBe("");
+  });
+});
+
+describe("parts and values typed with an interface", () => {
+  interface TableValues {
+    filter: FilterDefinition;
+    sort: Sort | null;
+  }
+  interface TableParts {
+    filter: StatePart<FilterDefinition>;
+    sort: StatePart<Sort | null>;
+  }
+  const PRICE_SORT: Sort = { key: "price", direction: "desc" };
+
+  it("should read parts declared as an interface", () => {
+    const parts: TableParts = { filter: filterStatePart(), sort: sortPart };
+    const state = readSavedState(createSavedState({ sort: PRICE_SORT }), parts);
+    expectTypeOf(state.sort).toEqualTypeOf<Sort | null>();
+    expect(state).toEqual({ filter: EMPTY_FILTER, sort: PRICE_SORT });
+  });
+
+  it("should read and save values declared as an interface", () => {
+    const parts: StateParts<TableValues> = {
+      filter: filterStatePart(),
+      sort: sortPart,
+    };
+    const state: TableValues = readSavedState(undefined, parts);
+    expect(createSavedState(state)).toEqual({
+      version: 1,
+      parts: { filter: EMPTY_FILTER, sort: null },
+    });
+  });
+});
+
 describe("createSavedState", () => {
   it("should wrap the parts with version 1", () => {
     expect(createSavedState({ sort: null })).toEqual({
@@ -428,7 +607,49 @@ describe("columnStatePart", () => {
     expect(
       parse({ order: ["notes", "gone", "name"], hidden: ["name"] }),
     ).toEqual({ order: ["notes", "name", "price"], hidden: [] });
-    expect(parse("broken")).toEqual(COLUMN_DEFAULTS);
+    // One list is enough for the value to be fitted, and not turned down.
+    for (const saved of [{ order: ["price"] }, { hidden: ["price"] }]) {
+      expect(parse(saved)).toEqual(reconcileColumnSettings(COLUMNS, saved));
+    }
+  });
+
+  it.each([
+    ["text", "broken"],
+    ["null", null],
+    ["a list", [["name"], []]],
+    ["neither list", { order: "name", hidden: 7 }],
+  ])(
+    "should give its default for %s, and report it to `check`",
+    (_label, saved) => {
+      const seen: string[][] = [];
+      const state = readSavedState(
+        createSavedState({ columns: saved, filter: EMPTY_FILTER }),
+        { filter: filterStatePart(), columns: columnStatePart(COLUMNS) },
+        {
+          check: (_values, defaulted) => {
+            seen.push([...defaulted]);
+            return undefined;
+          },
+        },
+      );
+      expect(state.columns).toEqual(COLUMN_DEFAULTS);
+      expect(seen).toEqual([["columns"]]);
+    },
+  );
+
+  it("should not report saved settings equal to the defaults as defaulted", () => {
+    const seen: string[][] = [];
+    readSavedState(
+      createSavedState({ columns: COLUMN_DEFAULTS, filter: EMPTY_FILTER }),
+      { filter: filterStatePart(), columns: columnStatePart(COLUMNS) },
+      {
+        check: (_values, defaulted) => {
+          seen.push([...defaulted]);
+          return undefined;
+        },
+      },
+    );
+    expect(seen).toEqual([[]]);
   });
 
   it("should keep settings that already fit as the same object", () => {
@@ -437,5 +658,32 @@ describe("columnStatePart", () => {
       hidden: [],
     };
     expect(columnStatePart(COLUMNS).parse(saved)).toBe(saved);
+  });
+
+  describe("without the column list", () => {
+    it("should be empty until something is saved", () => {
+      const part = columnStatePart();
+      expectTypeOf(part).toEqualTypeOf<StatePart<ColumnSettings | null>>();
+      expect(part.defaultValue).toBeNull();
+    });
+
+    it("should hand on saved settings as they are, for a later fit", () => {
+      const saved = { order: ["notes", "gone", "name"], hidden: ["name"] };
+      expect(columnStatePart().parse(saved)).toBe(saved);
+    });
+
+    it.each([
+      ["text", "broken"],
+      ["null", null],
+      ["a list", [["name"], []]],
+      ["no hidden list", { order: ["name"] }],
+      ["no order", { hidden: [] }],
+      ["a key that is not text", { order: ["name", 7], hidden: [] }],
+    ])("should turn down %s", (_label, saved) => {
+      const state = readSavedState(createSavedState({ columns: saved }), {
+        columns: columnStatePart(),
+      });
+      expect(state.columns).toBeNull();
+    });
   });
 });

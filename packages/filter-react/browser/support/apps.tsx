@@ -133,13 +133,19 @@ export function pickerParts(within: ParentNode = document) {
     if (found === undefined) throw new Error(`No row is named ${label}`);
     return found;
   };
-  const footerButton = (name: string): HTMLButtonElement => {
-    const found = Array.from(
-      within.querySelectorAll<HTMLButtonElement>(".fb-columns-footer button"),
-    ).find((button) => button.textContent === name);
-    if (found === undefined) throw new Error(`No button is named ${name}`);
-    return found;
-  };
+  const namedButton =
+    (group: string) =>
+    (name: string): HTMLButtonElement => {
+      const found = Array.from(
+        within.querySelectorAll<HTMLButtonElement>(`${group} button`),
+      ).find((button) => button.textContent === name);
+      if (found === undefined) throw new Error(`No button is named ${name}`);
+      return found;
+    };
+  /** A button below the list. */
+  const footerButton = namedButton(".fb-columns-footer");
+  /** A button above the list. */
+  const toolButton = namedButton(".fb-columns-tools");
   return {
     trigger: () => one<HTMLButtonElement>(".fb-columns-trigger"),
     popover: () => within.querySelector<HTMLElement>(".fb-columns-popover"),
@@ -155,12 +161,34 @@ export function pickerParts(within: ParentNode = document) {
       one<HTMLButtonElement>(
         `[data-fb-column-handle][aria-label="Move ${label}"]`,
       ),
+    /** The box that shows or hides a column. */
     checkbox: (label: string) => {
-      const box = row(label).querySelector<HTMLInputElement>("input");
+      const box = row(label).querySelector<HTMLInputElement>(
+        "input:not(.fb-columns-select)",
+      );
       if (box === null) throw new Error(`The row ${label} has no checkbox`);
       return box;
     },
+    /** The box that selects a row for a group drag. It is there while group drag is on. */
+    selectBox: (label: string) => {
+      const box = row(label).querySelector<HTMLInputElement>(
+        "input.fb-columns-select",
+      );
+      if (box === null) throw new Error(`The row ${label} has no select box`);
+      return box;
+    },
+    /** The names of the rows selected for a group drag, in order. */
+    selected: () =>
+      rows()
+        .filter((item) => item.hasAttribute("data-selected"))
+        .map((item) => item.textContent?.replace("⠿", "").trim()),
+    /** The dialog the list is shown in, once "Dialog view" has opened it. */
+    dialog: () => within.querySelector<HTMLDialogElement>(".fb-columns-dialog"),
+    dialogView: () => toolButton("Dialog view"),
+    closeDialog: () => toolButton("Close"),
+    groupDrag: () => toolButton("Group drag"),
     showAll: () => footerButton("Show all"),
+    hideAll: () => footerButton("Hide all"),
     reset: () => footerButton("Reset"),
     /** The column keys the table shows, in order. */
     table: () => one('[data-testid="table"]').textContent,
@@ -188,6 +216,19 @@ export async function openPicker(
     .not.toBeNull();
   await clickOn(picker.trigger());
   await expect.poll(picker.popover).not.toBeNull();
+  return picker;
+}
+
+/**
+ * Draws `PickerApp` on the page and opens its picker in the dialog, with a real click on
+ * "Dialog view".
+ */
+export async function mountOpenDialog(
+  props: PickerAppProps = {},
+): Promise<PickerParts> {
+  const picker = await mountOpenPicker(props);
+  await clickOn(picker.dialogView());
+  await expect.poll(picker.dialog).not.toBeNull();
   return picker;
 }
 
