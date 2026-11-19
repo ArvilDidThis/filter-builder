@@ -133,7 +133,7 @@ export interface ReadSavedStateOptions<Values = unknown>
    * keep them all. A returned part replaces the read one as it is, and is not parsed again.
    *
    * The step is as loose as `parse`: when it throws, the values read before it are used. It is
-   * not called when nothing usable is saved at all, because every part then has its default.
+   * not called when every part got its default, because nothing usable was saved then.
    *
    * @example
    * check: (values, defaulted) =>
@@ -171,12 +171,16 @@ export function readSavedState<Values>(
   const savedParts = readSavedParts(saved, options);
   const values = {} as Values;
   const defaulted: (keyof Values)[] = [];
-  for (const name of Object.keys(parts) as (keyof Values & string)[]) {
+  const names = Object.keys(parts) as (keyof Values & string)[];
+  for (const name of names) {
     const read = readPart(parts[name], savedParts, name);
     values[name] = read.value;
     if (read.isDefault) defaulted.push(name);
   }
-  if (savedParts === undefined || options.check === undefined) return values;
+  // With every part at its default, nothing usable was saved, so there is nothing to check.
+  if (options.check === undefined || defaulted.length === names.length) {
+    return values;
+  }
   return checkTogether(values, defaulted, options.check);
 }
 

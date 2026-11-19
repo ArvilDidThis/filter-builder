@@ -415,6 +415,15 @@ describe("a rule that spans parts (`check`)", () => {
     readSavedState(createSavedState({ filterName: "Cheap" }, 9), NAMED_PARTS, {
       check: dropNameWithoutFilter,
     });
+    // A saved state whose parts are all missing or broken.
+    readSavedState(createSavedState({}), NAMED_PARTS, {
+      check: dropNameWithoutFilter,
+    });
+    readSavedState(
+      createSavedState({ filter: "broken", filterName: 7 }),
+      NAMED_PARTS,
+      { check: dropNameWithoutFilter },
+    );
     expect(dropNameWithoutFilter).not.toHaveBeenCalled();
   });
 

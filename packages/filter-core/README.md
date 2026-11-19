@@ -356,7 +356,7 @@ const state = readSavedState(saved, parts, {
 - When it throws, the values read before it are used.
 - A returned part the app does not have is ignored, and so is one that is `undefined`.
 - A returned part is used as it is. It is not parsed again.
-- It is not called when nothing usable is saved, because every part then has its default.
+- It is not called when every part got its default, because nothing usable was saved then.
 
 ### The stores
 
