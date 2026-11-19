@@ -369,6 +369,8 @@ export function ColumnPicker<Column extends ColumnDefinition>({
   const triggerRef = useRef<HTMLElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // Whether the pointer was last pressed on the dimmed page around the dialog.
+  const pressedOutside = useRef(false);
   const listRef = useRef<HTMLUListElement>(null);
   const popoverId = useId();
   const hintId = useId();
@@ -410,6 +412,11 @@ export function ColumnPicker<Column extends ColumnDefinition>({
     setSelected(NONE_SELECTED);
     pendingMove.current = null;
     pendingButton.current = null;
+    // An open modal dialog keeps the focus from every element outside it, the picker's own
+    // button among them. So the dialog is closed first, and not only taken off the page
+    // when React next draws.
+    const dialog = dialogRef.current;
+    if (dialog?.open && typeof dialog.close === "function") dialog.close();
     if (returnFocus) triggerRef.current?.focus();
   };
   // The dialog is modal (nothing else on the page can be pressed while it is open), so there
@@ -963,6 +970,9 @@ export function ColumnPicker<Column extends ColumnDefinition>({
       {open && isDialog && (
         // The browser's own dialog element. Shown as a modal, it keeps the focus inside it
         // and stands in the middle of the screen, over everything else on the page.
+        // The click it hears is one on the dimmed page around it. The keyboard has Escape
+        // and the "Close" button for that.
+        // biome-ignore lint/a11y/useKeyWithClickEvents: see the lines above
         <dialog
           aria-labelledby={titleId}
           className="fb-columns-dialog"
@@ -975,17 +985,17 @@ export function ColumnPicker<Column extends ColumnDefinition>({
           }}
           // The browser closed the dialog all the same, which it may do when asked twice.
           onClose={() => close(true)}
-          // A press on the dimmed page around the dialog closes it. Such a press lands on
-          // the dialog element itself, outside the box it draws.
+          // A click on the dimmed page around the dialog closes it. The dialog closes when
+          // the button is let go, not when it is pressed: the browser moves the focus on
+          // the press, and would take it off the picker's button again.
+          onClick={(event) => {
+            if (pressedOutside.current && isOutsideBox(event)) close(true);
+            pressedOutside.current = false;
+          }}
+          // A press that began inside the dialog and is let go outside it closes nothing,
+          // as when a person selects text and overshoots.
           onPointerDown={(event) => {
-            if (event.target !== event.currentTarget) return;
-            const box = event.currentTarget.getBoundingClientRect();
-            const isOnBox =
-              event.clientX >= box.left &&
-              event.clientX <= box.right &&
-              event.clientY >= box.top &&
-              event.clientY <= box.bottom;
-            if (!isOnBox) close(true);
+            pressedOutside.current = isOutsideBox(event);
           }}
           ref={dialogRef}
           tabIndex={-1}
@@ -1053,6 +1063,27 @@ function handleAt(list: HTMLElement | null, index: number): HTMLElement | null {
     list?.children[index]?.querySelector<HTMLElement>(
       "[data-fb-column-handle]",
     ) ?? null
+  );
+}
+
+/**
+ * Whether a pointer is on the dimmed page around a dialog. The dialog itself hears such a
+ * press or click, and also one on its own padding, so the place is checked against the box
+ * the dialog draws.
+ */
+function isOutsideBox(event: {
+  target: EventTarget;
+  currentTarget: Element;
+  clientX: number;
+  clientY: number;
+}): boolean {
+  if (event.target !== event.currentTarget) return false;
+  const box = event.currentTarget.getBoundingClientRect();
+  return (
+    event.clientX < box.left ||
+    event.clientX > box.right ||
+    event.clientY < box.top ||
+    event.clientY > box.bottom
   );
 }
 
