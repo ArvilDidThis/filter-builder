@@ -876,6 +876,14 @@ describe("searchColumns", () => {
     expect(found[0]).toBe(entries[1]);
   });
 
+  it("should take plain columns that have a property named `column`", () => {
+    const columns = [
+      { key: "price", label: "Price", column: null },
+      { key: "volume", label: "Volume", column: "B" },
+    ];
+    expect(searchColumns(columns, "pri")).toEqual([columns[0]]);
+  });
+
   it("should return the same list for an empty search", () => {
     expect(searchColumns(COLUMNS, " ")).toBe(COLUMNS);
   });

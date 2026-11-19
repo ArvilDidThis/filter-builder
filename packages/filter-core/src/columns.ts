@@ -493,7 +493,9 @@ export function searchColumns<
 
 /** The label of a plain column, or of an entry of `orderedColumns`. */
 function labelOf(item: ColumnDefinition | OrderedColumn): string {
-  return "column" in item ? item.column.label : item.label;
+  // Only a plain column has a label of its own. An app's column may have a property named
+  // `column`, so that property cannot tell the two apart.
+  return "label" in item ? item.label : item.column.label;
 }
 
 /** The words of a search, in lower case. */
