@@ -18,6 +18,30 @@ async function triggerRadius(): Promise<string> {
   return getComputedStyle(picker.trigger()).borderTopLeftRadius;
 }
 
+/**
+ * A computed colour's red, green and blue, each from 0 to 1, and its opacity. A browser gives
+ * a mixed colour as `rgb(…)`, `rgba(…)` or `color(srgb …)`. Any other form fails the test, as
+ * its numbers would mean something else.
+ */
+function srgbChannels(color: string): {
+  channels: number[];
+  opacity: number;
+} {
+  const srgb = /^color\(srgb ([^)]*)\)$/.exec(color);
+  const rgb = /^rgba?\(([^)]*)\)$/.exec(color);
+  const body = srgb?.[1] ?? rgb?.[1];
+  expect(body, `a colour in sRGB, not ${color}`).toBeDefined();
+  const numbers = (body ?? "")
+    .split(/[\s,/]+/)
+    .filter(Boolean)
+    .map(Number);
+  // `rgb()` counts each channel up to 255, and `color(srgb …)` up to 1.
+  const scale = srgb ? 1 : 255;
+  const [red = Number.NaN, green = Number.NaN, blue = Number.NaN, opacity = 1] =
+    numbers;
+  return { channels: [red / scale, green / scale, blue / scale], opacity };
+}
+
 const FIELDS: readonly FieldDefinition[] = [
   { key: "name", label: "Name", type: "string" },
 ];
@@ -81,8 +105,12 @@ describe("setting a --fb-* variable", () => {
     const background = getComputedStyle(
       pickerParts().trigger(),
     ).backgroundColor;
-    const [red] = (background.match(/[\d.]+/g) ?? []).map(Number);
-    expect(red).toBeLessThan(0.2 * (background.startsWith("color(") ? 1 : 255));
+    const { channels, opacity } = srgbChannels(background);
+    // Opaque, so a lost background (fully see-through black) does not pass.
+    expect(opacity).toBe(1);
+    for (const channel of channels) expect(channel).toBeLessThan(0.2);
+    // A grey: red, green and blue about equal.
+    expect(Math.max(...channels) - Math.min(...channels)).toBeLessThan(0.02);
   });
 
   test("reaches the builder the same way, by class, by style and from around it", async () => {
