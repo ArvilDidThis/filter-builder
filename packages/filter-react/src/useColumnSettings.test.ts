@@ -733,6 +733,37 @@ describe("useColumnSettings with pinned columns", () => {
     expect(onChange).toHaveBeenCalledTimes(2);
   });
 
+  it("should move a group of columns together, and report one change", () => {
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useColumnSettings({ columns: COLUMNS, onChange }),
+    );
+    act(() => result.current.actions.moveGroup(["notes", "price"], 0));
+    expect(shape(result.current)).toBe("price (notes) name stock");
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenLastCalledWith(result.current.settings);
+  });
+
+  it("should not report a group move that changes nothing", () => {
+    const onChange = vi.fn();
+    const { result } = renderHook(() =>
+      useColumnSettings({ columns: COLUMNS, onChange }),
+    );
+    const before = result.current.settings;
+    act(() => result.current.actions.moveGroup(["price", "stock"], 1));
+    act(() => result.current.actions.moveGroup([], 0));
+    expect(result.current.settings).toBe(before);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("should keep a group between the pinned columns, and skip a pinned one", () => {
+    const { result } = renderHook(() => useColumnSettings({ columns: PINNED }));
+    act(() => result.current.actions.moveGroup(["name", "stock"], 0));
+    expect(keys(result.current)).toBe("name stock price actions");
+    act(() => result.current.actions.moveGroup(["stock", "actions"], 99));
+    expect(keys(result.current)).toBe("name price stock actions");
+  });
+
   it("should put the pinned columns back in place on reset", () => {
     const { result } = renderHook(() => useColumnSettings({ columns: PINNED }));
     act(() => result.current.actions.move("stock", 1));

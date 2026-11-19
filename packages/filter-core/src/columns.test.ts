@@ -8,6 +8,8 @@ import {
   isDefaultColumnSettings,
   moveColumn,
   moveColumnAroundPinned,
+  moveColumnGroup,
+  moveColumnGroupAroundPinned,
   orderedColumns,
   reconcileColumnSettings,
   resetColumnSettings,
@@ -574,6 +576,129 @@ describe("pinned columns", () => {
       const settings = defaultColumnSettings(columns);
       expect(moveColumnAroundPinned(columns, settings, "a", 1)).toBe(settings);
       expect(moveColumnAroundPinned(columns, settings, "b", 0)).toBe(settings);
+    });
+  });
+
+  describe("moveColumnGroup", () => {
+    const WIDE: ColumnSettings = {
+      order: [
+        "symbol",
+        "company",
+        "industry",
+        "cap",
+        "return",
+        "age",
+        "release",
+        "beta",
+      ],
+      hidden: ["age"],
+    };
+    const group = (keys: readonly string[], toIndex: number) =>
+      moveColumnGroup(WIDE, keys, toIndex).order.join(" ");
+
+    it("should land the columns together, in the order they had among themselves", () => {
+      expect(group(["cap", "return", "beta"], 1)).toBe(
+        "symbol cap return beta company industry age release",
+      );
+      // The order the keys are named in does not count.
+      expect(group(["beta", "cap", "return"], 1)).toBe(
+        "symbol cap return beta company industry age release",
+      );
+    });
+
+    it("should move a group down the order", () => {
+      expect(group(["company", "cap"], 5)).toBe(
+        "symbol industry return age release company cap beta",
+      );
+    });
+
+    it("should take an index too near either end as the nearest place that fits", () => {
+      expect(group(["cap", "beta"], -4)).toBe(
+        "cap beta symbol company industry return age release",
+      );
+      expect(group(["symbol", "cap"], 99)).toBe(
+        "company industry return age release beta symbol cap",
+      );
+    });
+
+    it("should keep the hidden keys, and not change the settings it was given", () => {
+      const moved = moveColumnGroup(WIDE, ["cap", "beta"], 0);
+      expect(moved.hidden).toBe(WIDE.hidden);
+      expect(WIDE.order[0]).toBe("symbol");
+    });
+
+    it("should return the same settings when the group already stands there", () => {
+      expect(moveColumnGroup(WIDE, ["cap", "return"], 3)).toBe(WIDE);
+      expect(moveColumnGroup(WIDE, ["release", "beta"], 99)).toBe(WIDE);
+      expect(moveColumnGroup(WIDE, [], 0)).toBe(WIDE);
+    });
+
+    it("should skip a key the order does not name, and a key named twice", () => {
+      expect(group(["gone", "beta", "beta"], 0)).toBe(
+        "beta symbol company industry cap return age release",
+      );
+      expect(moveColumnGroup(WIDE, ["gone"], 0)).toBe(WIDE);
+    });
+
+    it("should turn down an index that is not a number", () => {
+      expect(moveColumnGroup(WIDE, ["cap"], Number.NaN)).toBe(WIDE);
+    });
+
+    it("should move one column as moveColumn does", () => {
+      for (const toIndex of [-1, 0, 2, 3, 7, 12, 2.7]) {
+        expect(moveColumnGroup(WIDE, ["cap"], toIndex).order).toEqual(
+          moveColumn(WIDE, "cap", toIndex).order,
+        );
+      }
+    });
+  });
+
+  describe("moveColumnGroupAroundPinned", () => {
+    const group = (keys: readonly string[], toIndex: number) =>
+      moveColumnGroupAroundPinned(PINNED, FITTED, keys, toIndex).order.join(
+        " ",
+      );
+
+    it("should move a group between the pinned columns", () => {
+      expect(group(["price", "notes"], 2)).toBe(
+        "name stock price notes actions",
+      );
+      expect(group(["stock", "notes"], 1)).toBe(
+        "name stock notes price actions",
+      );
+    });
+
+    it("should stop a group at the pinned columns", () => {
+      expect(group(["stock", "notes"], 0)).toBe(
+        "name stock notes price actions",
+      );
+      expect(group(["price", "stock"], 4)).toBe(
+        "name notes price stock actions",
+      );
+    });
+
+    it("should skip a pinned column, and still move the others", () => {
+      expect(group(["name", "notes", "actions"], 1)).toBe(
+        "name notes price stock actions",
+      );
+      expect(
+        moveColumnGroupAroundPinned(PINNED, FITTED, ["name", "actions"], 2),
+      ).toBe(FITTED);
+    });
+
+    it("should return the same settings when nothing changes", () => {
+      expect(
+        moveColumnGroupAroundPinned(PINNED, FITTED, ["price", "stock"], 0),
+      ).toBe(FITTED);
+      expect(
+        moveColumnGroupAroundPinned(PINNED, FITTED, ["price"], Number.NaN),
+      ).toBe(FITTED);
+    });
+
+    it("should move as moveColumnGroup does with no pinned column", () => {
+      expect(
+        moveColumnGroupAroundPinned(COLUMNS, DEFAULTS, ["stock", "notes"], 0),
+      ).toEqual(moveColumnGroup(DEFAULTS, ["stock", "notes"], 0));
     });
   });
 

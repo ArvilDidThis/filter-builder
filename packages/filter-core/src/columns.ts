@@ -180,7 +180,8 @@ export function setColumnVisible(
  * columns too. An index past either end means the first or the last place.
  *
  * It does not know the column list, so it cannot tell that a column is pinned. Use
- * `moveColumnAroundPinned` for a list that pins columns.
+ * `moveColumnAroundPinned` for a list that pins columns. `moveColumnGroup` moves several
+ * columns together.
  */
 export function moveColumn(
   settings: ColumnSettings,
@@ -225,6 +226,90 @@ export function moveColumnAroundPinned(
   if (from < first || from > last) return settings;
   // A number that is not one stays so, and `moveColumn` turns it down.
   return moveColumn(settings, key, Math.min(Math.max(toIndex, first), last));
+}
+
+/**
+ * Moves several columns together, so that they stand side by side with the first of them at
+ * `toIndex` in the order. They keep the order they had among themselves, whatever order
+ * `keys` names them in. An index too near either end means the nearest place the whole group
+ * fits in.
+ *
+ * A key the order does not name is skipped, and so is a key named twice. With one key it
+ * does what `moveColumn` does.
+ *
+ * It does not know the column list, so it cannot tell that a column is pinned. Use
+ * `moveColumnGroupAroundPinned` for a list that pins columns.
+ *
+ * @example
+ * // order: symbol company industry cap return age release beta
+ * moveColumnGroup(settings, ["cap", "return", "beta"], 1).order;
+ * // symbol cap return beta company industry age release
+ */
+export function moveColumnGroup(
+  settings: ColumnSettings,
+  keys: readonly string[],
+  toIndex: number,
+): ColumnSettings {
+  return moveGroupWithin(settings, keys, toIndex, {
+    first: 0,
+    last: settings.order.length - 1,
+  });
+}
+
+/**
+ * Moves several columns together as `moveColumnGroup` does, and leaves the pinned columns
+ * where they are.
+ *
+ * - A pinned column named in `keys` is skipped, and the others still move.
+ * - The group moves only among the places between the pinned columns. An index in a pinned
+ *   column's place, or too near either end, means the nearest place the whole group fits in.
+ *
+ * Pass settings that fit the column list (see `reconcileColumnSettings`), so that the pinned
+ * columns are already at their ends of the order.
+ */
+export function moveColumnGroupAroundPinned(
+  columns: readonly ColumnDefinition[],
+  settings: ColumnSettings,
+  keys: readonly string[],
+  toIndex: number,
+): ColumnSettings {
+  return moveGroupWithin(
+    settings,
+    keys,
+    toIndex,
+    unpinnedRange(columns, settings.order),
+  );
+}
+
+/**
+ * Moves the columns named in `keys` that stand in the places from `first` to `last`, so that
+ * they stand side by side with the first of them at `toIndex`, and never outside those places.
+ */
+function moveGroupWithin(
+  settings: ColumnSettings,
+  keys: readonly string[],
+  toIndex: number,
+  { first, last }: { first: number; last: number },
+): ColumnSettings {
+  const { order } = settings;
+  if (Number.isNaN(toIndex)) return settings;
+  const wanted = new Set(keys);
+  // The group in the order's own sequence, and every other column as it stands.
+  const group: string[] = [];
+  const others: string[] = [];
+  order.forEach((key, index) => {
+    const moves = index >= first && index <= last && wanted.has(key);
+    (moves ? group : others).push(key);
+  });
+  if (group.length === 0) return settings;
+  // The last place the group's first column can take with the whole group still fitting.
+  const lastStart = last - group.length + 1;
+  const to = Math.min(Math.max(Math.trunc(toIndex), first), lastStart);
+  // The columns before `first` are not in the group, so `to` is the same place in `others`.
+  const next = [...others.slice(0, to), ...group, ...others.slice(to)];
+  return isSameList(next, order)
+    ? settings
+    : { order: next, hidden: settings.hidden };
 }
 
 /**

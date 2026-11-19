@@ -3,6 +3,7 @@ import {
   type ColumnSettings,
   isDefaultColumnSettings,
   moveColumnAroundPinned,
+  moveColumnGroupAroundPinned,
   type OrderedColumn,
   orderedColumns,
   reconcileColumnSettings,
@@ -61,6 +62,19 @@ export interface ColumnSettingsActions<Key extends string = string> {
    * the pinned ones: an index in a pinned column's place means the nearest place it may take.
    */
   move: (key: Key, toIndex: number) => void;
+  /**
+   * Moves several columns together, so that they stand side by side with the first of them at
+   * `toIndex` in the order. They keep the order they had among themselves, whatever order
+   * `keys` names them in.
+   *
+   * Pinned columns stay in place. A pinned column named in `keys` is skipped, and the group
+   * stops at the pinned ones.
+   *
+   * @example
+   * // Lands "cap", "return" and "beta" together, with the first of them in the second place.
+   * table.actions.moveGroup(["cap", "return", "beta"], 1);
+   */
+  moveGroup: (keys: readonly Key[], toIndex: number) => void;
   /** Shows every column, keeping the order. */
   showAll: () => void;
   /** Puts back the list's own order and starting visibility. */
@@ -219,6 +233,10 @@ export function useColumnSettings<Column extends ColumnDefinition>(
       move: (key, toIndex) =>
         apply((list, before) =>
           moveColumnAroundPinned(list, before, key, toIndex),
+        ),
+      moveGroup: (keys, toIndex) =>
+        apply((list, before) =>
+          moveColumnGroupAroundPinned(list, before, keys, toIndex),
         ),
       showAll: () => apply((_list, before) => showAllColumns(before)),
       reset: () => apply(resetColumnSettings),
