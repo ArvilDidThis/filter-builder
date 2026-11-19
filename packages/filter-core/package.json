@@ -1,6 +1,6 @@
 {
   "name": "@arvilmena/filter-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Filter format, matching rules and helpers for the filter builder. Runs anywhere JavaScript runs.",
   "keywords": [

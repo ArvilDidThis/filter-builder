@@ -1,6 +1,6 @@
 {
   "name": "@arvilmena/filter-react",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Filter builder for React: headless state and actions, plus ready-made components with default styling.",
   "keywords": [
